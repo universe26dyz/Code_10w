@@ -37,7 +37,7 @@ def _record(protocol: TradProtocol) -> dict[str, Any]:
 
 
 def _validate_checkpoint(checkpoint: dict[str, Any], protocol: TradProtocol, dataset: Any, allow_functional_fixture: bool) -> None:
-    required = {"state_dict", "architecture", "input_normalization", "output_normalization", "protocol_hhz_v1", "parameter_ranges", "functional_fixture", "scientific_checkpoint", "timing9_min_ms", "timing9_max_ms"}
+    required = {"state_dict", "architecture", "input_normalization", "output_normalization", "protocol_hhz_v1", "parameter_ranges", "functional_fixture", "formal_candidate", "validation_status", "timing9_min_ms", "timing9_max_ms"}
     missing = required.difference(checkpoint)
     if missing:
         raise ValueError(f"MLP checkpoint lacks required compatibility metadata: {sorted(missing)}")
@@ -47,9 +47,10 @@ def _validate_checkpoint(checkpoint: dict[str, Any], protocol: TradProtocol, dat
         raise ValueError("MLP checkpoint tissue-parameter ranges are incompatible with QuantitativeINR v1.")
     if checkpoint["protocol_hhz_v1"] != _record(protocol):
         raise ValueError("MLP checkpoint HHZ protocol/TR/VPS is incompatible with the online dataset.")
-    if bool(checkpoint["functional_fixture"]) or not bool(checkpoint["scientific_checkpoint"]):
-        if not allow_functional_fixture:
-            raise ValueError("functional-fixture MLP checkpoint is rejected for formal online reconstruction; set the explicit smoke allowance only for a functional smoke.")
+    if bool(checkpoint["functional_fixture"]):
+        if not allow_functional_fixture: raise ValueError("functional-fixture MLP checkpoint is rejected for formal online reconstruction; set the explicit smoke allowance only for a functional smoke.")
+    elif checkpoint["validation_status"] != "approved_by_manual_review":
+        raise ValueError(f"formal candidate validation_status={checkpoint['validation_status']!r}; awaiting_manual_review approval is required before online reconstruction.")
     lower, upper = np.asarray(checkpoint["timing9_min_ms"], dtype=np.float64), np.asarray(checkpoint["timing9_max_ms"], dtype=np.float64)
     if lower.shape != (9,) or upper.shape != (9,):
         raise ValueError("MLP checkpoint timing range must have exactly nine dimensions.")

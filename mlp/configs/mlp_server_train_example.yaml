@@ -6,6 +6,11 @@ dataset:
   seed: 20260911
   teacher_chunk_size: 8192
   teacher_device: cuda:0
+  split:
+    mode: subject
+    train_subjects: []  # Must be explicitly populated from formal manifest; no inferred split.
+    valid_subjects: []
+    test_subjects: []
 training:
   device: cuda:0
   seed: 20260911

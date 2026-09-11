@@ -26,6 +26,8 @@ def load_timing_pool(path: str | Path) -> dict[str, np.ndarray]:
         if missing:
             raise ValueError(f"Timing pool lacks: {sorted(missing)}")
         result = {key: np.asarray(data[key]) for key in required}
+        for key in ("subject_id", "stack", "stack_idx"):
+            if key in data.files: result[key] = np.asarray(data[key])
     if result["timing9_ms"].ndim != 2 or result["timing9_ms"].shape[1] != 9 or result["timing9_ms"].shape[0] < 3:
         raise ValueError("Timing pool must contain at least three unique [N,9] timing vectors for train/val/test timing splits.")
     if result["functional_fixture"].size != 1:
@@ -78,6 +80,24 @@ def split_timing_ids(n_timing: int, seed: int) -> dict[str, np.ndarray]:
     return {"train": order[:n_train], "valid": order[n_train:n_train + n_val], "test": order[n_train + n_val:]}
 
 
+def split_subject_ids(subject_ids: np.ndarray, split: Mapping[str, Any]) -> dict[str, list[str]]:
+    if split.get("mode") != "subject": raise ValueError("Formal split.mode must be 'subject'.")
+    available = set(np.asarray(subject_ids).astype(str).tolist())
+    result = {name: [str(value) for value in split.get(f"{name}_subjects", [])] for name in ("train", "valid", "test")}
+    if any(not result[name] for name in result) or any(len(values) != len(set(values)) for values in result.values()) or set().union(*map(set, result.values())) != available or any(set(result[a]).intersection(result[b]) for a, b in (("train", "valid"), ("train", "test"), ("valid", "test"))):
+        raise ValueError("Formal subject split must explicitly partition every pool subject into non-empty disjoint train/valid/test sets.")
+    return result
+
+
+def timing_domain_metadata(timing: np.ndarray, subject_ids: np.ndarray, split_subjects: Mapping[str, list[str]]) -> dict[str, Any]:
+    timing, subject_ids = np.asarray(timing, dtype=np.float64), np.asarray(subject_ids).astype(str)
+    train = timing[np.isin(subject_ids, split_subjects["train"])]
+    test = timing[np.isin(subject_ids, split_subjects["test"])]
+    lower, upper = train.min(0), train.max(0)
+    relation = "interpolation_to_train_domain" if np.all((test >= lower) & (test <= upper)) else "extrapolation_from_train_domain"
+    return {"train_timing9_min_ms": lower.tolist(), "train_timing9_max_ms": upper.tolist(), "pool_timing9_min_ms": timing.min(0).tolist(), "pool_timing9_max_ms": timing.max(0).tolist(), "test_timing_relation_to_train": relation}
+
+
 def _teacher_device(value: str) -> torch.device:
     device = torch.device(value)
     if device.type == "cuda" and not torch.cuda.is_available():
@@ -123,11 +143,20 @@ def generate_mlp_dataset(timing_pool_path: str | Path, protocol_path: str | Path
         raise ValueError("teacher_device must be an explicit device string.")
     protocol = _protocol(pool, protocol_path)
     device = _teacher_device(teacher_device)
-    splits = split_timing_ids(pool["timing9_ms"].shape[0], seed)
+    split_cfg = sizes.get("split")
+    if not isinstance(split_cfg, Mapping) or "mode" not in split_cfg: raise ValueError("dataset.split with explicit mode is required.")
+    if split_cfg["mode"] == "subject":
+        if "subject_id" not in pool: raise ValueError("Formal subject split requires timing-pool subject_id provenance.")
+        subject_splits = split_subject_ids(pool["subject_id"], split_cfg)
+        splits = {name: np.flatnonzero(np.isin(pool["subject_id"].astype(str), subjects)) for name, subjects in subject_splits.items()}
+        domain = timing_domain_metadata(pool["timing9_ms"], pool["subject_id"], subject_splits)
+    elif split_cfg["mode"] == "timing":
+        splits, subject_splits, domain = split_timing_ids(pool["timing9_ms"].shape[0], seed), {"train": [], "valid": [], "test": []}, {"train_timing9_min_ms": [], "train_timing9_max_ms": [], "pool_timing9_min_ms": np.asarray(pool["timing9_ms"]).min(0).tolist(), "pool_timing9_max_ms": np.asarray(pool["timing9_ms"]).max(0).tolist(), "test_timing_relation_to_train": "not_subject_validation"}
+    else: raise ValueError("dataset.split.mode must be 'timing' or 'subject'.")
     for offset, split in enumerate(required):
         _generate_split(output / f"{split}.h5", int(sizes[split]), splits[split], pool, protocol, seed + offset, chunk_size, device)
     timing = np.asarray(pool["timing9_ms"], dtype=np.float64)
-    metadata = {"timing_pool": str(Path(timing_pool_path)), "timing_pool_sha256": sha256_file(timing_pool_path), "functional_fixture": bool(pool["functional_fixture"]), "timing9_min_ms": timing.min(axis=0).tolist(), "timing9_max_ms": timing.max(axis=0).tolist(), "tr_ms": protocol.tr_ms, "vps": protocol.vps, "timing_split_ids": {key: value.tolist() for key, value in splits.items()}, "protocol": {"tr_ms": protocol.tr_ms, "vps": protocol.vps, "fa_deg": list(protocol.fa_deg), "ti_ms": list(protocol.ti_ms), "t2prep_ms": list(protocol.t2prep_ms), "n_ramp_up": protocol.n_ramp_up}, "sizes": {key: int(sizes[key]) for key in required}, "seed": int(seed), "teacher_device": str(device)}
+    metadata = {"timing_pool": str(Path(timing_pool_path)), "timing_pool_sha256": sha256_file(timing_pool_path), "functional_fixture": bool(pool["functional_fixture"]), "timing9_min_ms": timing.min(axis=0).tolist(), "timing9_max_ms": timing.max(axis=0).tolist(), "tr_ms": protocol.tr_ms, "vps": protocol.vps, "split_mode": split_cfg["mode"], "train_subject_ids": subject_splits["train"], "valid_subject_ids": subject_splits["valid"], "test_subject_ids": subject_splits["test"], **domain, "timing_split_ids": {key: value.tolist() for key, value in splits.items()}, "protocol": {"tr_ms": protocol.tr_ms, "vps": protocol.vps, "fa_deg": list(protocol.fa_deg), "ti_ms": list(protocol.ti_ms), "t2prep_ms": list(protocol.t2prep_ms), "n_ramp_up": protocol.n_ramp_up}, "sizes": {key: int(sizes[key]) for key in required}, "seed": int(seed), "teacher_device": str(device)}
     with (output / "dataset_metadata.json").open("w", encoding="utf-8") as handle:
         json.dump(metadata, handle, indent=2)
     return metadata

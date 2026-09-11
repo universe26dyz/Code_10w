@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 
 import numpy as np
@@ -58,12 +59,49 @@ def build_timing_pool(observation_paths: list[str | Path], output_path: str | Pa
     return {"timing_count": int(first_indices.size), "tr_ms": first_tr, "vps": first_vps, "output": str(output)}
 
 
+def build_timing_pool_from_manifest(manifest_path: str | Path, output_path: str | Path) -> dict[str, object]:
+    """Formal pool: retain every group's explicit subject/stack provenance."""
+    manifest_path = Path(manifest_path)
+    with manifest_path.open(encoding="utf-8") as handle:
+        manifest = json.load(handle)
+    sources = manifest.get("sources") if isinstance(manifest, dict) else None
+    if not isinstance(sources, list) or not sources:
+        raise ValueError("Formal timing manifest must contain a non-empty sources list.")
+    rows, subjects, stacks, group_ids, stack_ids, source_ids, records = [], [], [], [], [], [], []
+    for entry in sources:
+        if not isinstance(entry, dict) or any(key not in entry for key in ("subject_id", "stack", "observations")):
+            raise ValueError("Each formal timing source requires explicit subject_id, stack, observations.")
+        subject, stack, path = entry["subject_id"], entry["stack"], Path(entry["observations"])
+        if not isinstance(subject, str) or not subject or not isinstance(stack, str) or not stack or not path.is_file():
+            raise ValueError(f"Invalid explicit formal timing source: {entry}")
+        with np.load(path, allow_pickle=False) as data:
+            required = {"group_idx", "weight_idx", "stack_idx", "timing9_ms", "tr_ms", "vps"}
+            if required.difference(data.files): raise ValueError(f"{path} lacks formal timing fields.")
+            group, weight, sid = (np.asarray(data[k], dtype=np.int64) for k in ("group_idx", "weight_idx", "stack_idx"))
+            timing, tr, vps = np.asarray(data["timing9_ms"], dtype=np.float64), np.asarray(data["tr_ms"], dtype=np.float64), np.asarray(data["vps"], dtype=np.int64)
+        for value in np.unique(group):
+            index = np.flatnonzero(group == value)
+            if index.size != 10 or not np.array_equal(np.sort(weight[index]), np.arange(10)) or not np.allclose(timing[index], timing[index[0]], rtol=0, atol=1e-10) or not np.allclose(tr[index], tr[index[0]], rtol=1e-6, atol=1e-6) or not np.all(vps[index] == vps[index[0]]) or np.unique(sid[index]).size != 1:
+                raise ValueError(f"{path} group {value} is not a protocol-consistent complete 10-weight group.")
+            rows.append(timing[index[0]]); subjects.append(subject); stacks.append(stack); group_ids.append(int(value)); stack_ids.append(int(sid[index[0]])); source_ids.append(str(path)); records.append((subject, stack, int(value), float(tr[index[0]]), int(vps[index[0]])))
+    first_tr, first_vps = records[0][3:]
+    if any(not np.isclose(record[3], first_tr, rtol=1e-6, atol=1e-6) or record[4] != first_vps for record in records):
+        raise ValueError("Formal 12D MLP protocol audit failed: TR must match within tolerance and VPS exactly across all groups.")
+    output = Path(output_path)
+    if output.exists(): raise FileExistsError(f"Timing pool output already exists: {output}")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(output, timing9_ms=np.stack(rows), tr_ms=np.asarray(first_tr), vps=np.asarray(first_vps, dtype=np.int64), subject_id=np.asarray(subjects), stack=np.asarray(stacks), stack_idx=np.asarray(stack_ids, dtype=np.int64), group_id=np.asarray(group_ids, dtype=np.int64), source_id=np.asarray(source_ids), functional_fixture=np.asarray(False))
+    return {"timing_count": len(rows), "n_subjects": len(set(subjects)), "tr_ms": first_tr, "vps": first_vps, "output": str(output)}
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--observations", required=True, action="append")
+    parser.add_argument("--observations", action="append")
+    parser.add_argument("--manifest")
     parser.add_argument("--output", required=True)
     args = parser.parse_args()
-    print(build_timing_pool(args.observations, args.output))
+    if bool(args.manifest) == bool(args.observations): raise ValueError("Provide exactly one of --manifest or repeated --observations.")
+    print(build_timing_pool_from_manifest(args.manifest, args.output) if args.manifest else build_timing_pool(args.observations, args.output))
 
 
 if __name__ == "__main__":

@@ -241,3 +241,27 @@ validated reconstruction.
 Implementation v1 is complete. Do not begin formal server training or alter
 the fixed HHZ scientific contract without a new command. See
 `IMPLEMENTATION_REPORT_v1.md`.
+
+## Phase 7 formal MLP validation readiness
+
+- [x] Formal timing pool supports only explicit manifest subject/stack
+  provenance and retains all group rows; formal synthetic split is subject-
+  disjoint and records train/pool timing domains separately.
+- [x] Formal candidate checkpoints start `validation_status=unvalidated` and
+  remain rejected by online reconstruction until a separate report is reviewed.
+  `validate_formal_mlp.py` writes signal/gradient metrics and
+  `awaiting_manual_review`, never an automatic approval.
+- [x] Formal timing audit CSV/summary and separate Trad/MLP GPU peak-memory
+  benchmark fields are implemented. Targeted Phase-7 pytest PASS (4/4).
+- Not run / blocked on this host: formal manifest audit, CUDA teacher
+  generation, one formal candidate training, held-out validation and GPU
+  benchmark. Evidence: `nvidia-smi` is unavailable and no explicit
+  multi-subject prepared-observation manifest was supplied. No full 3-stack
+  reconstruction was started.
+
+## Next-stage entry
+
+Provide a formal source manifest and execute the documented CUDA sequence on
+the server. Stop after `formal_timing_audit.csv`,
+`formal_validation_report.json` and `decoder_gpu_benchmark.json` for manual
+review; do not start full reconstruction yet.

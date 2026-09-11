@@ -62,7 +62,7 @@ def validate_dataset_provenance(dataset_dir: str | Path, timing_pool_path: str |
         metadata = json.load(handle)
     if not isinstance(metadata, dict):
         raise ValueError("dataset_metadata.json must be a JSON object.")
-    required = {"timing_pool_sha256", "functional_fixture", "timing9_min_ms", "timing9_max_ms", "tr_ms", "vps", "protocol", "sizes"}
+    required = {"timing_pool_sha256", "functional_fixture", "timing9_min_ms", "timing9_max_ms", "train_timing9_min_ms", "train_timing9_max_ms", "pool_timing9_min_ms", "pool_timing9_max_ms", "train_subject_ids", "valid_subject_ids", "test_subject_ids", "tr_ms", "vps", "protocol", "sizes"}
     missing = required.difference(metadata)
     if missing:
         raise ValueError(f"dataset_metadata.json lacks: {sorted(missing)}")
@@ -145,7 +145,9 @@ def train_mlp(dataset_dir: str | Path, timing_pool_path: str | Path, config: Map
                 "output_normalization": "raw_l2_normalized", "protocol_hhz_v1": _protocol_record(teacher_protocol),
                 "timing_pool_provenance": str(timing_pool_path), "timing_pool_sha256": metadata["timing_pool_sha256"],
                 "timing9_min_ms": metadata["timing9_min_ms"], "timing9_max_ms": metadata["timing9_max_ms"],
-                "functional_fixture": bool(metadata["functional_fixture"]), "scientific_checkpoint": not bool(metadata["functional_fixture"]),
+                "train_timing9_min_ms": metadata["train_timing9_min_ms"], "train_timing9_max_ms": metadata["train_timing9_max_ms"], "pool_timing9_min_ms": metadata["pool_timing9_min_ms"], "pool_timing9_max_ms": metadata["pool_timing9_max_ms"],
+                "train_subject_ids": metadata["train_subject_ids"], "valid_subject_ids": metadata["valid_subject_ids"], "test_subject_ids": metadata["test_subject_ids"],
+                "functional_fixture": bool(metadata["functional_fixture"]), "formal_candidate": not bool(metadata["functional_fixture"]), "validation_status": "functional_smoke" if bool(metadata["functional_fixture"]) else "unvalidated",
                 "parameter_ranges": {"t1_ms": [20, 2500], "t2_ms": [5, 200], "b1": [0.1, 1.2], "constraint": "T1>T2"}, "seed": seed,
             }, output / "signal_simulator_best.pth")
     with (output / "train_history.csv").open("w", newline="", encoding="utf-8") as handle:

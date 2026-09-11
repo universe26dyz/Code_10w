@@ -71,9 +71,12 @@ def benchmark_signal_decoder(checkpoint_path: str | Path, timing_pool_path: str 
         base = _inputs(batch_size, timing, device)
         if device.type == "cuda": torch.cuda.reset_peak_memory_stats(device)
         trad_forward, trad_backward, trad_output = _measure(trad, protocol, base, device, repetitions)
+        trad_peak = int(torch.cuda.max_memory_allocated(device)) if device.type == "cuda" else None
+        if device.type == "cuda": torch.cuda.reset_peak_memory_stats(device)
         mlp_forward, mlp_backward, mlp_output = _measure(mlp, protocol, base, device, repetitions)
+        mlp_peak = int(torch.cuda.max_memory_allocated(device)) if device.type == "cuda" else None
         error = mlp_output - trad_output
-        row = {"batch_size": batch_size, "repetitions": repetitions, "device": str(device), "trad_forward_s_median": trad_forward, "trad_backward_s_median": trad_backward, "mlp_forward_s_median": mlp_forward, "mlp_backward_s_median": mlp_backward, "signal_overall_rmse": float(error.pow(2).mean().sqrt()), "signal_per_weight_rmse": error.pow(2).mean(0).sqrt().cpu().tolist(), "functional_fixture": bool(pool["functional_fixture"]), "peak_cpu_rss_kib": int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss), "peak_gpu_allocated_bytes": int(torch.cuda.max_memory_allocated(device)) if device.type == "cuda" else None}
+        row = {"batch_size": batch_size, "repetitions": repetitions, "device": str(device), "trad_forward_s": trad_forward, "trad_backward_s": trad_backward, "trad_peak_gpu_bytes": trad_peak, "mlp_forward_s": mlp_forward, "mlp_backward_s": mlp_backward, "mlp_peak_gpu_bytes": mlp_peak, "forward_speedup": trad_forward / mlp_forward, "backward_speedup": trad_backward / mlp_backward, "signal_overall_rmse": float(error.pow(2).mean().sqrt()), "signal_per_weight_rmse": error.pow(2).mean(0).sqrt().cpu().tolist(), "functional_fixture": bool(pool["functional_fixture"]), "process_peak_cpu_rss_kib": int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)}
         rows.append(row)
     output = Path(output_path)
     if output.exists():

@@ -5,6 +5,8 @@ dataset:
   seed: 20260911
   teacher_chunk_size: 128
   teacher_device: cpu
+  split:
+    mode: timing
 training:
   device: cpu
   seed: 20260911

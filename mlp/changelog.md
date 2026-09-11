@@ -105,3 +105,20 @@
   online suite PASS (5 tests); one CPU online functional smoke and one CPU
   benchmark PASS. The tiny checkpoint is `scientific_checkpoint=false` and
   does not establish scientific reconstruction quality.
+
+## 2026-09-11 — Phase 7 formal-validation readiness
+
+- Added explicit manifest-derived formal timing pools retaining every group’s
+  `subject_id`, stack and source provenance; numeric timing duplicates are not
+  deduplicated for subject validation. Added subject-disjoint 3/1/1 split,
+  timing-domain metadata, formal timing audit and held-out validation CLI.
+- Candidate checkpoints are now `formal_candidate` with
+  `validation_status=unvalidated`; training no longer auto-approves a real
+  pool. Online loader rejects any unapproved formal candidate. Functional
+  smoke still needs its explicit allowance.
+- Decoder benchmark now resets and records Trad/MLP CUDA peaks separately and
+  writes forward/backward speedups; CPU RSS is diagnostic only.
+- Targeted tests PASS (4/4). Formal execution was not started: this host has
+  no CUDA and no explicit multi-subject prepared manifest, so no protocol
+  audit, generation, candidate training, validation or GPU benchmark was
+  fabricated or replaced with a fallback.
