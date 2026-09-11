@@ -21,3 +21,25 @@
   `preprocess_stack_v1` entry/arity check PASS.
 - Not run: DICOM/MIND/MP-PCA data smoke, by Phase-1 test scope; no training,
   full-subject processing, or later Python pipeline was started.
+
+## 2026-09-11 — Phase 1 review correction and Phase 2 bridge/dataset
+
+- Corrected preprocessing order to `crop → MIND → optional MP-PCA → Mag_crop`.
+  `Mag_crop_unregistered`, `MIND_mag_reg`, and final `Mag_crop` now have
+  non-overlapping semantics; `Mag_crop` is always the later Python input.
+- Kept `MPPCA_options.center_data=true` as the explicit v1 setting, passed all
+  MP-PCA options explicitly, and corrected its contradictory copied comment.
+- Added validation for constant DICOM TR/VPS, complete 10-weight native-slice
+  geometry, and stable SOP/Series UID metadata. The bridge resolves UIDs only
+  through explicit current `--dicom-dir`, never saved absolute paths.
+- Added Module 02 v7.3 HDF5 loader, HHZ timing translation, DICOM-LPS crop
+  geometry, manifest/NPZ preparation, and Module 03 NeSVoR-style
+  `QuantPointDataset` with one future pose index per group.
+- Tests: Phase-2 static suite PASS (5/5) using `knesvr_torch`; after the real
+  MAT exposed single-group HDF5 shape handling, its focused loader regression
+  test PASS. Installed pytest only because that required conda environment did
+  not provide a pytest module.
+- Tiny real smoke PASS: subject `CYJ`, stack `2ch`, one group, 10 weights,
+  image shape `[10,145,129]`, timing `[1,9]`, geometry `[1,4,4]`,
+  `center_data=true`; it ran MIND then MP-PCA exactly once successfully after
+  a failed MP-PCA singleton-dimension attempt was repaired.

@@ -13,9 +13,9 @@ inverse T1/T2 estimator、不是 hard dictionary matching，online reconstructio
 也不会生成 dictionary。其唯一 teacher 将是后续 HHZ-compatible Trad
 simulator，而不是 EPG。
 
-本 Phase 只完成目录、源码归档、协议与 MATLAB preprocessing；Module 02–09
-仅为骨架，`module_05_signal_decoder/trad_teacher/` 也是预留目录，未实现
-MLP、teacher、训练或重建。
+Phase 2 已实现 MATLAB v7.3→Python bridge 与 10-weight group dataset；
+`module_05_signal_decoder/trad_teacher/` 仍只是预留目录，MLP、teacher、训练与
+重建尚未实现。
 
 科学协议固定为 NumImg=10、FA=[45,45,45]°、TI=[50,150] ms、
 T2prep=[35,45,55] ms、nRampUp=10，TR/VPS 分别来自 DICOM 的

@@ -23,3 +23,19 @@
   `preprocess_stack_v1` entry/arity check PASS.
 - Not run: DICOM/MIND/MP-PCA data smoke, by Phase-1 test scope; no MLP
   training, full-subject processing, or later Python pipeline was started.
+
+## 2026-09-11 — Phase 1 review correction and Phase 2 bridge/dataset sync
+
+- Synchronized the independently runnable Phase 2 common code from Trad:
+  corrected preprocessing, Module 02 bridge/timing/crop geometry, Module 03
+  `QuantPointDataset`, tests, and module documentation.
+- Corrected preprocessing order to `crop → MIND → optional MP-PCA → Mag_crop`;
+  `Mag_crop_unregistered`, `MIND_mag_reg`, and final `Mag_crop` now have
+  explicit non-overlapping semantics. `MPPCA_options.center_data=true` remains
+  explicit and all MP-PCA options are passed without internal defaults.
+- Added constant TR/VPS, complete 10-weight geometry, SOP/Series UID, and
+  portable crop-offset metadata validation. The bridge resolves only current
+  `--dicom-dir` SOPInstanceUID mappings.
+- No MLP, teacher, Quantitative INR, signal decoder, PSF, rigid training, or
+  reconstruction code was started. Version/import consistency is checked after
+  this sync; the real smoke is intentionally not repeated for identical code.

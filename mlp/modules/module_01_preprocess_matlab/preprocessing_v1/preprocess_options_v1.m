@@ -1,7 +1,8 @@
 function opts = preprocess_options_v1(max_slices, enable_figures, enable_mppca)
 %PREPROCESS_OPTIONS_V1 Build explicit options for preprocess_stack_v1.
 %   Callers choose each top-level switch explicitly. The MP-PCA parameters
-%   below are the vendored DYZ routine's documented Phase-1 settings.
+%   are passed in full so no formal preprocessing call relies on the vendored
+%   routine's internal defaults. center_data=true is the retained v1 setting.
 
     arguments
         max_slices
@@ -21,5 +22,7 @@ function opts = preprocess_options_v1(max_slices, enable_figures, enable_mppca)
         'use_parallel', false, ...
         'mask_threshold_fraction', 1/5, ...
         'min_component_size', 20, ...
-        'fill_holes', false);
+        'fill_holes', false, ...
+        'save_residual', true, ...
+        'overwrite', false);
 end

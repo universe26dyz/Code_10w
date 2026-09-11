@@ -37,7 +37,7 @@ output_files = {
 
 % MP-PCA 配置
 opts.patch_size = [7, 7];       % 2D 空间 patch；必须是奇数
-opts.center_data = true;       % false：保留局部平均信号分量，推荐用于本项目
+opts.center_data = true;       % v1 明确保留逐空间样本 measurement-mean centering。
 opts.clip_negative = true;      % magnitude 图像输出限制为非负
 opts.use_parallel = true;       % 有 Parallel Computing Toolbox 时逐切片 parfor
 

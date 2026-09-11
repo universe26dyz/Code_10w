@@ -10,8 +10,8 @@ DICOM 10 weights → MATLAB MIND preprocessing → Mag_crop
 →（后续）NeSVoR rigid + PSF → 2D data consistency → 3D T1/T2
 ```
 
-本 Phase 只完成目录、源码归档、协议与 MATLAB preprocessing；Module 02–09
-仅为骨架，未实现 Python bridge、INR、signal decoder、rigid/PSF、训练或导出。
+Phase 2 已实现 MATLAB v7.3→Python bridge 与 10-weight group dataset；INR、
+signal decoder、rigid/PSF、训练与导出仍未实现。
 
 科学协议固定为 NumImg=10、FA=[45,45,45]°、TI=[50,150] ms、
 T2prep=[35,45,55] ms、nRampUp=10，TR/VPS 分别来自 DICOM 的

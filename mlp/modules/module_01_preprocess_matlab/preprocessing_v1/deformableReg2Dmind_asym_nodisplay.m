@@ -12,7 +12,7 @@ if nargin<4
 end
 
 
-im1=single(im1); im2=single(im2);
+    im1=single(im1); im2=single(im2);
 
 levels=[4,2,1]; % resolution levels
 

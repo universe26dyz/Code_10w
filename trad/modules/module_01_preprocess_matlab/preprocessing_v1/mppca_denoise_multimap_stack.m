@@ -38,14 +38,11 @@ function [Mag_denoised, sigma_map, rank_map, support_mask, residual, report] = .
     end
     opts = apply_default_options(opts);
 
+    % MATLAB elides a trailing singleton: a one-slice [Nx Ny 10 1] array is
+    % observed as 3-D. Keep that valid representation instead of reshaping it
+    % back to a trailing singleton that ndims still reports as 3.
     input_was_3d = (ndims(Mag_registered) == 3);
-    if input_was_3d
-        Mag_registered = reshape(Mag_registered, ...
-            size(Mag_registered, 1), size(Mag_registered, 2), ...
-            size(Mag_registered, 3), 1);
-    end
-
-    assert(ndims(Mag_registered) == 4, ...
+    assert(input_was_3d || ndims(Mag_registered) == 4, ...
         '输入必须为 [Nx, Ny, Nweight, Nslice]。');
     assert(isnumeric(Mag_registered) && isreal(Mag_registered), ...
         '当前实现要求实数 magnitude 图像。');
