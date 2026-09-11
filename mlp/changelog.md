@@ -39,3 +39,17 @@
 - No MLP, teacher, Quantitative INR, signal decoder, PSF, rigid training, or
   reconstruction code was started. Version/import consistency is checked after
   this sync; the real smoke is intentionally not repeated for identical code.
+
+## 2026-09-11 — Phase 2 geometry correction / shared Phase 3 core sync
+
+- Synchronized the corrected local-coordinate Module 02/03 geometry contract:
+  cropped HB1 DICOM-LPS provenance, explicit RAS conversion, one initial
+  NeSVoR group pose per complete 10-weight slice, multi-stack global group
+  reindexing, preserved stack IDs, and strict IOP validation.
+- Synchronized common Module 04 Quantitative INR and Module 06 rigid/local
+  anisotropic-PSF code and documentation from Trad. The copied code remains
+  independently importable and does not add an MLP signal decoder, teacher,
+  training loop, or inference implementation.
+- Validation: common-module import PASS and synchronized geometry, dataset,
+  INR, and rigid/PSF source files are byte-identical to Trad. The MLP full
+  suite and preprocessing/MIND smoke were intentionally not repeated.

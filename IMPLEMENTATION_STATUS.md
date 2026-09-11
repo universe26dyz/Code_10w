@@ -4,10 +4,12 @@ Last updated: 2026-09-11
 
 ## Current boundary
 
-Phase 2 is complete. Project audit, scaffold, corrected MATLAB preprocessing,
-MATLAB/Python bridge, timing, 10-weight group dataset, and crop geometry are
-implemented. Quantitative INR, signal simulators, MLP, rigid/PSF integration,
-training, and inference remain intentionally unimplemented.
+Phase 3 Trad core forward model is complete. Project audit, scaffold,
+corrected MATLAB preprocessing, MATLAB/Python bridge, timing, 10-weight group
+dataset, RAS geometry, Quantitative INR, direct HHZ Trad signal simulation,
+and rigid/PSF forward are implemented. MLP signal decoding/training, Trad
+optimization loops, inference, and all later modules remain intentionally
+unimplemented.
 
 ## Audit record
 
@@ -76,6 +78,55 @@ training, and inference remain intentionally unimplemented.
 
 ## Next-stage entry
 
-Await the next command. The next planned implementation boundary is Module 04
-(Quantitative INR) only; no signal decoder, PSF/rigid training, or inference
-work has been started.
+## Phase 2 review correction / Phase 3 Trad deliverables
+
+- [x] Changed Module 03 `xyz` from mislabeled DICOM-LPS world points to
+  centered local `[column,row,slice]` mm. `group_resolution_xyz_mm` is
+  `[col_spacing,row_spacing,slice_thickness]`; Module 02 retains
+  DICOM-LPS affine provenance.
+- [x] Added explicit LPS→RAS conversion and constructed each initial vendored
+  NeSVoR `RigidTransform` from the cropped HB1 affine. All ten weights share
+  the same native-slice group pose; no identity-pose substitution is used.
+- [x] Added multi-stack `QuantPointDataset([paths])`, global group reindexing,
+  preserved source stack IDs, RAS-transformed bounding boxes, and strict
+  IOP norm/dot-product validation without orthogonalization.
+- [x] Implemented Trad Module 04 only from vendored NeSVoR HashGrid,
+  `HashEmbedder`, `build_encoding`, `build_network`,
+  `compute_resolution_nlevel`, and `RigidTransform`: shared latent → bounded
+  T1/T2/B1/A fields.
+- [x] Implemented Trad Module 05A as a direct tensorized PyTorch equivalent
+  of HHZ `sim_T1T2_10HB_bssfp.m` (no EPG), including the 16-readout centre
+  window and Mz carry-over. Its protocol rejects DYZ TI=[10,100] and accepts
+  only v1 HHZ TI=[50,150].
+- [x] Implemented Trad Module 06 one-axis-angle-pose-per-group, local
+  anisotropic Gaussian PSF (`resolution2sigma(..., isotropic=False)`), then
+  rigid RAS transform. The forward evaluates/simulates every PSF sample,
+  selects weight, applies A, and averages only predicted signal. It exposes
+  `deformable=false` and has no deformation parameters.
+- [x] Synchronized common corrected Module 02/03 geometry plus Module 04/06
+  code and docs to `mlp`; only an import and byte-identity check was run.
+  Trad-only Module 05A was not copied to mlp.
+- [x] Added root `.gitignore` rules and removed generated `__pycache__` and
+  pytest cache directories under `trad`/`mlp` after validation.
+
+## Phase 3 validation
+
+- PASS — `conda run -n knesvr_torch pytest -q` on
+  `test_dataset_grouping`, `test_local_rigid_geometry`,
+  `test_multistack_dataset`, `test_quantitative_inr`, `test_signal_decoder`,
+  `test_rigid_group_pose`, and `test_psf_forward`: 8 passed.
+- PASS — deterministic small forward benchmark: batch 1024, PSF K=4;
+  output, INR gradients, and rigid gradients finite; axis-angle tensor `[1,6]`
+  exists; `deformable=false`.
+- PASS — MATLAB was available. One deterministic 20-case raw-HHZ parity run
+  against `sim_T1T2_10HB_bssfp.m`: maximum absolute error
+  `1.2351231148954867e-15`.
+- PASS — MLP common-module import succeeded and four synchronized source files
+  were byte-identical to Trad. No MLP full suite and no preprocessing/MIND run
+  were repeated.
+
+## Next-stage entry
+
+Await the next command. The next planned boundary is the remaining method
+work specified by the pipeline; do not start a training loop or inference
+without an explicit command.

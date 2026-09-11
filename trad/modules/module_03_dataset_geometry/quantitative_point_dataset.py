@@ -1,149 +1,155 @@
-"""Project-local group dataset adapted from NeSVoR ``PointDataset`` semantics."""
+"""NeSVoR-style local-coordinate dataset for one or more 10-weight prepared stacks."""
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Sequence
 
 import numpy as np
 import torch
 
-from modules.module_02_data_bridge.geometry import apply_affine_rc
+from modules.module_02_data_bridge.geometry import cropped_affine_lps_rc_to_initial_rigid
+from third_party.nesvor.nesvor.transform import RigidTransform, ax_transform_points
 
 
 class QuantPointDataset:
-    """Flatten masked prepared pixels while preserving one rigid-pose index per group.
+    """Flatten complete 10-weight groups while retaining NeSVoR local/world semantics.
 
-    This retains NeSVoR PointDataset's central representation (concatenated
-    untransformed ``xyz`` and intensity ``v`` plus batched sampling) but replaces
-    its per-slice index with ``group_idx``. All ten weights of a native spatial
-    slice therefore resolve to exactly one future rigid pose.
+    ``observation_npz_paths`` is a non-empty sequence of prepared stack files.
+    Source-local groups are remapped consecutively. ``xyz`` is centered
+    slice-local `[column,row,slice]` mm; ``xyz_transformed`` applies exactly
+    one initial RigidTransform per global group into RAS-mm world space.
     """
 
-    def __init__(self, observations_npz: str | Path, device: str | torch.device = "cpu") -> None:
-        observations_npz = Path(observations_npz)
-        if not observations_npz.is_file():
-            raise FileNotFoundError(f"Prepared observations NPZ does not exist: {observations_npz}")
-        with np.load(observations_npz, allow_pickle=False) as data:
-            required = {
-                "images",
-                "masks",
-                "group_idx",
-                "weight_idx",
-                "stack_idx",
-                "acquisition_time_ms",
-                "timing9_ms",
-                "affine_lps_rc",
-            }
-            missing = required.difference(data.files)
-            if missing:
-                raise ValueError(f"Prepared observations NPZ lacks: {sorted(missing)}")
-            images = np.asarray(data["images"], dtype=np.float32)
-            masks = np.asarray(data["masks"], dtype=bool)
-            group_idx = np.asarray(data["group_idx"], dtype=np.int64)
-            weight_idx = np.asarray(data["weight_idx"], dtype=np.int64)
-            stack_idx = np.asarray(data["stack_idx"], dtype=np.int64)
-            acquisition_time_ms = np.asarray(data["acquisition_time_ms"], dtype=np.float64)
-            timing9_ms = np.asarray(data["timing9_ms"], dtype=np.float64)
-            affine_lps_rc = np.asarray(data["affine_lps_rc"], dtype=np.float64)
-        self._validate_observations(
-            images, masks, group_idx, weight_idx, stack_idx, acquisition_time_ms, timing9_ms, affine_lps_rc
-        )
-        self.coordinate_system = "DICOM_LPS_mm; xyz derived from affine_lps_rc [row,col,slice,1]"
-        self.group_ids = np.unique(group_idx)
-        self.group_pose_count = int(self.group_ids.size)
-        self.group_affine_lps_rc = np.stack(
-            [affine_lps_rc[np.flatnonzero(group_idx == group_id)[0]] for group_id in self.group_ids]
-        )
-        xyz_all: list[np.ndarray] = []
-        v_all: list[np.ndarray] = []
-        group_all: list[np.ndarray] = []
-        weight_all: list[np.ndarray] = []
-        stack_all: list[np.ndarray] = []
-        timing_all: list[np.ndarray] = []
-        acq_all: list[np.ndarray] = []
-        for observation_idx in range(images.shape[0]):
-            rows, cols = np.nonzero(masks[observation_idx])
-            if rows.size == 0:
-                raise ValueError(f"Observation {observation_idx} has an empty foreground mask.")
-            xyz_all.append(apply_affine_rc(affine_lps_rc[observation_idx], rows, cols))
-            v_all.append(images[observation_idx, rows, cols])
-            group_all.append(np.full(rows.size, group_idx[observation_idx], dtype=np.int64))
-            weight_all.append(np.full(rows.size, weight_idx[observation_idx], dtype=np.int64))
-            stack_all.append(np.full(rows.size, stack_idx[observation_idx], dtype=np.int64))
-            timing_all.append(np.repeat(timing9_ms[observation_idx][None, :], rows.size, axis=0))
-            acq_all.append(np.full(rows.size, acquisition_time_ms[observation_idx], dtype=np.float64))
-        self.xyz = torch.as_tensor(np.concatenate(xyz_all), dtype=torch.float32, device=device)
-        self.v = torch.as_tensor(np.concatenate(v_all), dtype=torch.float32, device=device)
-        self.group_idx = torch.as_tensor(np.concatenate(group_all), dtype=torch.long, device=device)
-        self.weight_idx = torch.as_tensor(np.concatenate(weight_all), dtype=torch.long, device=device)
-        self.stack_idx = torch.as_tensor(np.concatenate(stack_all), dtype=torch.long, device=device)
-        self.timing = torch.as_tensor(np.concatenate(timing_all), dtype=torch.float32, device=device)
-        self.acquisition_time_ms = torch.as_tensor(np.concatenate(acq_all), dtype=torch.float32, device=device)
-        self.count = 0
-        self.epoch = 0
+    def __init__(
+        self, observation_npz_paths: Sequence[str | Path], device: str | torch.device = "cpu"
+    ) -> None:
+        if isinstance(observation_npz_paths, (str, Path)) or not observation_npz_paths:
+            raise ValueError("QuantPointDataset requires a non-empty sequence of observations.npz paths.")
+        payloads = [self._load_stack(Path(path)) for path in observation_npz_paths]
+        self.coordinate_system = "local xyz [column,row,slice] mm; transformed world RAS mm"
+        self._build_from_stacks(payloads, device)
 
     @staticmethod
-    def _validate_observations(
-        images: np.ndarray,
-        masks: np.ndarray,
-        group_idx: np.ndarray,
-        weight_idx: np.ndarray,
-        stack_idx: np.ndarray,
-        acquisition_time_ms: np.ndarray,
-        timing9_ms: np.ndarray,
-        affine_lps_rc: np.ndarray,
-    ) -> None:
+    def _load_stack(path: Path) -> dict[str, np.ndarray]:
+        if not path.is_file():
+            raise FileNotFoundError(f"Prepared observations NPZ does not exist: {path}")
+        with np.load(path, allow_pickle=False) as source:
+            required = {
+                "images", "masks", "group_idx", "weight_idx", "stack_idx",
+                "acquisition_time_ms", "timing9_ms", "affine_lps_rc",
+                "pixel_spacing_rc_mm", "slice_thickness_mm",
+            }
+            missing = required.difference(source.files)
+            if missing:
+                raise ValueError(f"Prepared observations NPZ lacks: {sorted(missing)}")
+            return {name: np.asarray(source[name]) for name in required}
+
+    @staticmethod
+    def _validate_stack(payload: dict[str, np.ndarray]) -> np.ndarray:
+        images = np.asarray(payload["images"], dtype=np.float32)
+        masks = np.asarray(payload["masks"], dtype=bool)
+        group_idx = np.asarray(payload["group_idx"], dtype=np.int64)
+        weight_idx = np.asarray(payload["weight_idx"], dtype=np.int64)
+        stack_idx = np.asarray(payload["stack_idx"], dtype=np.int64)
+        acquisition_time_ms = np.asarray(payload["acquisition_time_ms"], dtype=np.float64)
+        timing9_ms = np.asarray(payload["timing9_ms"], dtype=np.float64)
+        affine_lps_rc = np.asarray(payload["affine_lps_rc"], dtype=np.float64)
+        pixel_spacing_rc_mm = np.asarray(payload["pixel_spacing_rc_mm"], dtype=np.float64)
+        slice_thickness_mm = np.asarray(payload["slice_thickness_mm"], dtype=np.float64)
         n_obs = images.shape[0]
         if images.ndim != 3 or masks.shape != images.shape:
-            raise ValueError(f"images/masks must be equally shaped [N,H,W], got {images.shape}/{masks.shape}.")
-        if any(value.shape != (n_obs,) for value in (group_idx, weight_idx, stack_idx, acquisition_time_ms)):
-            raise ValueError("Observation metadata vectors must have shape [N].")
-        if timing9_ms.shape != (n_obs, 9):
-            raise ValueError(f"timing9_ms must be [N,9], got {timing9_ms.shape}.")
-        if affine_lps_rc.shape != (n_obs, 4, 4):
-            raise ValueError(f"affine_lps_rc must be [N,4,4], got {affine_lps_rc.shape}.")
-        if not np.all(np.isfinite(images)) or not np.all(np.isfinite(timing9_ms)):
-            raise ValueError("Prepared images and timing must be finite.")
-        unique_groups = np.unique(group_idx)
-        if not np.array_equal(unique_groups, np.arange(unique_groups.size)):
-            raise ValueError(f"group_idx must be contiguous zero-based, got {unique_groups.tolist()}.")
-        for group in unique_groups:
+            raise ValueError(f"images/masks must be equal [N,H,W], got {images.shape}/{masks.shape}.")
+        if any(v.shape != (n_obs,) for v in (group_idx, weight_idx, stack_idx, acquisition_time_ms, slice_thickness_mm)):
+            raise ValueError("Observation vectors must have shape [N].")
+        if timing9_ms.shape != (n_obs, 9) or affine_lps_rc.shape != (n_obs, 4, 4):
+            raise ValueError("timing9_ms and affine_lps_rc must be [N,9] and [N,4,4].")
+        if pixel_spacing_rc_mm.shape != (n_obs, 2):
+            raise ValueError(f"pixel_spacing_rc_mm must be [N,2], got {pixel_spacing_rc_mm.shape}.")
+        local_groups = np.unique(group_idx)
+        if not np.array_equal(local_groups, np.arange(local_groups.size)):
+            raise ValueError(f"Source group_idx must be contiguous zero-based, got {local_groups.tolist()}.")
+        resolutions: list[np.ndarray] = []
+        for group in local_groups:
             indices = np.flatnonzero(group_idx == group)
             if indices.size != 10 or not np.array_equal(np.sort(weight_idx[indices]), np.arange(10)):
-                raise ValueError(f"Group {group} must contain exactly one observation for weights 0..9.")
+                raise ValueError(f"Source group {group} must contain exactly one weight 0..9.")
             if np.unique(stack_idx[indices]).size != 1:
-                raise ValueError(f"Group {group} must have one stack_idx.")
+                raise ValueError(f"Source group {group} must have one stack_idx.")
             if not np.allclose(affine_lps_rc[indices], affine_lps_rc[indices[0]], rtol=0, atol=1e-10):
-                raise ValueError(f"Group {group} weights must share one HB1 cropped affine.")
+                raise ValueError(f"Source group {group} weights must share one cropped HB1 affine.")
             if not np.allclose(timing9_ms[indices], timing9_ms[indices[0]], rtol=0, atol=1e-10):
-                raise ValueError(f"Group {group} weights must share one timing vector.")
+                raise ValueError(f"Source group {group} weights must share one timing vector.")
+            if not np.allclose(pixel_spacing_rc_mm[indices], pixel_spacing_rc_mm[indices[0]], rtol=0, atol=1e-10):
+                raise ValueError(f"Source group {group} weights must share PixelSpacing.")
+            if not np.allclose(slice_thickness_mm[indices], slice_thickness_mm[indices[0]], rtol=0, atol=1e-10):
+                raise ValueError(f"Source group {group} weights must share SliceThickness.")
+            row_spacing, col_spacing = pixel_spacing_rc_mm[indices[0]]
+            resolution_xyz = np.asarray([col_spacing, row_spacing, slice_thickness_mm[indices[0]]])
+            if np.any(~np.isfinite(resolution_xyz)) or np.any(resolution_xyz <= 0):
+                raise ValueError(f"Source group {group} has invalid [col,row,thickness] resolution.")
+            resolutions.append(resolution_xyz)
+        return np.stack(resolutions)
+
+    def _build_from_stacks(self, payloads: list[dict[str, np.ndarray]], device: str | torch.device) -> None:
+        local_xyz, intensity, groups, weights, stacks, timings, acq = [], [], [], [], [], [], []
+        initial_matrices, resolutions = [], []
+        offset = 0
+        for payload in payloads:
+            group_resolutions = self._validate_stack(payload)
+            images, masks = payload["images"].astype(np.float32), payload["masks"].astype(bool)
+            source_groups = payload["group_idx"].astype(np.int64)
+            for local_group, resolution_xyz in enumerate(group_resolutions):
+                indices = np.flatnonzero(source_groups == local_group)
+                h, w = images.shape[1:]
+                initial = cropped_affine_lps_rc_to_initial_rigid(
+                    payload["affine_lps_rc"][indices[0]], (h, w), resolution_xyz, device=device
+                )
+                initial_matrices.append(initial.matrix(trans_first=True))
+                resolutions.append(resolution_xyz)
+                global_group = offset + local_group
+                for observation_idx in indices:
+                    rows, cols = np.nonzero(masks[observation_idx])
+                    if rows.size == 0:
+                        raise ValueError(f"Group {global_group} has an empty foreground mask.")
+                    local_xyz.append(np.column_stack(((cols - (w - 1) / 2.0) * resolution_xyz[0], (rows - (h - 1) / 2.0) * resolution_xyz[1], np.zeros(rows.size))))
+                    intensity.append(images[observation_idx, rows, cols])
+                    groups.append(np.full(rows.size, global_group, dtype=np.int64))
+                    weights.append(np.full(rows.size, payload["weight_idx"][observation_idx], dtype=np.int64))
+                    stacks.append(np.full(rows.size, payload["stack_idx"][observation_idx], dtype=np.int64))
+                    timings.append(np.repeat(payload["timing9_ms"][observation_idx][None], rows.size, axis=0))
+                    acq.append(np.full(rows.size, payload["acquisition_time_ms"][observation_idx], dtype=np.float64))
+            offset += group_resolutions.shape[0]
+        self.group_pose_count = offset
+        self.group_resolution_xyz_mm = torch.as_tensor(np.stack(resolutions), dtype=torch.float32, device=device)
+        self.initial_transformation = RigidTransform(torch.cat(initial_matrices), trans_first=True)
+        self.group_axisangle_init = self.initial_transformation.axisangle(trans_first=True).detach().clone()
+        self.xyz = torch.as_tensor(np.concatenate(local_xyz), dtype=torch.float32, device=device)
+        self.v = torch.as_tensor(np.concatenate(intensity), dtype=torch.float32, device=device)
+        self.group_idx = torch.as_tensor(np.concatenate(groups), dtype=torch.long, device=device)
+        self.weight_idx = torch.as_tensor(np.concatenate(weights), dtype=torch.long, device=device)
+        self.stack_idx = torch.as_tensor(np.concatenate(stacks), dtype=torch.long, device=device)
+        self.timing = torch.as_tensor(np.concatenate(timings), dtype=torch.float32, device=device)
+        self.acquisition_time_ms = torch.as_tensor(np.concatenate(acq), dtype=torch.float32, device=device)
+        self.count, self.epoch = 0, 0
+
+    @property
+    def xyz_transformed(self) -> torch.Tensor:
+        return ax_transform_points(self.group_axisangle_init[self.group_idx], self.xyz, trans_first=True)
 
     @property
     def bounding_box(self) -> torch.Tensor:
-        """NeSVoR-style untransformed LPS bounding box, without rigid poses yet."""
-
-        return torch.stack((self.xyz.amin(dim=0), self.xyz.amax(dim=0)), dim=0)
+        transformed = self.xyz_transformed
+        return torch.stack((transformed.amin(dim=0), transformed.amax(dim=0)), dim=0)
 
     def get_batch(self, batch_size: int) -> Dict[str, torch.Tensor]:
-        """Return PointDataset-like tensors augmented with group/weight/timing metadata."""
-
         if batch_size <= 0:
             raise ValueError("batch_size must be positive.")
         if self.count + batch_size > self.xyz.shape[0]:
-            self.count = 0
-            self.epoch += 1
+            self.count, self.epoch = 0, self.epoch + 1
             permutation = torch.randperm(self.xyz.shape[0], device=self.xyz.device)
             for name in ("xyz", "v", "group_idx", "weight_idx", "stack_idx", "timing", "acquisition_time_ms"):
                 setattr(self, name, getattr(self, name)[permutation])
-        batch_slice = slice(self.count, self.count + batch_size)
+        selected = slice(self.count, self.count + batch_size)
         self.count += batch_size
-        return {
-            "xyz": self.xyz[batch_slice],
-            "v": self.v[batch_slice],
-            "group_idx": self.group_idx[batch_slice],
-            "weight_idx": self.weight_idx[batch_slice],
-            "stack_idx": self.stack_idx[batch_slice],
-            "timing": self.timing[batch_slice],
-            "acquisition_time_ms": self.acquisition_time_ms[batch_slice],
-        }
+        return {"xyz": self.xyz[selected], "v": self.v[selected], "group_idx": self.group_idx[selected], "weight_idx": self.weight_idx[selected], "stack_idx": self.stack_idx[selected], "timing": self.timing[selected], "acquisition_time_ms": self.acquisition_time_ms[selected]}

@@ -43,3 +43,26 @@
   image shape `[10,145,129]`, timing `[1,9]`, geometry `[1,4,4]`,
   `center_data=true`; it ran MIND then MP-PCA exactly once successfully after
   a failed MP-PCA singleton-dimension attempt was repaired.
+
+## 2026-09-11 — Phase 2 geometry correction and Phase 3 Trad core forward
+
+- Corrected Module 03 coordinates to centered local `[column,row,slice]` mm,
+  retained Module 02 cropped HB1 DICOM-LPS provenance, and explicitly converts
+  at the Module 03/06 boundary to RAS-mm. Added strict IOP norm/orthogonality
+  checks with no auto-orthogonalization.
+- Each native group now has one initial NeSVoR `RigidTransform` derived from
+  its cropped HB1 affine; all 10 weights share it. Added multi-stack input,
+  global group indexing, preserved stack IDs, per-group `[col,row,thickness]`
+  resolution, and RAS-transformed bounding boxes.
+- Added Module 04 `QuantitativeINR`, using only vendored NeSVoR HashGrid
+  primitives and a shared latent to bounded T1/T2/B1/A fields.
+- Added Module 05A `TradSignalSimulator`, a direct tensorized HHZ
+  `sim_T1T2_10HB_bssfp.m` recurrence. It has no EPG path and rejects any
+  protocol other than v1 HHZ TI=[50,150].
+- Added Module 06 rigid-per-group/local-anisotropic-PSF forward. It has
+  `deformable=false`, no deformation parameters, and performs signal
+  simulation before PSF averaging.
+- Tests: the seven requested test files PASS (8 tests); batch=1024/K=4
+  finite-gradient benchmark PASS; one MATLAB 20-case raw-signal parity PASS
+  (max abs error `1.2351231148954867e-15`). No preprocessing/MIND rerun and no
+  training were performed.
