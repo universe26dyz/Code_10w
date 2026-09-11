@@ -85,3 +85,23 @@
   it is a code-path test rather than a cross-timing generalization result.
 - Not implemented: MLP online reconstruction, decoder replacement in the
   rigid/PSF forward, end-to-end MLP training, or any reconstruction benchmark.
+
+## 2026-09-11 — Phase 5 review corrections / Phase 6 online integration
+
+- Reworked offline HDF5 training to load each split once into CPU-RAM
+  `TensorDataset`; training BatchNorm requires batch≥2 and `drop_last=true`.
+  Fidelity transfers values batchwise and only gradient samples to device.
+- Added explicit teacher device, timing-pool `functional_fixture`, timing-pool
+  SHA256, timing min/max, protocol/split provenance and strict dataset/pool/
+  protocol/checkpoint compatibility checks.
+- Added strict checkpoint loader and Trad-compatible frozen decoder signature.
+  Formal online config rejects functional-fixture checkpoints; only a fixed
+  1e-4 ms float32 storage-boundary tolerance is accepted.
+- Added MLP online reconstruction by minimally reusing the frozen Trad staged
+  INR/rigid/PSF/export/QC chain. Frozen MLP parameters are absent from optimizer
+  groups and BatchNorm statistics are checked unchanged. Added separate recon
+  configs, explicit SAX+2CH+4CH launcher and decoder-only benchmark.
+- Validation: targeted offline regression PASS (3 files after fixture repair);
+  online suite PASS (5 tests); one CPU online functional smoke and one CPU
+  benchmark PASS. The tiny checkpoint is `scientific_checkpoint=false` and
+  does not establish scientific reconstruction quality.

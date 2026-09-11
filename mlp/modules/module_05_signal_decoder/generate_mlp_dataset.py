@@ -17,9 +17,9 @@ def main() -> None:
     with Path(args.config).open(encoding="utf-8") as handle: config = yaml.safe_load(handle)
     if not isinstance(config, dict) or not isinstance(config.get("dataset"), dict): raise ValueError("Config must contain dataset mapping.")
     dataset = config["dataset"]
-    for key in ("train", "valid", "test", "seed", "teacher_chunk_size"):
+    for key in ("train", "valid", "test", "seed", "teacher_chunk_size", "teacher_device"):
         if key not in dataset: raise ValueError(f"dataset.{key} must be explicit.")
-    print(generate_mlp_dataset(args.timing_pool, args.protocol, args.output_dir, dataset, int(dataset["seed"]), int(dataset["teacher_chunk_size"])))
+    print(generate_mlp_dataset(args.timing_pool, args.protocol, args.output_dir, dataset, int(dataset["seed"]), int(dataset["teacher_chunk_size"]), str(dataset["teacher_device"])))
 
 
 if __name__ == "__main__": main()

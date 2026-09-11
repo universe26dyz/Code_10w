@@ -7,9 +7,10 @@ Last updated: 2026-09-11
 Trad v1 is a frozen runnable baseline: project audit, preprocessing,
 bridge/timing, dataset geometry, quantitative INR, HHZ direct signal model,
 rigid/PSF, staged objective/training, checkpointing, physical-RAS inference,
-export, and CPU tiny smoke are implemented.  MLP offline signal-surrogate
-training is complete; MLP online reconstruction remains intentionally
-unimplemented.
+export, and CPU tiny smoke are implemented. MLP v1 offline training and online
+integration are runnable under the same INR/rigid/PSF/objective contract; its
+current tiny MLP checkpoint is functional-fixture only, not scientifically
+validated reconstruction.
 
 ## Audit record
 
@@ -214,8 +215,29 @@ unimplemented.
 - Not implemented by design: online decoder insertion, MLP reconstruction,
   end-to-end reconstruction training, or an MLP benchmark.
 
+## Phase 5 review correction / Phase 6 deliverables and validation
+
+- [x] Offline HDF5 uses the single CPU-RAM TensorDataset path, non-singleton
+  BatchNorm batches and batchwise-device fidelity. Teacher device is explicit.
+- [x] Timing pools, metadata and checkpoints retain/check functional-fixture
+  provenance, SHA256, timing ranges and complete protocol; mismatch/out-of-
+  range timing errors are strict (except 1e-4 ms float32 storage precision).
+- [x] MLP online reuses frozen Trad INR, group rigid pose, PSF, loss,
+  regularization, AdamW stages, sampler and export. Only decoder differs;
+  decoder parameters stay frozen/out of optimizer and BN remains eval.
+- [x] Separate recon configs and explicit three-stack server launcher exist;
+  formal server config rejects functional-fixture checkpoints.
+- PASS — targeted offline regression (RAM HDF5, SHA mismatch, fixture guard),
+  online suite (5 tests), one final CPU smoke after one float32-boundary repair,
+  and one CPU decoder benchmark at 1,000/10,000 with 3-rep medians.
+- Smoke: CYJ/2ch, one group/all ten weights, Stage A=10/B=4, PSF K=2; four
+  finite NIfTI fields, 14 finite logs, rigid/no-deform and frozen BN. The
+  exact failed temporary smoke root was removed before the single re-run.
+- Not run: GPU training/benchmark, formal multi-subject timing-pool training,
+  formal 3-stack reconstruction, Phase-6 MATLAB parity or image comparison.
+
 ## Next-stage entry
 
-Await Command 6.  Trad remains frozen; MLP is offline-complete only.  Future
-work must not alter the fixed HHZ scientific protocol or connect the MLP to
-reconstruction without an explicit command.
+Implementation v1 is complete. Do not begin formal server training or alter
+the fixed HHZ scientific contract without a new command. See
+`IMPLEMENTATION_REPORT_v1.md`.

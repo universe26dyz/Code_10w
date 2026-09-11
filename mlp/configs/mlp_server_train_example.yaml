@@ -5,6 +5,7 @@ dataset:
   test: 100000
   seed: 20260911
   teacher_chunk_size: 8192
+  teacher_device: cuda:0
 training:
   device: cuda:0
   seed: 20260911

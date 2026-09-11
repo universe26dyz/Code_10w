@@ -12,6 +12,7 @@ import torch
 import yaml
 
 from .mlp_model import make_input12
+from .provenance import sha256_file
 from .trad_teacher.trad_signal_simulator import TradProtocol, TradSignalSimulator
 
 
@@ -20,13 +21,16 @@ def load_timing_pool(path: str | Path) -> dict[str, np.ndarray]:
     if not path.is_file():
         raise FileNotFoundError(f"Timing pool does not exist: {path}")
     with np.load(path, allow_pickle=False) as data:
-        required = {"timing9_ms", "tr_ms", "vps", "source_id", "group_id"}
+        required = {"timing9_ms", "tr_ms", "vps", "source_id", "group_id", "functional_fixture"}
         missing = required.difference(data.files)
         if missing:
             raise ValueError(f"Timing pool lacks: {sorted(missing)}")
         result = {key: np.asarray(data[key]) for key in required}
     if result["timing9_ms"].ndim != 2 or result["timing9_ms"].shape[1] != 9 or result["timing9_ms"].shape[0] < 3:
         raise ValueError("Timing pool must contain at least three unique [N,9] timing vectors for train/val/test timing splits.")
+    if result["functional_fixture"].size != 1:
+        raise ValueError("Timing pool functional_fixture must be one explicit boolean.")
+    result["functional_fixture"] = np.asarray(bool(result["functional_fixture"].reshape(-1)[0]))
     if float(result["tr_ms"].reshape(-1)[0]) <= 0 or int(result["vps"].reshape(-1)[0]) < 16:
         raise ValueError("Timing pool has invalid TR/VPS.")
     return result
@@ -74,7 +78,14 @@ def split_timing_ids(n_timing: int, seed: int) -> dict[str, np.ndarray]:
     return {"train": order[:n_train], "valid": order[n_train:n_train + n_val], "test": order[n_train + n_val:]}
 
 
-def _generate_split(path: Path, n_samples: int, timing_ids: np.ndarray, pool: Mapping[str, np.ndarray], protocol: TradProtocol, seed: int, chunk_size: int) -> None:
+def _teacher_device(value: str) -> torch.device:
+    device = torch.device(value)
+    if device.type == "cuda" and not torch.cuda.is_available():
+        raise RuntimeError(f"Requested teacher_device is unavailable: {device}")
+    return device
+
+
+def _generate_split(path: Path, n_samples: int, timing_ids: np.ndarray, pool: Mapping[str, np.ndarray], protocol: TradProtocol, seed: int, chunk_size: int, teacher_device: torch.device) -> None:
     if n_samples < 1 or timing_ids.size < 1 or chunk_size < 1:
         raise ValueError("Dataset split size, timing IDs, and chunk_size must be positive.")
     rng = np.random.default_rng(seed)
@@ -93,13 +104,13 @@ def _generate_split(path: Path, n_samples: int, timing_ids: np.ndarray, pool: Ma
             timing = np.asarray(pool["timing9_ms"][chosen], dtype=np.float32)
             t1_t, t2_t, b1_t, timing_t = (torch.from_numpy(value) for value in (t1, t2, b1, timing))
             with torch.no_grad():
-                target = teacher(t1_t, t2_t, b1_t, timing_t, protocol, normalize=True).numpy().astype(np.float32)
+                target = teacher(t1_t.to(teacher_device), t2_t.to(teacher_device), b1_t.to(teacher_device), timing_t.to(teacher_device), protocol, normalize=True).detach().cpu().numpy().astype(np.float32)
             input_set[start:end] = make_input12(t1_t, t2_t, b1_t, timing_t).numpy().astype(np.float32)
             target_set[start:end] = target
             timing_set[start:end] = chosen
 
 
-def generate_mlp_dataset(timing_pool_path: str | Path, protocol_path: str | Path, output_dir: str | Path, sizes: Mapping[str, Any], seed: int, chunk_size: int) -> dict[str, Any]:
+def generate_mlp_dataset(timing_pool_path: str | Path, protocol_path: str | Path, output_dir: str | Path, sizes: Mapping[str, Any], seed: int, chunk_size: int, teacher_device: str = "cpu") -> dict[str, Any]:
     pool = load_timing_pool(timing_pool_path)
     required = ("train", "valid", "test")
     if any(key not in sizes for key in required):
@@ -108,11 +119,15 @@ def generate_mlp_dataset(timing_pool_path: str | Path, protocol_path: str | Path
     if output.exists() and any(output.iterdir()):
         raise FileExistsError(f"Synthetic dataset output must be absent or empty: {output}")
     output.mkdir(parents=True, exist_ok=True)
+    if not isinstance(teacher_device, str):
+        raise ValueError("teacher_device must be an explicit device string.")
     protocol = _protocol(pool, protocol_path)
+    device = _teacher_device(teacher_device)
     splits = split_timing_ids(pool["timing9_ms"].shape[0], seed)
     for offset, split in enumerate(required):
-        _generate_split(output / f"{split}.h5", int(sizes[split]), splits[split], pool, protocol, seed + offset, chunk_size)
-    metadata = {"timing_pool": str(Path(timing_pool_path)), "timing_split_ids": {key: value.tolist() for key, value in splits.items()}, "protocol": {"tr_ms": protocol.tr_ms, "vps": protocol.vps, "fa_deg": list(protocol.fa_deg), "ti_ms": list(protocol.ti_ms), "t2prep_ms": list(protocol.t2prep_ms), "n_ramp_up": protocol.n_ramp_up}, "sizes": {key: int(sizes[key]) for key in required}, "seed": int(seed)}
+        _generate_split(output / f"{split}.h5", int(sizes[split]), splits[split], pool, protocol, seed + offset, chunk_size, device)
+    timing = np.asarray(pool["timing9_ms"], dtype=np.float64)
+    metadata = {"timing_pool": str(Path(timing_pool_path)), "timing_pool_sha256": sha256_file(timing_pool_path), "functional_fixture": bool(pool["functional_fixture"]), "timing9_min_ms": timing.min(axis=0).tolist(), "timing9_max_ms": timing.max(axis=0).tolist(), "tr_ms": protocol.tr_ms, "vps": protocol.vps, "timing_split_ids": {key: value.tolist() for key, value in splits.items()}, "protocol": {"tr_ms": protocol.tr_ms, "vps": protocol.vps, "fa_deg": list(protocol.fa_deg), "ti_ms": list(protocol.ti_ms), "t2prep_ms": list(protocol.t2prep_ms), "n_ramp_up": protocol.n_ramp_up}, "sizes": {key: int(sizes[key]) for key in required}, "seed": int(seed), "teacher_device": str(device)}
     with (output / "dataset_metadata.json").open("w", encoding="utf-8") as handle:
         json.dump(metadata, handle, indent=2)
     return metadata

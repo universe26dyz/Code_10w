@@ -54,7 +54,7 @@ def build_timing_pool(observation_paths: list[str | Path], output_path: str | Pa
     if output.exists():
         raise FileExistsError(f"Timing pool output already exists: {output}")
     output.parent.mkdir(parents=True, exist_ok=True)
-    np.savez_compressed(output, timing9_ms=timing_rows[first_indices], tr_ms=np.asarray(first_tr), vps=np.asarray(first_vps, dtype=np.int64), source_id=np.asarray([source_ids[index] for index in first_indices]), group_id=np.asarray([source_groups[index] for index in first_indices], dtype=np.int64), stack_idx=np.asarray([stack_ids[index] for index in first_indices], dtype=np.int64))
+    np.savez_compressed(output, timing9_ms=timing_rows[first_indices], tr_ms=np.asarray(first_tr), vps=np.asarray(first_vps, dtype=np.int64), source_id=np.asarray([source_ids[index] for index in first_indices]), group_id=np.asarray([source_groups[index] for index in first_indices], dtype=np.int64), stack_idx=np.asarray([stack_ids[index] for index in first_indices], dtype=np.int64), functional_fixture=np.asarray(False))
     return {"timing_count": int(first_indices.size), "tr_ms": first_tr, "vps": first_vps, "output": str(output)}
 
 

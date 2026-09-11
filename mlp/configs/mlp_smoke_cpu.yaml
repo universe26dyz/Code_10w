@@ -4,6 +4,7 @@ dataset:
   test: 256
   seed: 20260911
   teacher_chunk_size: 128
+  teacher_device: cpu
 training:
   device: cpu
   seed: 20260911
