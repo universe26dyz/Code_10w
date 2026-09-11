@@ -1,0 +1,21 @@
+# Phase-1 scientific contract. Values are in milliseconds unless stated otherwise.
+protocol_version: hhz_v1
+scientific_authority: MultiMapCode_hhz
+num_images: 10
+flip_angle_degrees: [45, 45, 45]
+inversion_times_ms: [50, 150]
+t2prep_ms: [35, 45, 55]
+ramp_up_pulses: 10
+dicom_fields:
+  tr_ms: RepetitionTime
+  vps: EchoTrainLength
+preprocessing:
+  sort_key: AcquisitionTime
+  mind_reference_weight: 0
+  mind_register_weights: [1, 2, 3, 4, 5, 6, 7, 8, 9]
+  post_mind_geometry: all_10_weights_use_hb1_geometry
+  output_data: Mag_crop_is_MIND_mag_reg
+known_difference:
+  dyz_legacy_inversion_times_ms: [10, 100]
+  v1_decision: HHZ_TI_50_150_is_required; never inherit DYZ silently
+v1_exclusions: [EPG, NeSVoR_deformable, low_rank, extra_models]
