@@ -181,6 +181,8 @@ def build_manifest(
             "slice_thickness_mm": thickness,
             "timing10_ms": timing10,
             "timing9_ms": timing9,
+            "tr_ms": float(preprocessed["tr_ms"]),
+            "vps": int(preprocessed["vps"]),
         }
         groups.append(group)
         for weight_idx, record in enumerate(records):
@@ -197,6 +199,8 @@ def build_manifest(
                     "affine_lps_rc": cropped_affine,
                     "pixel_spacing_rc_mm": pixel_spacing_rc,
                     "slice_thickness_mm": thickness,
+                    "tr_ms": float(preprocessed["tr_ms"]),
+                    "vps": int(preprocessed["vps"]),
                 }
             )
     return {

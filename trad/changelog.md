@@ -66,3 +66,25 @@
   finite-gradient benchmark PASS; one MATLAB 20-case raw-signal parity PASS
   (max abs error `1.2351231148954867e-15`). No preprocessing/MIND rerun and no
   training were performed.
+
+## 2026-09-11 — Phase 3 review correction and Phase 4 Trad runnable baseline
+
+- Corrected shared bridge/dataset/INR/rigid infrastructure before training:
+  removed forced HashEmbedder type checks; restored native NeSVoR CPU/tcnn
+  backend behavior; restored physical RAS bbox `2*max_resolution` margin;
+  wrote/validated DICOM TR/VPS; and added non-mutating NeSVoR center/scale=30
+  training space with physical pose round-trip.
+- `GroupRigidPSF` now preserves DICOM-derived `axisangle_init` and uses
+  NeSVoR `trans_loss` relative to init. It remains rigid-only with no deform.
+- Added Modules 07/08/09: Stage A/B AdamW training, exact 10-weight balanced
+  MSE, static stack balancing, config-controlled normalized quantitative
+  regularization, full checkpoint metadata, physical-RAS NIfTI export,
+  physical final poses, and strict tiny-output QC.
+- Added `smoke_cpu.yaml`, `server_train_example.yaml`, command scripts, and
+  Chinese data-flow README. No formal server run was performed.
+- Tests: unified requested suite PASS (11 tests). A first smoke process failed
+  at Python module import before training; after changing the launcher to
+  `python -m`, the only completed smoke PASS used existing Phase-2 CYJ/2ch,
+  1 group/10 weights, 14 CPU iterations, PSF K=2. It produced finite four
+  NIfTI fields, checkpoint, log, config, and physical poses; no MIND/MP-PCA
+  was rerun.

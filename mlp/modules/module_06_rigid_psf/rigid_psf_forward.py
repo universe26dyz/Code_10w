@@ -22,7 +22,8 @@ class GroupRigidPSF(nn.Module):
             raise ValueError("group_axisangle_init must be [G,6] NeSVoR axis-angle parameters.")
         if resolution.shape != (initial.shape[0], 3) or not torch.isfinite(resolution).all() or torch.any(resolution <= 0):
             raise ValueError("group_resolution_xyz_mm must be finite positive [G,3].")
-        self.axisangle = nn.Parameter(initial.clone())
+        self.register_buffer("axisangle_init", initial.detach().clone())
+        self.axisangle = nn.Parameter(initial.detach().clone())
         self.register_buffer("group_resolution_xyz_mm", resolution)
 
     @property
@@ -36,6 +37,16 @@ class GroupRigidPSF(nn.Module):
     def sigma_for_groups(self, group_idx: torch.Tensor) -> torch.Tensor:
         self._validate_group_idx(group_idx)
         return resolution2sigma(self.group_resolution_xyz_mm[group_idx], isotropic=False)
+
+    def transformation_loss(self, spatial_scaling: float) -> torch.Tensor:
+        """Vendored NeSVoR ``trans_loss`` semantics relative to DICOM init."""
+
+        if spatial_scaling <= 0:
+            raise ValueError("spatial_scaling must be positive.")
+        current = RigidTransform(self.axisangle, trans_first=True)
+        initial = RigidTransform(self.axisangle_init, trans_first=True)
+        error = initial.inv().compose(current).axisangle(trans_first=True)
+        return error[:, :3].pow(2).mean() + 1e-3 * spatial_scaling**2 * error[:, 3:].pow(2).mean()
 
     def transform_local_to_ras(self, local_xyz_mm: torch.Tensor, group_idx: torch.Tensor) -> torch.Tensor:
         if local_xyz_mm.shape[-1] != 3 or local_xyz_mm.shape[:-1] != group_idx.shape:

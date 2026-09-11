@@ -17,3 +17,8 @@ slice 数，供下一阶段建立“一组一个 rigid pose”。`xyz` 是 cente
 `initial_transformation` 从 cropped HB1 DICOM-LPS affine 显式转换到 RAS-mm；
 `xyz_transformed` 与 bounding box 都使用该初始 group pose。多个 NPZ 输入会全局
 重新编号 group，同时原样保留每个 stack id。
+
+`bounding_box` 沿用 NeSVoR `PointDataset` 的 physical RAS-mm 规则：所有
+transformed mask points 的 min/max 各扩展 `2 * max(group_resolution_xyz_mm)`。
+每组还保存并验证 `group_tr_ms`/`group_vps`；多 stack 在线 Trad 只能接受一组
+完全一致的 TR/VPS，否则训练入口直接列出 group 值并报错。

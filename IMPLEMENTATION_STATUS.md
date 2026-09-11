@@ -4,12 +4,11 @@ Last updated: 2026-09-11
 
 ## Current boundary
 
-Phase 3 Trad core forward model is complete. Project audit, scaffold,
-corrected MATLAB preprocessing, MATLAB/Python bridge, timing, 10-weight group
-dataset, RAS geometry, Quantitative INR, direct HHZ Trad signal simulation,
-and rigid/PSF forward are implemented. MLP signal decoding/training, Trad
-optimization loops, inference, and all later modules remain intentionally
-unimplemented.
+Trad v1 is now a frozen runnable baseline: project audit, preprocessing,
+bridge/timing, dataset geometry, quantitative INR, HHZ direct signal model,
+rigid/PSF, staged objective/training, checkpointing, physical-RAS inference,
+export, and CPU tiny smoke are implemented. MLP signal decoding/training and
+all MLP online reconstruction work remain intentionally unimplemented.
 
 ## Audit record
 
@@ -127,6 +126,49 @@ unimplemented.
 
 ## Next-stage entry
 
-Await the next command. The next planned boundary is the remaining method
-work specified by the pipeline; do not start a training loop or inference
-without an explicit command.
+## Phase 3 review correction / Phase 4 Trad runnable-chain deliverables
+
+- [x] Removed the forced `HashEmbedder` concrete-type gate. CPU explicitly
+  follows NeSVoR `USE_TORCH=True`; CUDA retains vendored NeSVoR/tinycudann
+  backend selection through `build_encoding`/`build_network`.
+- [x] Restored NeSVoR `PointDataset` physical-RAS bounding-box margin of
+  `2 * max(group_resolution_xyz_mm)` on both sides.
+- [x] Propagated validated Phase-1 DICOM TR/VPS into bridge NPZ data and
+  `QuantPointDataset` group metadata. One online Trad protocol now requires
+  equal TR (tolerance) and exactly equal VPS across all groups/stacks.
+- [x] Added a non-mutating NeSVoR-style `training_space.py`: center physical
+  RAS bbox, `spatial_scaling=30`, scale local geometry, compose `-center`
+  before group poses, and provide tested inverse pose/query conversion.
+- [x] Added `axisangle_init` to `GroupRigidPSF` and NeSVoR `trans_loss`
+  semantics relative to the DICOM-derived initial group poses.
+- [x] Added Trad Module 07 Stage A/B training (AdamW, encoding/network
+  groups, scheduler, 10-weight MSE, static stack weights, optional normalized
+  T1/T2/B1 gradient regularization), Module 08 physical-RAS NIfTI/pose export,
+  and Module 09 artifact QC.
+- [x] Added explicit smoke/server configs, preparation/training/smoke scripts,
+  and a Chinese Trad data-flow README. No training CLI parameter silently
+  falls back to phase-3 smoke defaults.
+- [x] Synced only common bridge/dataset/INR/rigid/training-space infrastructure
+  to MLP; no Trad decoder, MLP decoder, MLP training, or MLP full suite ran.
+
+## Phase 4 validation
+
+- PASS — unified CPU pytest suite (11 tests): dataset/multi-stack margin,
+  training-space round-trip, INR, signal, rigid/PSF, dataset-derived protocol,
+  checkpoint metadata/load, and end-to-end tiny train/export/QC.
+- Initial smoke entry failed before training because executing
+  `scripts/run_training.py` made `scripts/` the Python import root. Fixed it
+  to `python -m scripts.run_training`, removed only that failed smoke's exact
+  `/tmp/multimap_phase4_trad_smoke` directory, then reran once.
+- PASS — real smoke: existing Phase-2 `CYJ_20260819_163756 / 2ch`, one group,
+  all 10 weights, lightweight bridge only (no MIND/MP-PCA), Stage A=10 and
+  Stage B=4, PSF K=2. QC reports all four fields finite, 14 log rows,
+  rigid tensor present, and `deformable=false`.
+- PASS — MLP common infrastructure import and byte-identity check. No MLP
+  real smoke or full test was repeated.
+
+## Next-stage entry
+
+Await the next command. Trad v1 scientific logic is frozen as the baseline;
+future MLP work must not alter its protocol, signal physics, objective, or
+rigid/PSF contract without an explicit command.

@@ -8,12 +8,7 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
-from third_party.nesvor.nesvor.inr.models import (
-    HashEmbedder,
-    build_encoding,
-    build_network,
-    compute_resolution_nlevel,
-)
+from third_party.nesvor.nesvor.inr import models as nesvor_models
 
 
 @dataclass(frozen=True)
@@ -42,6 +37,7 @@ class QuantitativeINR(nn.Module):
         self,
         bounding_box_ras_mm: torch.Tensor,
         config: QuantitativeINRConfig = QuantitativeINRConfig(),
+        spatial_scaling: float = 1.0,
     ) -> None:
         super().__init__()
         bbox = torch.as_tensor(bounding_box_ras_mm, dtype=torch.float32)
@@ -49,18 +45,25 @@ class QuantitativeINR(nn.Module):
             raise ValueError("bounding_box_ras_mm must be finite [2,3] with positive extent.")
         if config.coarsest_resolution_mm <= 0 or config.finest_resolution_mm <= 0:
             raise ValueError("HashGrid resolutions must be positive.")
+        if not torch.isfinite(torch.tensor(spatial_scaling)) or spatial_scaling <= 0:
+            raise ValueError("spatial_scaling must be positive and finite.")
         self.config = config
+        self.spatial_scaling = float(spatial_scaling)
         self.register_buffer("bounding_box_ras_mm", bbox)
-        base_resolution, n_levels = compute_resolution_nlevel(
+        # Match NeSVoR.NeSVoR: local CPU smoke explicitly selects its vendored
+        # PyTorch HashGrid; CUDA retains NeSVoR's tinycudann decision.
+        if bbox.device.type == "cpu":
+            nesvor_models.USE_TORCH = True
+        base_resolution, n_levels = nesvor_models.compute_resolution_nlevel(
             bbox,
             config.coarsest_resolution_mm,
             config.finest_resolution_mm,
             config.level_scale,
-            1.0,
+            self.spatial_scaling,
         )
         if base_resolution < 1 or n_levels < 1:
             raise ValueError("NeSVoR HashGrid resolution calculation produced an invalid level count.")
-        self.encoding = build_encoding(
+        self.encoding = nesvor_models.build_encoding(
             n_input_dims=3,
             otype="HashGrid",
             n_levels=n_levels,
@@ -70,12 +73,8 @@ class QuantitativeINR(nn.Module):
             per_level_scale=config.level_scale,
             dtype=torch.float32,
         )
-        # Keep the imported symbol visible and make an accidental non-NeSVoR
-        # backend substitution fail loudly in CPU smoke environments.
-        if not isinstance(self.encoding, HashEmbedder):
-            raise RuntimeError("QuantitativeINR requires the vendored NeSVoR HashEmbedder backend.")
         encoded_features = n_levels * config.n_features_per_level
-        self.shared_latent = build_network(
+        self.shared_latent = nesvor_models.build_network(
             n_input_dims=encoded_features,
             n_output_dims=config.latent_features,
             activation="ReLU",
@@ -84,7 +83,7 @@ class QuantitativeINR(nn.Module):
             n_hidden_layers=config.depth,
             dtype=torch.float32,
         )
-        self.parameter_head = build_network(
+        self.parameter_head = nesvor_models.build_network(
             n_input_dims=config.latent_features,
             n_output_dims=4,
             activation="ReLU",

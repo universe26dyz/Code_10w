@@ -23,3 +23,6 @@ MIND 后 weights 共用同一 cropped HB1 affine。
 `Duration_befor_Acq`：输出 `[10]`，bridge 将其 `[1:10]` 保存为每个 group/observation
 的 9D conditioning vector。输出为 `observations.npz`、`manifest.json`、
 `timing.npy` 和 `qc_summary.json`，都写入调用者指定目录，不复制 DICOM。
+
+`observations.npz` 同时逐 observation 保存由已验证 MAT `TR`/`VPS` 取得的
+`tr_ms`/`vps`。这是唯一的正式训练 protocol provenance；桥接不猜测参数。

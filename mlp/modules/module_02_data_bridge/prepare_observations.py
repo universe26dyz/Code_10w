@@ -74,6 +74,8 @@ def prepare_observations(
         affine_lps_rc=np.stack([item["affine_lps_rc"] for item in observations]).astype(np.float64),
         pixel_spacing_rc_mm=np.stack([item["pixel_spacing_rc_mm"] for item in observations]).astype(np.float64),
         slice_thickness_mm=np.asarray([item["slice_thickness_mm"] for item in observations], dtype=np.float64),
+        tr_ms=np.asarray([item["tr_ms"] for item in observations], dtype=np.float64),
+        vps=np.asarray([item["vps"] for item in observations], dtype=np.int64),
         sop_instance_uid=np.asarray([item["sop_instance_uid"] for item in observations], dtype=np.str_),
     )
     np.save(output_dir / "timing.npy", np.stack([group["timing9_ms"] for group in manifest["groups"]]))
@@ -96,6 +98,8 @@ def prepare_observations(
         "image_shape": list(images.shape),
         "timing_shape": list(np.load(output_dir / "timing.npy").shape),
         "geometry_shape": list(np.stack([group["affine_lps_rc"] for group in manifest["groups"]]).shape),
+        "tr_ms": float(preprocessed["tr_ms"]),
+        "vps": int(preprocessed["vps"]),
         "coordinate_system": manifest["coordinate_system"],
     }
     with (output_dir / "qc_summary.json").open("w", encoding="utf-8") as handle:

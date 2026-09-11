@@ -53,3 +53,13 @@
 - Validation: common-module import PASS and synchronized geometry, dataset,
   INR, and rigid/PSF source files are byte-identical to Trad. The MLP full
   suite and preprocessing/MIND smoke were intentionally not repeated.
+
+## 2026-09-11 — Shared Phase 4 infrastructure sync only
+
+- Synchronized the review-corrected common Module 02 TR/VPS bridge, Module 03
+  NeSVoR-margin/protocol metadata dataset, Module 04 native NeSVoR backend and
+  spatial-scaling INR, Module 06 `axisangle_init`/transformation regularizer,
+  and reusable training-space coordinate helper.
+- Validation: import PASS and these synchronized files are byte-identical to
+  Trad. No Trad signal decoder, MLP decoder/training, preprocessing/MIND smoke,
+  or MLP full suite was run in this phase.

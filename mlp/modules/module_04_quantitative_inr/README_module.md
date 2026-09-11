@@ -8,3 +8,8 @@
 
 It has no positional encoding, deformation, bias, variance, or slice-scale
 parameters.
+
+CPU 时按 NeSVoR 原生 `USE_TORCH=True` 使用 vendored PyTorch HashGrid；CUDA 且
+tinycudann 可用时保留 NeSVoR 的 `build_encoding` backend 选择，不以具体类型
+阻断 tcnn。正式训练传入 `spatial_scaling=30`，以训练坐标和 physical-mm hash
+resolution 保持 NeSVoR 的计算关系。
