@@ -75,12 +75,15 @@ bash scripts/run_smoke_cpu.sh
 
 ```bash
 cd /home/universe/SVR/multimap_postprogramming/Code_10w/trad
-PREPARED_NPZ=/absolute/prepared_case/observations.npz \
+PREPARED_SAX_NPZ=/absolute/sax/observations.npz \
+PREPARED_2CH_NPZ=/absolute/2ch/observations.npz \
+PREPARED_4CH_NPZ=/absolute/4ch/observations.npz \
 OUTPUT_DIR=/absolute/empty_output \
 bash scripts/run_server_example.sh
 ```
 
-示例配置为 `configs/server_train_example.yaml`，数值只是显式示例，不宣称最优。
+该示例明确启动 SAX+2CH+4CH joint reconstruction；示例配置为
+`configs/server_train_example.yaml`，数值只是显式示例，不宣称最优。
 
 ## 输出
 

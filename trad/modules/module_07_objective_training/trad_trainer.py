@@ -150,6 +150,12 @@ def _quantitative_regularization(model: TradTrainingModel, train_xyz: torch.Tens
     return values
 
 
+def _regularization_world_points(model: TradTrainingModel, local_train: torch.Tensor, group_idx: torch.Tensor) -> torch.Tensor:
+    """Use current rigid training-world points, without regularization driving pose."""
+
+    return model.rigid_psf.transform_local_to_ras(local_train, group_idx).detach()
+
+
 def _optimizer(model: TradTrainingModel, learning_rates: Mapping[str, Any], joint: bool) -> AdamW:
     encoding, networks = [], []
     for name, parameter in model.inr.named_parameters():
@@ -237,7 +243,8 @@ def train_trad(dataset: QuantPointDataset, config: Mapping[str, Any], protocol_y
                 batch["xyz"] = space.local_to_train(batch["xyz"])
                 prediction = model(batch, int(training["psf_samples"]))
                 data_mse = _balanced_mse(prediction, batch["v"], batch["weight_idx"], _stack_weight_tensor(batch["stack_idx"], stack_weights))
-                regularization = _quantitative_regularization(model, batch["xyz"], space.spatial_scaling, _require(loss_cfg, "quantitative"))
+                world_train = _regularization_world_points(model, batch["xyz"], batch["group_idx"])
+                regularization = _quantitative_regularization(model, world_train, space.spatial_scaling, _require(loss_cfg, "quantitative"))
                 trans = model.rigid_psf.transformation_loss(space.spatial_scaling)
                 total = data_mse + sum(float(_require(loss_cfg, "quantitative")[key]) * regularization[key] for key in regularization)
                 if joint:

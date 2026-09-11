@@ -63,3 +63,25 @@
 - Validation: import PASS and these synchronized files are byte-identical to
   Trad. No Trad signal decoder, MLP decoder/training, preprocessing/MIND smoke,
   or MLP full suite was run in this phase.
+
+## 2026-09-11 — Phase 5 MLP offline HHZ surrogate
+
+- Synchronized the fixed v1 protocol, bridge/dataset, Quantitative INR, and
+  rigid/PSF common sources with Trad and copied only the HHZ-compatible Trad
+  signal simulator as the MLP teacher; no EPG path was introduced.
+- Added strict prepared-NPZ timing-pool construction: complete ten-weight
+  groups, unique timing rows, identical TR (tolerance) and VPS (exact), with
+  source/group provenance and clear mismatch errors.
+- Added one-time HDF5 synthetic generation split by timing vector, not sample;
+  it uses continuous T1/T2/B1 ranges and normalized HHZ teacher targets only.
+- Added the exact mDM-style 12→200→200→200→10 MLP with BatchNorm/
+  LeakyReLU, Adam/StepLR training, best-checkpoint metadata, held-out signal
+  metrics, and derivative comparison.  Frozen inference keeps BN in eval
+  mode and preserves input gradients.
+- Tests: requested offline suite plus teacher fidelity PASS (7 tests).  One
+  CPU tiny training run PASS (1024/256/256, 2 epochs), producing the best
+  checkpoint, history, per-weight/overall error and derivative metrics.  Its
+  one-real-timing input required an explicitly labelled functional fixture, so
+  it is a code-path test rather than a cross-timing generalization result.
+- Not implemented: MLP online reconstruction, decoder replacement in the
+  rigid/PSF forward, end-to-end MLP training, or any reconstruction benchmark.

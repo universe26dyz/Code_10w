@@ -1,0 +1,15 @@
+dataset:
+  train: 1024
+  valid: 256
+  test: 256
+  seed: 20260911
+  teacher_chunk_size: 128
+training:
+  device: cpu
+  seed: 20260911
+  epochs: 2
+  batch_size: 128
+  learning_rate: 0.001
+  scheduler_step_size: 5
+  scheduler_gamma: 0.5
+  gradient_samples: 8

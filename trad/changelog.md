@@ -88,3 +88,16 @@
   1 group/10 weights, 14 CPU iterations, PSF K=2. It produced finite four
   NIfTI fields, checkpoint, log, config, and physical poses; no MIND/MP-PCA
   was rerun.
+
+## 2026-09-11 — Phase 4 review corrections before MLP offline work
+
+- Quantitative field regularization now queries detached current
+  `local → physical-RAS` group-pose coordinates, rather than scaled local
+  slice coordinates.  This preserves the spatial-scaling normalization while
+  ensuring regularization does not update rigid poses (including Stage A).
+- `run_server_example.sh` and the README now require explicitly prepared SAX,
+  2CH, and 4CH observation NPZ paths plus an output directory, and pass all
+  three with repeated `--observations`.
+- Regression tests: `test_quantitative_regularization_coordinates` and
+  `test_end_to_end_tiny` PASS (3 tests).  No MATLAB parity or MIND processing
+  was rerun.  Trad scientific behavior is frozen again after this correction.

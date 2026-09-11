@@ -4,11 +4,12 @@ Last updated: 2026-09-11
 
 ## Current boundary
 
-Trad v1 is now a frozen runnable baseline: project audit, preprocessing,
+Trad v1 is a frozen runnable baseline: project audit, preprocessing,
 bridge/timing, dataset geometry, quantitative INR, HHZ direct signal model,
 rigid/PSF, staged objective/training, checkpointing, physical-RAS inference,
-export, and CPU tiny smoke are implemented. MLP signal decoding/training and
-all MLP online reconstruction work remain intentionally unimplemented.
+export, and CPU tiny smoke are implemented.  MLP offline signal-surrogate
+training is complete; MLP online reconstruction remains intentionally
+unimplemented.
 
 ## Audit record
 
@@ -167,8 +168,54 @@ all MLP online reconstruction work remain intentionally unimplemented.
 - PASS — MLP common infrastructure import and byte-identity check. No MLP
   real smoke or full test was repeated.
 
+## Phase 4 review correction validation
+
+- [x] Quantitative regularization evaluates the fields at detached current
+  group-pose physical-RAS coordinates rather than at scaled local pixels; it
+  gives finite nonzero field gradients but no rigid gradient.
+- [x] The server example and Trad README require SAX, 2CH, and 4CH prepared
+  NPZ inputs and pass all of them explicitly.
+- PASS — `test_quantitative_regularization_coordinates` plus
+  `test_end_to_end_tiny`: 3 tests.  No MATLAB parity or MIND was repeated.
+
+## Phase 5 MLP offline deliverables
+
+- [x] MLP has synchronized copies of the fixed v1 protocol, data bridge,
+  dataset/geometry, Quantitative INR, rigid/PSF, and the HHZ-compatible Trad
+  signal teacher.  The teacher is not EPG.
+- [x] `build_timing_pool.py` enforces full ten-weight groups, unique timing
+  vectors, equal TR within tolerance, exact VPS, and provenance.  Timing pool
+  TR/VPS are validated before synthetic training.
+- [x] One-time HDF5 `train.h5`/`valid.h5`/`test.h5` generation samples the
+  stated continuous T1/T2/B1 ranges, uses normalized 10-heartbeat HHZ teacher
+  targets, and splits by timing ID (not sample).
+- [x] The offline model input is 12D
+  `[T1/1000,T2/1000,B1,timing2..10/1000]`; its output is a normalized 10D
+  fingerprint.  It is exactly the mDM-style 3×(Linear 200, BN, LeakyReLU)
+  network followed by Linear 10.
+- [x] `FrozenMLPSignalDecoder` freezes parameters and keeps BatchNorm eval
+  under outer `train()` while preserving T1/T2/B1 input gradients.
+- [x] Best checkpoints retain architecture, normalizations, complete fixed
+  HHZ protocol, validated TR/VPS, timing provenance, parameter ranges, and
+  seed.  Metrics include overall/per-weight RMSE, MAE, max error, and
+  T1/T2/B1 derivative error/cosine summaries.
+
+## Phase 5 validation
+
+- PASS — MLP offline pytest:
+  `test_mlp_model_shape`, `test_mlp_timing_pool`, `test_mlp_dataset_split`,
+  `test_mlp_teacher_fidelity`, `test_frozen_mlp_gradient`, and
+  `test_frozen_mlp_batchnorm_eval`: 7 tests.
+- PASS — one CPU tiny run at `/tmp/multimap_phase5_mlp_smoke`: 1024 train,
+  256 validation, 256 test, 2 epochs; finite checkpoint, history, and test
+  metrics written.  The underlying prepared case has only one timing vector,
+  so the run explicitly uses a labelled functional three-vector fixture.  It
+  validates code flow only and does not claim cross-timing generalization.
+- Not implemented by design: online decoder insertion, MLP reconstruction,
+  end-to-end reconstruction training, or an MLP benchmark.
+
 ## Next-stage entry
 
-Await the next command. Trad v1 scientific logic is frozen as the baseline;
-future MLP work must not alter its protocol, signal physics, objective, or
-rigid/PSF contract without an explicit command.
+Await Command 6.  Trad remains frozen; MLP is offline-complete only.  Future
+work must not alter the fixed HHZ scientific protocol or connect the MLP to
+reconstruction without an explicit command.
