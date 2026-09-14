@@ -21,7 +21,17 @@ def audit_formal_timing_pool(pool_path: str | Path, csv_path: str | Path, summar
     if csv_path.exists() or summary_path.exists(): raise FileExistsError("Formal timing audit outputs must not be overwritten.")
     csv_path.parent.mkdir(parents=True, exist_ok=True); summary_path.parent.mkdir(parents=True, exist_ok=True)
     with csv_path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=["subject_id", "stack", "group_id", "source_id", "TR", "VPS", *[f"timing{i}" for i in range(2, 11)]); writer.writeheader()
+        fieldnames = [
+            "subject_id",
+            "stack",
+            "group_id",
+            "source_id",
+            "TR",
+            "VPS",
+            *[f"timing{i}" for i in range(2, 11)],
+        ]
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
         for i in range(timing.shape[0]): writer.writerow({"subject_id": subjects[i], "stack": stacks[i], "group_id": groups[i], "source_id": sources[i], "TR": tr, "VPS": vps, **{f"timing{j+2}": timing[i, j] for j in range(9)}})
     summary = {"n_subjects": int(np.unique(subjects).size), "n_groups": int(timing.shape[0]), "tr_unique": [tr], "tr_range": [tr, tr], "vps_unique": [vps], "timing_min_ms": timing.min(0).tolist(), "timing_max_ms": timing.max(0).tolist(), "timing_mean_ms": timing.mean(0).tolist(), "timing_std_ms": timing.std(0).tolist()}
     summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
