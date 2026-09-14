@@ -137,3 +137,15 @@
   standalone formal benchmark rejects functional timing pools. Server launchers
   now derive paths from themselves and use `cr_dreme`. MLP scientific logic is
   unchanged.
+
+## 2026-09-14 — Deployment contract v1.1 hotfix
+
+- Formal-manifest generation consumes v1.1 subject/stack entries only.
+  Deployment documentation now states the actual local/server code, DICOM,
+  environment and recommended runtime roots.
+- Server preflight now imports/reports required Python dependencies,
+  torch/CUDA fields, and reconstruction-only tinycudann, vendored NeSVoR and
+  project INR/rigid-PSF imports. CUDA is required for formal MLP; missing
+  tinycudann is an explicit NOT_READY state with no install or fallback.
+- Reconstruction wrappers retain the single `--output` interface. Scientific
+  algorithms, MLP architecture/teacher, training and execution are unchanged.

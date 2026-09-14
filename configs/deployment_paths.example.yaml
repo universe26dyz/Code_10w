@@ -1,10 +1,15 @@
 # Copy outside the repository and replace every path explicitly.  This file is
 # documentation only; server tools take a JSON subject/stack manifest as input.
-local_matlab:
+local:
+  code: /home/universe/SVR/multimap_postprogramming/Code_10w
+  dicom: /home/universe/SVR/multimap_postprogramming/subject_dicom
+  environment: knesvr_torch
   manifest: /absolute/path/subject_stack_manifest.json
-  preprocessed_root: /absolute/path/local_preprocessed
+  preprocessed_root: /home/universe/SVR/multimap_postprogramming/Code_10w_runtime/preprocessed
 server:
-  preprocessed_root: /absolute/path/transferred_preprocessed
-  prepared_root: /absolute/path/server_prepared
-  formal_mlp_root: /absolute/path/formal_mlp
-  reconstruction_root: /absolute/path/reconstructions
+  code: /data/dengyz/code/Code_10w
+  dicom: /data/dengyz/dataset/mapping_subject_dicom
+  environment: cr_dreme
+  preprocessed_root: /data/dengyz/dataset/Code_10w_preprocessed
+  prepared_root: /data/dengyz/dataset/Code_10w_prepared
+  runs_root: /data/dengyz/dataset/Code_10w_runs

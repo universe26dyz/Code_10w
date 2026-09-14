@@ -2,9 +2,26 @@
 
 此部署层不改变已冻结的 HHZ v1 科学模型、Trad/MLP INR、rigid/PSF 或训练目标；不包含 EPG、deformable 或 low-rank。
 
+```text
+LOCAL CODE:  /home/universe/SVR/multimap_postprogramming/Code_10w
+LOCAL DICOM: /home/universe/SVR/multimap_postprogramming/subject_dicom
+LOCAL ENV:   knesvr_torch
+
+SERVER CODE:  /data/dengyz/code/Code_10w
+SERVER DICOM: /data/dengyz/dataset/mapping_subject_dicom
+SERVER ENV:   cr_dreme
+
+LOCAL MAT:       /home/universe/SVR/multimap_postprogramming/Code_10w_runtime/preprocessed
+SERVER MAT:      /data/dengyz/dataset/Code_10w_preprocessed
+SERVER PREPARED: /data/dengyz/dataset/Code_10w_prepared
+SERVER RUNS:     /data/dengyz/dataset/Code_10w_runs
+```
+
+MATLAB 只在本地执行 Module 01；服务器从 Module 02 开始且不需要 MATLAB。Trad 与 MLP 共用同一份 `prepared observations.npz`。
+
 ## 明确清单与本地 MATLAB
 
-将 `configs/subject_stack_manifest.example.json` 复制到仓库外，并为每个 subject/stack 写入精确 `dicom_dir`。脚本绝不扫描目录推断 subject 或 stack。先创建每个 `<preprocessed_root>/<subject_id>/<stack>/`，再在本地 MATLAB 中运行：
+将 `configs/subject_stack_manifest.example.json` 复制到仓库外，并为每个 subject/stack 写入精确 `local_dicom_dir` 与 `server_dicom_dir`。脚本绝不从一方推断另一方，也不扫描目录推断 subject 或 stack。MATLAB batch wrapper 自动创建 `<preprocessed_root>/<subject_id>/<stack>/`，再在本地 MATLAB 中运行：
 
 ```matlab
 addpath('/absolute/path/to/Code_10w/trad/scripts')
@@ -32,7 +49,7 @@ conda run -n cr_dreme python scripts/prepare_all_observations.py \
   --prepared-root /absolute/path/server_prepared
 ```
 
-`dicom_dir` 必须是服务器上的明确原始 DICOM 位置。缺 MAT、metadata 或完整十权重 group 会立即失败。每个输出严格位于 `<prepared_root>/<subject_id>/<stack>/`，含 `observations.npz`、`manifest.json`、`timing.npy`、`qc_summary.json`；根目录另有 `PREPARED_BATCH_QC.json`。
+`server_dicom_dir` 必须是服务器上的明确原始 DICOM 位置。缺 MAT、metadata 或完整十权重 group 会立即失败。每个输出严格位于 `<prepared_root>/<subject_id>/<stack>/`，含 `observations.npz`、`manifest.json`、`timing.npy`、`qc_summary.json`；根目录另有 `PREPARED_BATCH_QC.json`。
 
 ## Formal MLP：到人工审核为止
 

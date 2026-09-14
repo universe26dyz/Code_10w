@@ -23,8 +23,8 @@ def _load_script():
 def test_formal_manifest_uses_exact_prepared_paths(tmp_path):
     module = _load_script()
     deployment = tmp_path / "deployment.json"
-    deployment.write_text(json.dumps({"schema_version": "deployment-v1", "subjects": [
-        {"subject_id": "S01", "stacks": [{"stack": "sax", "dicom_dir": "/raw/S01/sax"}]}
+    deployment.write_text(json.dumps({"schema_version": "deployment-v1.1", "subjects": [
+        {"subject_id": "S01", "stacks": [{"stack": "sax", "local_dicom_dir": "/local/S01/sax", "server_dicom_dir": "/server/S01/sax"}]}
     ]}), encoding="utf-8")
     prepared = tmp_path / "prepared"; expected = prepared / "S01" / "sax" / "observations.npz"
     expected.parent.mkdir(parents=True); expected.write_bytes(b"fixture")

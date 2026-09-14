@@ -268,9 +268,10 @@ review; do not start full reconstruction yet.
 
 ## Deployment layer — dual environment (2026-09-14)
 
-- [x] Added one explicit `deployment-v1` subject/stack manifest schema plus
-  path examples. All local/server batch tools consume this contract and do not
-  discover directories, subjects, stacks, missing parameters, or defaults.
+- [x] Superseded by deployment-v1.1 below: the original explicit subject/stack
+  manifest and path examples were upgraded to separate local/server DICOM
+  paths. Batch tools still do not discover directories, subjects, stacks,
+  missing parameters, or defaults.
 - [x] Local MATLAB has dedicated full-stack preprocessing wrappers that call
   frozen Module 01 with `preprocess_options_v1([], false, true)` and emit
   per-stack `preprocess_qc.json`; server Python has no MATLAB invocation.
@@ -294,3 +295,23 @@ review; do not start full reconstruction yet.
 Copy a reviewed deployment manifest and local preprocessed outputs to the
 server, run the documented transfer/prepare/formal-validation sequence, then
 stop for manual checkpoint review before any formal MLP reconstruction.
+
+## Deployment contract v1.1 hotfix (2026-09-14)
+
+- [x] Replaced `deployment-v1` single `dicom_dir` with strict
+  `deployment-v1.1` `local_dicom_dir`/`server_dicom_dir` fields. Subject IDs
+  and subject/stack pairs are unique; no path is inferred and old manifests
+  fail with an explicit migration message.
+- [x] Local MATLAB now creates requested output directories, still refuses all
+  completed-output overwrite/skip behavior, and writes QC from actual saved
+  MAT metadata: Mag_crop shape/groups, TR/VPS, MP-PCA center-data, MIND alpha
+  and explicit options.
+- [x] Formal server preflight now imports/reports torch, numpy, scipy, h5py,
+  pydicom, nibabel and yaml plus CUDA fields. Reconstruction additionally
+  tests tinycudann, vendored NeSVoR and project INR/rigid-PSF imports; missing
+  requirements remain explicit NOT_READY states with no installation/fallback.
+- PASS — v1.1 deployment pytest target: 9 tests. MATLAB entry/arity check and
+  all three requested shell `bash -n` checks PASS. Scientific algorithms are
+  unchanged.
+- Not run: real preprocessing/MIND/MP-PCA, GPU/formal training, benchmark,
+  approval and reconstruction.

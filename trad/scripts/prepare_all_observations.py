@@ -30,7 +30,7 @@ def prepare_all_observations(manifest_path: str | Path, preprocessed_root: str |
         if not mat.is_file():
             raise FileNotFoundError(f"Required transferred preprocessed MAT is missing: {mat}")
         output = destination / subject_id / stack
-        result = prepare_observations(mat, entry["dicom_dir"], stack, output)
+        result = prepare_observations(mat, entry["server_dicom_dir"], stack, output)
         required = ("observations.npz", "manifest.json", "timing.npy", "qc_summary.json")
         missing = [name for name in required if not (output / name).is_file()]
         if missing:

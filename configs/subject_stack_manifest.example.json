@@ -1,12 +1,12 @@
 {
-  "schema_version": "deployment-v1",
+  "schema_version": "deployment-v1.1",
   "subjects": [
     {
       "subject_id": "REPLACE_SUBJECT_ID",
       "stacks": [
-        {"stack": "sax", "dicom_dir": "/absolute/path/to/REPLACE_SUBJECT_ID/sax"},
-        {"stack": "2ch", "dicom_dir": "/absolute/path/to/REPLACE_SUBJECT_ID/2ch"},
-        {"stack": "4ch", "dicom_dir": "/absolute/path/to/REPLACE_SUBJECT_ID/4ch"}
+        {"stack": "sax", "local_dicom_dir": "/home/universe/SVR/multimap_postprogramming/subject_dicom/REPLACE_SUBJECT_ID/sax", "server_dicom_dir": "/data/dengyz/dataset/mapping_subject_dicom/REPLACE_SUBJECT_ID/sax"},
+        {"stack": "2ch", "local_dicom_dir": "/home/universe/SVR/multimap_postprogramming/subject_dicom/REPLACE_SUBJECT_ID/2ch", "server_dicom_dir": "/data/dengyz/dataset/mapping_subject_dicom/REPLACE_SUBJECT_ID/2ch"},
+        {"stack": "4ch", "local_dicom_dir": "/home/universe/SVR/multimap_postprogramming/subject_dicom/REPLACE_SUBJECT_ID/4ch", "server_dicom_dir": "/data/dengyz/dataset/mapping_subject_dicom/REPLACE_SUBJECT_ID/4ch"}
       ]
     }
   ]

@@ -115,3 +115,17 @@
 - Server launcher now derives its root from its own location and uses
   `cr_dreme`; local smoke launchers remain unchanged. Trad scientific logic is
   unchanged.
+
+## 2026-09-14 — Deployment contract v1.1 hotfix
+
+- Replaced the ambiguous one-path manifest with strict `deployment-v1.1`:
+  every explicit subject/stack has independent `local_dicom_dir` and
+  `server_dicom_dir`; old manifests fail with a migration message. Local
+  MATLAB consumes only the local path and server bridge preparation only the
+  server path.
+- Local MATLAB batch preprocessing creates requested output directories but
+  never skips or overwrites completed entries. After Module 01 succeeds,
+  `preprocess_qc.json` reads actual saved MAT metadata: Mag_crop shape/groups,
+  TR/VPS, MP-PCA center-data and MIND alpha.
+- No HHZ, MIND/MP-PCA, INR, rigid/PSF, objective, training, or reconstruction
+  science changed.
