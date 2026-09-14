@@ -1,0 +1,10 @@
+# Copy outside the repository and replace every path explicitly.  This file is
+# documentation only; server tools take a JSON subject/stack manifest as input.
+local_matlab:
+  manifest: /absolute/path/subject_stack_manifest.json
+  preprocessed_root: /absolute/path/local_preprocessed
+server:
+  preprocessed_root: /absolute/path/transferred_preprocessed
+  prepared_root: /absolute/path/server_prepared
+  formal_mlp_root: /absolute/path/formal_mlp
+  reconstruction_root: /absolute/path/reconstructions

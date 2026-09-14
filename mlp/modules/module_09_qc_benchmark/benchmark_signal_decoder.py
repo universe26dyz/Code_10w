@@ -15,7 +15,7 @@ from typing import Any
 import numpy as np
 import torch
 
-from modules.module_05_signal_decoder.checkpoint_loader import load_frozen_mlp_decoder
+from modules.module_05_signal_decoder.checkpoint_loader import load_frozen_mlp_decoder_for_benchmark
 from modules.module_05_signal_decoder.synthetic_dataset import _protocol, load_timing_pool
 from modules.module_05_signal_decoder.trad_teacher.trad_signal_simulator import TradSignalSimulator
 
@@ -64,7 +64,9 @@ def benchmark_signal_decoder(checkpoint_path: str | Path, timing_pool_path: str 
     pool = load_timing_pool(timing_pool_path); protocol = _protocol(pool, protocol_path)
     timing = np.asarray(pool["timing9_ms"][0], dtype=np.float64)
     dataset = SimpleNamespace(timing=torch.from_numpy(np.asarray(pool["timing9_ms"], dtype=np.float32)), validated_tr_vps=lambda: (protocol.tr_ms, protocol.vps))
-    mlp = load_frozen_mlp_decoder(checkpoint_path, dataset, protocol_path, allow_functional_fixture=bool(pool["functional_fixture"]), device=device)
+    if bool(pool["functional_fixture"]):
+        raise ValueError("Standalone formal benchmark rejects functional-fixture timing pools.")
+    mlp = load_frozen_mlp_decoder_for_benchmark(checkpoint_path, dataset, protocol_path, device=device)
     trad = TradSignalSimulator().to(device).eval(); mlp.eval()
     rows = []
     for batch_size in batch_sizes:

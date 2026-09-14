@@ -122,3 +122,18 @@
   no CUDA and no explicit multi-subject prepared manifest, so no protocol
   audit, generation, candidate training, validation or GPU benchmark was
   fabricated or replaced with a fallback.
+
+## 2026-09-14 — Dual-environment deployment layer
+
+- Added exact prepared-input formal-manifest generation, shared strict
+  subject/stack deployment schema, server readiness checker, fixed three-stack
+  MLP reconstruction wrapper, and server documentation/config examples.
+- Added explicit checkpoint approval: report SHA must match a non-functional
+  unvalidated formal candidate; approval copies state unchanged and adds only
+  manual-review provenance. Online reconstruction continues to reject all
+  unapproved formal candidates.
+- Added a benchmark-only candidate decoder loader. It accepts only
+  non-functional formal candidates with documented pre-approval statuses;
+  standalone formal benchmark rejects functional timing pools. Server launchers
+  now derive paths from themselves and use `cr_dreme`. MLP scientific logic is
+  unchanged.

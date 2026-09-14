@@ -101,3 +101,17 @@
 - Regression tests: `test_quantitative_regularization_coordinates` and
   `test_end_to_end_tiny` PASS (3 tests).  No MATLAB parity or MIND processing
   was rerun.  Trad scientific behavior is frozen again after this correction.
+
+## 2026-09-14 — Dual-environment deployment layer
+
+- Added explicit deployment manifest/config examples, local-only MATLAB
+  `local_preprocess_all.m`/`local_preprocess_one.m`, and per-stack
+  `preprocess_qc.json`. They call frozen Module 01 with full-stack,
+  figures-off, MP-PCA-on options and refuse overwrite.
+- Added server-only transferred-v7.3 validation, exact manifest-driven
+  observation preparation, batch QC, CUDA/environment readiness checking, and
+  one-subject fixed SAX/2CH/4CH reconstruction wrapper. No MATLAB is invoked
+  from server tools and no subject/stack discovery is performed.
+- Server launcher now derives its root from its own location and uses
+  `cr_dreme`; local smoke launchers remain unchanged. Trad scientific logic is
+  unchanged.

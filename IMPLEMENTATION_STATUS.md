@@ -1,6 +1,6 @@
 # Code_10w implementation status
 
-Last updated: 2026-09-11
+Last updated: 2026-09-14
 
 ## Current boundary
 
@@ -265,3 +265,32 @@ Provide a formal source manifest and execute the documented CUDA sequence on
 the server. Stop after `formal_timing_audit.csv`,
 `formal_validation_report.json` and `decoder_gpu_benchmark.json` for manual
 review; do not start full reconstruction yet.
+
+## Deployment layer — dual environment (2026-09-14)
+
+- [x] Added one explicit `deployment-v1` subject/stack manifest schema plus
+  path examples. All local/server batch tools consume this contract and do not
+  discover directories, subjects, stacks, missing parameters, or defaults.
+- [x] Local MATLAB has dedicated full-stack preprocessing wrappers that call
+  frozen Module 01 with `preprocess_options_v1([], false, true)` and emit
+  per-stack `preprocess_qc.json`; server Python has no MATLAB invocation.
+- [x] Server tooling validates transferred v7.3 MAT fields, prepares only
+  exact manifest entries, produces required bridge artifacts and
+  `PREPARED_BATCH_QC.json`, and provides strict formal-MLP/reconstruction
+  readiness checks without installing packages or backend fallback.
+- [x] Formal MLP manifest generation uses exact prepared paths. A separate
+  manual approval transition verifies checkpoint/report SHA256 and preserves
+  learned state. Online reconstruction still rejects unapproved candidates;
+  benchmark-only loading permits only the specified non-functional candidate
+  statuses.
+- [x] Added fixed per-subject SAX/2CH/4CH Trad/MLP wrappers and updated server
+  launchers to derive their root and use `cr_dreme`. No formal preprocessing,
+  training, benchmark, or reconstruction was run in this deployment phase.
+- PASS — deployment pytest suite under `knesvr_torch`: 6 tests across the five
+  requested test files. Scientific algorithms are unchanged.
+
+## Next-stage entry
+
+Copy a reviewed deployment manifest and local preprocessed outputs to the
+server, run the documented transfer/prepare/formal-validation sequence, then
+stop for manual checkpoint review before any formal MLP reconstruction.

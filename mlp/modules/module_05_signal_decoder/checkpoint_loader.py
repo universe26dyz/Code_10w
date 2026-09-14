@@ -36,7 +36,7 @@ def _record(protocol: TradProtocol) -> dict[str, Any]:
     return {"tr_ms": protocol.tr_ms, "vps": protocol.vps, "fa_deg": list(protocol.fa_deg), "ti_ms": list(protocol.ti_ms), "t2prep_ms": list(protocol.t2prep_ms), "n_ramp_up": protocol.n_ramp_up}
 
 
-def _validate_checkpoint(checkpoint: dict[str, Any], protocol: TradProtocol, dataset: Any, allow_functional_fixture: bool) -> None:
+def _validate_checkpoint(checkpoint: dict[str, Any], protocol: TradProtocol, dataset: Any, allow_functional_fixture: bool, *, purpose: str) -> None:
     required = {"state_dict", "architecture", "input_normalization", "output_normalization", "protocol_hhz_v1", "parameter_ranges", "functional_fixture", "formal_candidate", "validation_status", "timing9_min_ms", "timing9_max_ms"}
     missing = required.difference(checkpoint)
     if missing:
@@ -49,8 +49,14 @@ def _validate_checkpoint(checkpoint: dict[str, Any], protocol: TradProtocol, dat
         raise ValueError("MLP checkpoint HHZ protocol/TR/VPS is incompatible with the online dataset.")
     if bool(checkpoint["functional_fixture"]):
         if not allow_functional_fixture: raise ValueError("functional-fixture MLP checkpoint is rejected for formal online reconstruction; set the explicit smoke allowance only for a functional smoke.")
-    elif checkpoint["validation_status"] != "approved_by_manual_review":
-        raise ValueError(f"formal candidate validation_status={checkpoint['validation_status']!r}; awaiting_manual_review approval is required before online reconstruction.")
+    else:
+        if not bool(checkpoint["formal_candidate"]):
+            raise ValueError("Non-functional MLP checkpoint must be labelled formal_candidate=true.")
+        status = checkpoint["validation_status"]
+        if purpose == "online" and status != "approved_by_manual_review":
+            raise ValueError(f"formal candidate validation_status={status!r}; awaiting_manual_review approval is required before online reconstruction.")
+        if purpose == "benchmark" and status not in {"unvalidated", "awaiting_manual_review", "approved_by_manual_review"}:
+            raise ValueError(f"Benchmark formal candidate has unsupported validation_status={status!r}.")
     lower, upper = np.asarray(checkpoint["timing9_min_ms"], dtype=np.float64), np.asarray(checkpoint["timing9_max_ms"], dtype=np.float64)
     if lower.shape != (9,) or upper.shape != (9,):
         raise ValueError("MLP checkpoint timing range must have exactly nine dimensions.")
@@ -64,7 +70,7 @@ def _validate_checkpoint(checkpoint: dict[str, Any], protocol: TradProtocol, dat
         raise ValueError("Online timing is outside the MLP training range; no extrapolation is allowed: " + "; ".join(details))
 
 
-def load_frozen_mlp_decoder(checkpoint_path: str | Path, dataset: Any, protocol_yaml: str | Path, *, allow_functional_fixture: bool, device: torch.device) -> FrozenMLPSignalDecoder:
+def _load_decoder(checkpoint_path: str | Path, dataset: Any, protocol_yaml: str | Path, *, allow_functional_fixture: bool, device: torch.device, purpose: str) -> FrozenMLPSignalDecoder:
     checkpoint_path = Path(checkpoint_path)
     if not checkpoint_path.is_file():
         raise FileNotFoundError(f"MLP checkpoint does not exist: {checkpoint_path}")
@@ -72,9 +78,21 @@ def load_frozen_mlp_decoder(checkpoint_path: str | Path, dataset: Any, protocol_
     if not isinstance(checkpoint, dict):
         raise ValueError("MLP checkpoint must be a mapping.")
     protocol = _protocol_from_dataset(dataset, protocol_yaml)
-    _validate_checkpoint(checkpoint, protocol, dataset, allow_functional_fixture)
+    _validate_checkpoint(checkpoint, protocol, dataset, allow_functional_fixture, purpose=purpose)
     model = MdmSignalMLP().to(device)
     model.load_state_dict(checkpoint["state_dict"])
     decoder = FrozenMLPSignalDecoder(model, protocol).to(device)
     decoder.eval()
     return decoder
+
+
+def load_frozen_mlp_decoder(checkpoint_path: str | Path, dataset: Any, protocol_yaml: str | Path, *, allow_functional_fixture: bool, device: torch.device) -> FrozenMLPSignalDecoder:
+    """Online reconstruction loader: non-functional candidates require manual approval."""
+
+    return _load_decoder(checkpoint_path, dataset, protocol_yaml, allow_functional_fixture=allow_functional_fixture, device=device, purpose="online")
+
+
+def load_frozen_mlp_decoder_for_benchmark(checkpoint_path: str | Path, dataset: Any, protocol_yaml: str | Path, *, device: torch.device) -> FrozenMLPSignalDecoder:
+    """Benchmark-only loader; permits non-functional formal candidates before approval."""
+
+    return _load_decoder(checkpoint_path, dataset, protocol_yaml, allow_functional_fixture=False, device=device, purpose="benchmark")

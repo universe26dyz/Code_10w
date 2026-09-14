@@ -1,0 +1,13 @@
+{
+  "schema_version": "deployment-v1",
+  "subjects": [
+    {
+      "subject_id": "REPLACE_SUBJECT_ID",
+      "stacks": [
+        {"stack": "sax", "dicom_dir": "/absolute/path/to/REPLACE_SUBJECT_ID/sax"},
+        {"stack": "2ch", "dicom_dir": "/absolute/path/to/REPLACE_SUBJECT_ID/2ch"},
+        {"stack": "4ch", "dicom_dir": "/absolute/path/to/REPLACE_SUBJECT_ID/4ch"}
+      ]
+    }
+  ]
+}
