@@ -129,3 +129,4 @@
   TR/VPS, MP-PCA center-data and MIND alpha.
 - No HHZ, MIND/MP-PCA, INR, rigid/PSF, objective, training, or reconstruction
   science changed.
+# 修复 prepare_all_observations deployment wrapper 在标准调用下无法定位 trad/modules 的问题。

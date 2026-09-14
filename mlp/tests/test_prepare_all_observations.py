@@ -1,5 +1,7 @@
 import importlib.util
 import json
+import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -45,6 +47,20 @@ def test_prepare_all_writes_one_explicit_output_per_manifest_entry(tmp_path, mon
     assert (prepared_root / "S01" / "sax" / "observations.npz").is_file()
     batch = json.loads((prepared_root / "PREPARED_BATCH_QC.json").read_text(encoding="utf-8"))
     assert batch["entries"][0]["subject_id"] == "S01"
+
+
+def test_deployment_wrapper_cli_imports_trad_modules_without_pythonpath():
+    environment = {key: value for key, value in os.environ.items() if key != "PYTHONPATH"}
+    result = subprocess.run(
+        [sys.executable, "scripts/prepare_all_observations.py", "--help"],
+        cwd=TRAD_ROOT,
+        env=environment,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "--prepared-root" in result.stdout
 
 
 def test_local_matlab_wrappers_create_output_and_record_actual_mat_metadata():
