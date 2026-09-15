@@ -12,6 +12,28 @@ from modules.module_02_data_bridge.geometry import cropped_affine_lps_rc_to_init
 from third_party.nesvor.nesvor.transform import RigidTransform, ax_transform_points
 
 
+def robust_trimmed_mean_intensity(
+    values: torch.Tensor, *, lower_quantile: float, upper_quantile: float
+) -> torch.Tensor:
+    """Return NeSVoR-style robust scale from all subject masked intensities."""
+
+    if values.numel() == 0:
+        raise ValueError("Subject intensity values must not be empty.")
+    if not torch.isfinite(values).all():
+        raise ValueError("Subject intensity values must be finite.")
+    if not 0.0 < lower_quantile < upper_quantile < 1.0:
+        raise ValueError("Intensity normalization quantiles must satisfy 0 < lower < upper < 1.")
+    flattened = values.reshape(-1)
+    q10, q90 = torch.quantile(flattened, lower_quantile), torch.quantile(flattened, upper_quantile)
+    trimmed = flattened[(flattened > q10) & (flattened < q90)]
+    if trimmed.numel() == 0:
+        raise ValueError("Subject trimmed intensity set is empty.")
+    scale = trimmed.mean()
+    if not torch.isfinite(scale) or scale <= 0:
+        raise ValueError(f"Subject trimmed intensity scale must be finite and positive, got {float(scale)}.")
+    return scale
+
+
 class QuantPointDataset:
     """Flatten complete 10-weight groups while retaining NeSVoR local/world semantics.
 

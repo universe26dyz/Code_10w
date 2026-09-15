@@ -33,6 +33,11 @@ def sample_quantitative_fields(model: torch.nn.Module, space: TrainingSpace, out
 
     if batch_size <= 0:
         raise ValueError("output_batch_size must be positive.")
+    if not hasattr(model, "intensity_scale"):
+        raise ValueError("Model lacks required intensity_scale provenance for amplitude export.")
+    intensity_scale = torch.as_tensor(model.intensity_scale)
+    if intensity_scale.numel() != 1 or not torch.isfinite(intensity_scale).all() or intensity_scale.item() <= 0:
+        raise ValueError("Model intensity_scale must be one finite positive scalar for amplitude export.")
     physical, shape, affine = _physical_grid(space.physical_bbox_ras_mm, output_resolution_mm)
     device = next(model.parameters()).device
     result = {"t1_ms": [], "t2_ms": [], "b1": [], "amplitude": []}
@@ -43,7 +48,8 @@ def sample_quantitative_fields(model: torch.nn.Module, space: TrainingSpace, out
             train_points = space.physical_ras_to_train(physical[start : start + batch_size].to(device))
             fields = model.inr(train_points)
             for key in result:
-                result[key].append(fields[key].detach().cpu())
+                value = fields[key] * intensity_scale if key == "amplitude" else fields[key]
+                result[key].append(value.detach().cpu())
     if was_training:
         model.train()
     return {key: torch.cat(value).reshape(shape).numpy().astype(np.float32) for key, value in result.items()}, affine

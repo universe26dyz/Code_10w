@@ -16,7 +16,7 @@ def _dataset(path):
 
 
 def _config():
-    return {"inr": {"coarsest_resolution_mm": 12.0, "finest_resolution_mm": 6.0, "level_scale": 1.5, "n_features_per_level": 2, "log2_hashmap_size": 8, "latent_features": 8, "width": 12, "depth": 1}, "training": {"device": "cpu", "seed": 9, "spatial_scaling": 30.0, "batch_size": 10, "psf_samples": 1, "stage_a_iterations": 2, "stage_b_iterations": 2, "learning_rates": {"encoding": 0.001, "network": 0.001, "rigid": 0.0001, "weight_decay": 0.01}, "scheduler_milestones": [0.75], "scheduler_gamma": 0.5}, "loss": {"transformation": 0.001, "quantitative": {"t1": 0.0, "t2": 0.0, "b1": 0.0}}, "export": {"output_resolution_mm": 12.0, "output_batch_size": 256}}
+    return {"inr": {"coarsest_resolution_mm": 12.0, "finest_resolution_mm": 6.0, "level_scale": 1.5, "n_features_per_level": 2, "log2_hashmap_size": 8, "latent_features": 8, "width": 12, "depth": 1}, "training": {"device": "cpu", "seed": 9, "spatial_scaling": 30.0, "batch_size": 10, "psf_samples": 1, "stage_a_iterations": 2, "stage_b_iterations": 2, "intensity_normalization": {"enabled": True, "method": "trimmed_mean", "lower_quantile": 0.1, "upper_quantile": 0.9}, "learning_rates": {"encoding": 0.001, "network": 0.001, "rigid": 0.0001, "weight_decay": 0.01}, "scheduler_milestones": [0.75], "scheduler_gamma": 0.5}, "loss": {"transformation": 0.001, "quantitative": {"t1": 0.0, "t2": 0.0, "b1": 0.0}}, "export": {"output_resolution_mm": 12.0, "output_batch_size": 256}}
 
 
 def test_tiny_staged_training_checkpoint_export_and_qc(tmp_path):

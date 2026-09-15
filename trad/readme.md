@@ -50,8 +50,12 @@ scaled local slice axes 采样，再作 group rigid transform。
 
 ## v1 objective 与禁用项
 
-data term 是 10-weight 平衡 MSE；多 stack 时使用数据集静态 inverse-frequency
-sample weight（记录在 resolved config）。Stage A 冻结 rigid，Stage B 在同一模型
+data term 是 10-weight 平衡 MSE；训练前仅从完整 subject 的全部 SAX/2CH/4CH masked
+intensities 计算一个 robust trimmed-mean scalar（q10=0.1、q90=0.9、严格取两者
+之间的值的均值）。loss 比较 normalized prediction 与 raw observation/该 scalar，
+因而所有 weight/stack/group 的相对强度保持不变；训练中的 A 为 normalized units。
+导出的 `amplitude_3D` 乘回该 scalar，恢复原始输入 intensity units；T1/T2/B1 单位不变。
+该 scalar 与训练单位写入 resolved config 和 checkpoint。Stage A 冻结 rigid，Stage B 在同一模型
 上开放 rigid，并以相对 `axisangle_init` 的 NeSVoR `trans_loss` 正则。T1/T2/B1
 field regularization 使用范围归一化后的 gradient，权重全部来自 YAML。
 
@@ -101,3 +105,7 @@ bash scripts/run_server_example.sh
 TI=50/150 与 DYZ=10/100 的差异已明确记录。scanner 的 startup 和真实 k-space
 centre timing 后续仍可核对，但 v1 当前严格沿用 HHZ
 `function_T1T2_10HB_bssfp.m`/`sim_T1T2_10HB_bssfp.m` 行为。
+
+量化 field regularization 保持原来的空间 L2 gradient 含义，但用
+`sqrt(sum(g^2) + 1e-12)` 避免零梯度反传奇异性；optimizer 在 step 前检查所有当前
+可训练梯度有限，step 后检查参数有限，发现异常即明确失败而不做 clip、clamp 或填零。

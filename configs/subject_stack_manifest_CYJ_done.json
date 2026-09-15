@@ -1,0 +1,13 @@
+{
+  "schema_version": "deployment-v1.1",
+  "subjects": [
+    {
+      "subject_id": "CYJ",
+      "stacks": [
+        {"stack": "sax", "local_dicom_dir": "/home/universe/SVR/multimap_postprogramming/subject_dicom/CYJ/sax", "server_dicom_dir": "/data/dengyz/dataset/mapping_subject_dicom/CYJ/sax"},
+        {"stack": "2ch", "local_dicom_dir": "/home/universe/SVR/multimap_postprogramming/subject_dicom/CYJ/2ch", "server_dicom_dir": "/data/dengyz/dataset/mapping_subject_dicom/CYJ/2ch"},
+        {"stack": "4ch", "local_dicom_dir": "/home/universe/SVR/multimap_postprogramming/subject_dicom/CYJ/4ch", "server_dicom_dir": "/data/dengyz/dataset/mapping_subject_dicom/CYJ/4ch"}
+      ]
+    }
+  ]
+}

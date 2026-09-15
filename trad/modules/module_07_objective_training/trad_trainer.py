@@ -16,7 +16,7 @@ from torch.optim import AdamW
 from torch.optim.lr_scheduler import MultiStepLR
 import yaml
 
-from modules.module_03_dataset_geometry.quantitative_point_dataset import QuantPointDataset
+from modules.module_03_dataset_geometry.quantitative_point_dataset import QuantPointDataset, robust_trimmed_mean_intensity
 from modules.module_04_quantitative_inr.quantitative_inr import QuantitativeINR, QuantitativeINRConfig
 from modules.module_05_signal_decoder.trad_signal_simulator import TradProtocol, TradSignalSimulator
 from modules.module_06_rigid_psf.rigid_psf_forward import GroupRigidPSF, TradQuantitativeForward
@@ -70,6 +70,7 @@ class TradTrainingModel(nn.Module):
         self.signal_simulator = TradSignalSimulator()
         self.forward_model = TradQuantitativeForward(inr, self.signal_simulator, rigid_psf, protocol)
         self.protocol = protocol
+        self.register_buffer("intensity_scale", torch.ones(()))
 
     def forward(self, batch: Mapping[str, torch.Tensor], n_psf_samples: int) -> torch.Tensor:
         return self.forward_model(batch["xyz"], batch["group_idx"], batch["weight_idx"], batch["timing"], n_psf_samples)
@@ -131,6 +132,43 @@ def _balanced_mse(prediction: torch.Tensor, observed: torch.Tensor, weight_idx: 
     return torch.stack(means).mean()
 
 
+def _intensity_normalization_provenance(training: Mapping[str, Any], dataset: QuantPointDataset) -> dict[str, object]:
+    settings = _require(training, "intensity_normalization")
+    if not isinstance(settings, Mapping):
+        raise ValueError("training.intensity_normalization must be a mapping.")
+    required = ("enabled", "method", "lower_quantile", "upper_quantile")
+    missing = [key for key in required if key not in settings]
+    if missing:
+        raise ValueError(f"training.intensity_normalization lacks explicit values: {missing}")
+    if settings["enabled"] is not True or settings["method"] != "trimmed_mean":
+        raise ValueError("Trad v1 requires enabled=true and method=trimmed_mean intensity normalization.")
+    lower, upper = float(settings["lower_quantile"]), float(settings["upper_quantile"])
+    if lower != 0.1 or upper != 0.9:
+        raise ValueError("Trad v1 requires intensity normalization lower_quantile=0.1 and upper_quantile=0.9.")
+    scale = robust_trimmed_mean_intensity(dataset.v.detach(), lower_quantile=lower, upper_quantile=upper)
+    return {
+        "enabled": True,
+        "method": "trimmed_mean",
+        "lower_quantile": lower,
+        "upper_quantile": upper,
+        "scale": float(scale.detach().cpu()),
+        "training_units": "normalized_subject_intensity",
+        "amplitude_export_units": "original_input_intensity",
+    }
+
+
+def _assert_finite_gradients(model: nn.Module, stage: str, global_iteration: int) -> None:
+    for name, parameter in model.named_parameters():
+        if parameter.requires_grad and parameter.grad is not None and not torch.isfinite(parameter.grad).all():
+            raise FloatingPointError(f"Non-finite gradient at stage {stage}, iteration {global_iteration}, parameter {name}.")
+
+
+def _assert_finite_parameters(model: nn.Module, stage: str, global_iteration: int) -> None:
+    for name, parameter in model.named_parameters():
+        if parameter.requires_grad and not torch.isfinite(parameter).all():
+            raise FloatingPointError(f"Non-finite parameter at stage {stage}, iteration {global_iteration}, parameter {name}.")
+
+
 def _quantitative_regularization(model: TradTrainingModel, train_xyz: torch.Tensor, spatial_scaling: float, weights: Mapping[str, Any]) -> dict[str, torch.Tensor]:
     values: dict[str, torch.Tensor] = {}
     requested = {"t1": float(_require(weights, "t1")), "t2": float(_require(weights, "t2")), "b1": float(_require(weights, "b1"))}
@@ -146,7 +184,7 @@ def _quantitative_regularization(model: TradTrainingModel, train_xyz: torch.Tens
     }
     for key, value in normalized.items():
         gradient = torch.autograd.grad(value.sum(), points, create_graph=True)[0] / spatial_scaling
-        values[key] = gradient.pow(2).sum(dim=-1).sqrt().mean()
+        values[key] = torch.sqrt(gradient.pow(2).sum(dim=-1) + 1e-12).mean()
     return values
 
 
@@ -169,8 +207,10 @@ def _optimizer(model: TradTrainingModel, learning_rates: Mapping[str, Any], join
     return AdamW(groups, betas=(0.9, 0.99), eps=1e-15)
 
 
-def _write_resolved_config(path: Path, config: Mapping[str, Any], protocol: TradProtocol, dataset: QuantPointDataset, space: TrainingSpace, stack_weights: Mapping[int, float]) -> None:
+def _write_resolved_config(path: Path, config: Mapping[str, Any], protocol: TradProtocol, dataset: QuantPointDataset, space: TrainingSpace, stack_weights: Mapping[int, float], intensity_normalization: Mapping[str, object]) -> None:
     resolved = dict(config)
+    resolved["training"] = dict(_require(config, "training"))
+    resolved["training"]["intensity_normalization"] = dict(intensity_normalization)
     resolved.update({
         "validated_protocol": {"tr_ms": protocol.tr_ms, "vps": protocol.vps, "fa_deg": list(protocol.fa_deg), "ti_ms": list(protocol.ti_ms), "t2prep_ms": list(protocol.t2prep_ms), "n_ramp_up": protocol.n_ramp_up}, "stack_weights": {int(key): float(value) for key, value in stack_weights.items()},
         "training_space": {key: value.tolist() if isinstance(value, torch.Tensor) else value for key, value in space.state_dict().items()},
@@ -180,7 +220,7 @@ def _write_resolved_config(path: Path, config: Mapping[str, Any], protocol: Trad
         yaml.safe_dump(resolved, handle, allow_unicode=True, sort_keys=False)
 
 
-def save_checkpoint(path: str | Path, model: TradTrainingModel, config: Mapping[str, Any], protocol: TradProtocol, dataset: QuantPointDataset, space: TrainingSpace, seed: int) -> None:
+def save_checkpoint(path: str | Path, model: TradTrainingModel, config: Mapping[str, Any], protocol: TradProtocol, dataset: QuantPointDataset, space: TrainingSpace, seed: int, intensity_normalization: Mapping[str, object]) -> None:
     torch.save({
         "model_state": model.state_dict(), "resolved_config": dict(config), "protocol_hhz_v1": asdict(protocol),
         "validated_tr_ms": protocol.tr_ms, "validated_vps": protocol.vps, "training_space": space.state_dict(),
@@ -188,12 +228,13 @@ def save_checkpoint(path: str | Path, model: TradTrainingModel, config: Mapping[
         "group_axisangle_init_physical": space.group_axisangle_init_physical.detach().cpu(),
         "group_axisangle_init_train": space.group_axisangle_init_train.detach().cpu(),
         "trained_axisangle_train": model.rigid_psf.axisangle.detach().cpu(), "random_seed": int(seed),
+        "intensity_normalization": dict(intensity_normalization),
     }, Path(path))
 
 
 def load_checkpoint(path: str | Path, model: TradTrainingModel, device: torch.device) -> dict[str, Any]:
     checkpoint = torch.load(Path(path), map_location=device, weights_only=False)
-    required = {"model_state", "protocol_hhz_v1", "training_space", "trained_axisangle_train"}
+    required = {"model_state", "protocol_hhz_v1", "training_space", "trained_axisangle_train", "intensity_normalization"}
     missing = required.difference(checkpoint)
     if missing:
         raise ValueError(f"Checkpoint lacks required fields: {sorted(missing)}")
@@ -218,17 +259,19 @@ def train_trad(dataset: QuantPointDataset, config: Mapping[str, Any], protocol_y
     seed = int(training["seed"])
     torch.manual_seed(seed); np.random.seed(seed); random.seed(seed)
     stack_weights = dataset.validate_balanced_samples()
+    intensity_normalization = _intensity_normalization_provenance(training, dataset)
     model, space, protocol = build_training_model(dataset, config, protocol_yaml, device)
+    model.intensity_scale.copy_(torch.as_tensor(intensity_normalization["scale"], dtype=model.intensity_scale.dtype, device=device))
     output = Path(output_dir)
     if output.exists() and any(output.iterdir()):
         raise FileExistsError(f"output_dir must be absent or empty: {output}")
     output.mkdir(parents=True, exist_ok=True)
-    _write_resolved_config(output / "config_resolved.yaml", config, protocol, dataset, space, stack_weights)
+    _write_resolved_config(output / "config_resolved.yaml", config, protocol, dataset, space, stack_weights, intensity_normalization)
     log_path = output / "training_log.csv"
     global_iter = 0
     stage_a_axisangle_final: torch.Tensor | None = None
     with log_path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=["stage", "iteration", "data_mse", "reg_t1", "reg_t2", "reg_b1", "transformation", "total", "lr_encoding", "lr_network", "lr_rigid"])
+        writer = csv.DictWriter(handle, fieldnames=["stage", "iteration", "data_mse", "reg_t1", "reg_t2", "reg_b1", "transformation", "total", "intensity_scale", "lr_encoding", "lr_network", "lr_rigid"])
         writer.writeheader()
         for stage, iterations, joint in (("A", int(training["stage_a_iterations"]), False), ("B", int(training["stage_b_iterations"]), True)):
             if iterations < 0:
@@ -242,7 +285,7 @@ def train_trad(dataset: QuantPointDataset, config: Mapping[str, Any], protocol_y
                 batch = _balanced_batch(dataset, int(training["batch_size"]), device)
                 batch["xyz"] = space.local_to_train(batch["xyz"])
                 prediction = model(batch, int(training["psf_samples"]))
-                data_mse = _balanced_mse(prediction, batch["v"], batch["weight_idx"], _stack_weight_tensor(batch["stack_idx"], stack_weights))
+                data_mse = _balanced_mse(prediction, batch["v"] / model.intensity_scale, batch["weight_idx"], _stack_weight_tensor(batch["stack_idx"], stack_weights))
                 world_train = _regularization_world_points(model, batch["xyz"], batch["group_idx"])
                 regularization = _quantitative_regularization(model, world_train, space.spatial_scaling, _require(loss_cfg, "quantitative"))
                 trans = model.rigid_psf.transformation_loss(space.spatial_scaling)
@@ -253,9 +296,12 @@ def train_trad(dataset: QuantPointDataset, config: Mapping[str, Any], protocol_y
                     raise FloatingPointError(f"Non-finite loss at stage {stage}, iteration {global_iter}.")
                 optimizer.zero_grad(set_to_none=True)
                 total.backward()
-                optimizer.step(); scheduler.step()
-                writer.writerow({"stage": stage, "iteration": global_iter, "data_mse": float(data_mse.detach()), "reg_t1": float(regularization["t1"].detach()), "reg_t2": float(regularization["t2"].detach()), "reg_b1": float(regularization["b1"].detach()), "transformation": float(trans.detach()), "total": float(total.detach()), "lr_encoding": optimizer.param_groups[0]["lr"], "lr_network": optimizer.param_groups[1]["lr"], "lr_rigid": optimizer.param_groups[2]["lr"] if joint else ""})
+                _assert_finite_gradients(model, stage, global_iter)
+                optimizer.step()
+                _assert_finite_parameters(model, stage, global_iter)
+                scheduler.step()
+                writer.writerow({"stage": stage, "iteration": global_iter, "data_mse": float(data_mse.detach()), "reg_t1": float(regularization["t1"].detach()), "reg_t2": float(regularization["t2"].detach()), "reg_b1": float(regularization["b1"].detach()), "transformation": float(trans.detach()), "total": float(total.detach()), "intensity_scale": float(model.intensity_scale.detach()), "lr_encoding": optimizer.param_groups[0]["lr"], "lr_network": optimizer.param_groups[1]["lr"], "lr_rigid": optimizer.param_groups[2]["lr"] if joint else ""})
             if stage == "A":
                 stage_a_axisangle_final = model.rigid_psf.axisangle.detach().clone()
-    save_checkpoint(output / "model.pt", model, config, protocol, dataset, space, seed)
-    return {"model": model, "training_space": space, "protocol": protocol, "stack_weights": stack_weights, "output_dir": output, "stage_a_axisangle_final": stage_a_axisangle_final if stage_a_axisangle_final is not None else model.rigid_psf.axisangle_init.detach().clone()}
+    save_checkpoint(output / "model.pt", model, config, protocol, dataset, space, seed, intensity_normalization)
+    return {"model": model, "training_space": space, "protocol": protocol, "stack_weights": stack_weights, "intensity_normalization": intensity_normalization, "output_dir": output, "stage_a_axisangle_final": stage_a_axisangle_final if stage_a_axisangle_final is not None else model.rigid_psf.axisangle_init.detach().clone()}

@@ -315,3 +315,21 @@ stop for manual checkpoint review before any formal MLP reconstruction.
   unchanged.
 - Not run: real preprocessing/MIND/MP-PCA, GPU/formal training, benchmark,
   approval and reconstruction.
+
+## Trad numerical-stability / intensity-scale hotfix (2026-09-15)
+
+- [x] Replaced zero-unsafe field-gradient `sqrt(sum(g^2))` with exactly
+  `sqrt(sum(g^2) + 1e-12)`. The L2 regularization, weights and all scientific
+  forward inputs are otherwise unchanged.
+- [x] Added strict pre-step finite-gradient and post-step finite-parameter
+  guards; they raise stage/iteration/parameter-specific `FloatingPointError`
+  before a bad gradient can enter `optimizer.step()`.
+- [x] Trad now requires an explicit enabled q10=0.1/q90=0.9 trimmed-mean
+  subject scalar over all masked prepared SAX/2CH/4CH values. Training compares
+  normalized prediction to raw/scale observations; relative intensities and
+  `dataset.v` remain unchanged. Checkpoint/resolved config/log/QC retain the
+  scale, and only exported amplitude is restored to original intensity units.
+- PASS — local synthetic stability/intensity tests and complete Trad suite:
+  25 tests. Requested Python compilation and `git diff --check` PASS.
+- Not run: CYJ or any formal reconstruction, MLP work, formal timing audit,
+  dataset generation, long training, approval or server action.

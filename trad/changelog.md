@@ -129,4 +129,19 @@
   TR/VPS, MP-PCA center-data and MIND alpha.
 - No HHZ, MIND/MP-PCA, INR, rigid/PSF, objective, training, or reconstruction
   science changed.
+
+## 2026-09-15 — Trad numerical-stability and intensity-scale hotfix
+
+- Quantitative spatial-gradient L2 regularization now uses
+  `sqrt(sum(g^2) + 1e-12)`, retaining its scientific meaning while removing
+  the zero-gradient backward singularity. Step now aborts before mutation on a
+  non-finite trainable gradient and checks participating parameters again
+  immediately after optimizer step.
+- One strict subject-level NeSVoR-style q10/q90 trimmed-mean scalar is computed
+  jointly from all masked SAX/2CH/4CH values. Data MSE uses normalized observed
+  intensity; no prepared data, masks, relative weight/stack/group scaling, or
+  simulator physics changes. The scalar is stored in model/checkpoint/resolved
+  config and only amplitude export multiplies it back to original input units.
+- Tests: full local Trad pytest PASS (25); no real reconstruction, timing
+  audit, dataset generation, or training was run.
 # 修复 prepare_all_observations deployment wrapper 在标准调用下无法定位 trad/modules 的问题。

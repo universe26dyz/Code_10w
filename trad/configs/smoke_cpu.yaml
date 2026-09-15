@@ -15,6 +15,11 @@ training:
   psf_samples: 2
   stage_a_iterations: 10
   stage_b_iterations: 4
+  intensity_normalization:
+    enabled: true
+    method: trimmed_mean
+    lower_quantile: 0.1
+    upper_quantile: 0.9
   learning_rates:
     encoding: 0.001
     network: 0.001
