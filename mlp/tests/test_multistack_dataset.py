@@ -21,6 +21,7 @@ def _write_stack(path, stack_idx, origin):
         affine_lps_rc=np.repeat(affine[None], 10, axis=0),
         pixel_spacing_rc_mm=np.repeat(np.array([[2.0, 1.0]]), 10, axis=0),
         slice_thickness_mm=np.full(10, 6.0),
+        tr_ms=np.full(10, 3.2), vps=np.full(10, 32, dtype=np.int64),
     )
 
 

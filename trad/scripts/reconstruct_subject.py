@@ -16,7 +16,7 @@ def reconstruct_subject(prepared_root: str | Path, subject_id: str, config: str 
     if missing:
         raise FileNotFoundError("Required exact prepared stack observations are missing: " + "; ".join(missing))
     method_root = Path(__file__).resolve().parents[1]
-    return run_reconstruction(config, method_root / "configs" / "protocol_hhz_v1.yaml", observations, output)
+    return run_reconstruction(config, method_root / "configs" / "protocol_hhz_v1.yaml", observations, output, subject_id=subject_id)
 
 
 def main() -> None:

@@ -22,7 +22,7 @@ def test_dataset_metadata_rejects_different_timing_pool(tmp_path):
             handle["input12"] = np.zeros((n, 12), dtype=np.float32)
             handle["target_signal10"] = np.zeros((n, 10), dtype=np.float32)
             handle["timing_id"] = np.zeros(n, dtype=np.int64)
-    metadata = {"timing_pool_sha256": _sha256(pool_a), "functional_fixture": False, "timing9_min_ms": [70.0] * 9, "timing9_max_ms": [70.0] * 9, "tr_ms": 3.2, "vps": 32, "protocol": {"tr_ms": 3.2, "vps": 32, "fa_deg": [45.0, 45.0, 45.0], "ti_ms": [50.0, 150.0], "t2prep_ms": [35.0, 45.0, 55.0], "n_ramp_up": 10}, "sizes": {"train": 4, "valid": 2, "test": 2}}
+    metadata = {"timing_pool_sha256": _sha256(pool_a), "functional_fixture": False, "timing9_min_ms": [70.0] * 9, "timing9_max_ms": [70.0] * 9, "train_timing9_min_ms": [70.0] * 9, "train_timing9_max_ms": [70.0] * 9, "pool_timing9_min_ms": [70.0] * 9, "pool_timing9_max_ms": [70.0] * 9, "train_subject_ids": ["a"], "valid_subject_ids": ["b"], "test_subject_ids": ["c"], "tr_ms": 3.2, "vps": 32, "protocol": {"tr_ms": 3.2, "vps": 32, "fa_deg": [45.0, 45.0, 45.0], "ti_ms": [50.0, 150.0], "t2prep_ms": [35.0, 45.0, 55.0], "n_ramp_up": 10}, "sizes": {"train": 4, "valid": 2, "test": 2}}
     (dataset / "dataset_metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
     with pytest.raises(ValueError, match="timing-pool SHA256"):
         validate_dataset_provenance(dataset, pool_b, "configs/protocol_hhz_v1.yaml")

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import torch
 from torch import nn
+from contextlib import nullcontext
+from typing import Callable, ContextManager
 
 from third_party.nesvor.nesvor.transform import RigidTransform, ax_transform_points
 from third_party.nesvor.nesvor.utils.psf import resolution2sigma
@@ -98,6 +100,7 @@ class TradQuantitativeForward(nn.Module):
         weight_idx: torch.Tensor,
         timing9_ms: torch.Tensor,
         n_psf_samples: int,
+        profile: Callable[[str], ContextManager[None]] | None = None,
     ) -> torch.Tensor:
         """Predict observed-weight pixels without averaging tissue parameters first."""
 
@@ -108,15 +111,19 @@ class TradQuantitativeForward(nn.Module):
             raise ValueError("weight_idx must contain observed weights 0..9.")
         if timing9_ms.shape != (batch_size, 9):
             raise ValueError("timing9_ms must be [B,9].")
-        world_samples = self.rigid_psf.sample_local_then_transform(local_xyz_mm, group_idx, n_psf_samples)
+        measure = profile or (lambda _name: nullcontext())
+        with measure("psf_and_rigid"):
+            world_samples = self.rigid_psf.sample_local_then_transform(local_xyz_mm, group_idx, n_psf_samples)
         flat_world = world_samples.reshape(-1, 3)
-        fields = self.quantitative_inr(flat_world)
-        fingerprint = self.signal_simulator(
-            fields["t1_ms"], fields["t2_ms"], fields["b1"],
-            timing9_ms[:, None, :].expand(-1, n_psf_samples, -1).reshape(-1, 9),
-            self.protocol,
-            normalize=True,
-        )
+        with measure("inr_forward"):
+            fields = self.quantitative_inr(flat_world)
+        with measure("signal_decoder_forward"):
+            fingerprint = self.signal_simulator(
+                fields["t1_ms"], fields["t2_ms"], fields["b1"],
+                timing9_ms[:, None, :].expand(-1, n_psf_samples, -1).reshape(-1, 9),
+                self.protocol,
+                normalize=True,
+            )
         selected = fingerprint.gather(1, weight_idx[:, None, None].expand(-1, n_psf_samples, 1).reshape(-1, 1)).squeeze(1)
         amplitude = fields["amplitude"]
         return (selected * amplitude).reshape(batch_size, n_psf_samples).mean(dim=1)

@@ -15,7 +15,7 @@ from modules.module_08_inference_export.export_quantitative import export_quanti
 from modules.module_09_qc_benchmark.qc import validate_smoke_outputs
 
 
-def run_reconstruction(config_path: str | Path, protocol_path: str | Path, observations: list[str | Path], output_dir: str | Path, mlp_checkpoint: str | Path | None = None) -> dict[str, object]:
+def run_reconstruction(config_path: str | Path, protocol_path: str | Path, observations: list[str | Path], output_dir: str | Path, mlp_checkpoint: str | Path | None = None, subject_id: str | None = None) -> dict[str, object]:
     with Path(config_path).open(encoding="utf-8") as handle:
         config = yaml.safe_load(handle)
     if not isinstance(config, dict) or not isinstance(config.get("training"), dict) or not isinstance(config.get("decoder"), dict):
@@ -27,7 +27,7 @@ def run_reconstruction(config_path: str | Path, protocol_path: str | Path, obser
         config["decoder"] = dict(config["decoder"])
         config["decoder"]["checkpoint"] = str(mlp_checkpoint)
     dataset = QuantPointDataset(observations, device=torch.device(config["training"]["device"]))
-    result = train_mlp_reconstruction(dataset, config, protocol_path, output_dir)
+    result = train_mlp_reconstruction(dataset, config, protocol_path, output_dir, prepared_inputs=observations, subject_id=subject_id or Path(observations[0]).parents[1].name, command=" ".join(__import__("sys").argv))
     export_cfg = config.get("export")
     if not isinstance(export_cfg, dict) or "output_resolution_mm" not in export_cfg or "output_batch_size" not in export_cfg:
         raise ValueError("export.output_resolution_mm and export.output_batch_size must be explicit.")

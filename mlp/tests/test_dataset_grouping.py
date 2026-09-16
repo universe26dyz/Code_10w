@@ -27,6 +27,7 @@ def test_quantitative_dataset_keeps_ten_weights_under_one_group_pose(tmp_path):
         affine_lps_rc=np.repeat(_valid_affine()[None, :, :], 10, axis=0),
         pixel_spacing_rc_mm=np.repeat(np.array([[2.0, 1.5]]), 10, axis=0),
         slice_thickness_mm=np.full(10, 8.0),
+        tr_ms=np.full(10, 3.2), vps=np.full(10, 32, dtype=np.int64),
     )
     dataset = QuantPointDataset([path])
     assert dataset.group_pose_count == 1

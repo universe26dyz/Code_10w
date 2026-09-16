@@ -14,6 +14,12 @@ training:
   spatial_scaling: 30.0
   batch_size: 640
   psf_samples: 8
+  checkpoint_every: 0
+  require_clean_git: false
+  profile_every: 100
+  profile_warmup_samples: 2
+  monitor_every: 500
+  monitor_samples_per_weight_per_stack: 8
   stage_a_iterations: 2000
   stage_b_iterations: 8000
   learning_rates:
@@ -29,6 +35,22 @@ loss:
     t1: 0.0001
     t2: 0.0001
     b1: 0.001
+psf:
+  training:
+    enabled: true
+    type: gaussian
+    n_samples: 8
+    sampling_mode: random
+  export:
+    enabled: false
+    n_samples: 128
+    output_psf_factor: 1.0
+variance:
+  enabled: false
+  pixel: false
+  slice: false
+spatial_regularization:
+  mode: current_l2
 export:
   output_resolution_mm: 1.0
   output_batch_size: 65536

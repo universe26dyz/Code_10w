@@ -21,6 +21,7 @@ from modules.module_04_quantitative_inr.quantitative_inr import QuantitativeINR,
 from modules.module_05_signal_decoder.trad_signal_simulator import TradProtocol, TradSignalSimulator
 from modules.module_06_rigid_psf.rigid_psf_forward import GroupRigidPSF, TradQuantitativeForward
 from .training_space import TrainingSpace
+from .experiment_infrastructure import CachedBalancedSampler, FixedMonitorSet, IterationProfiler, git_provenance, normalize_step1_config, write_experiment_manifest
 
 
 def _require(mapping: Mapping[str, Any], key: str) -> Any:
@@ -72,8 +73,8 @@ class TradTrainingModel(nn.Module):
         self.protocol = protocol
         self.register_buffer("intensity_scale", torch.ones(()))
 
-    def forward(self, batch: Mapping[str, torch.Tensor], n_psf_samples: int) -> torch.Tensor:
-        return self.forward_model(batch["xyz"], batch["group_idx"], batch["weight_idx"], batch["timing"], n_psf_samples)
+    def forward(self, batch: Mapping[str, torch.Tensor], n_psf_samples: int, profile: Any = None) -> torch.Tensor:
+        return self.forward_model(batch["xyz"], batch["group_idx"], batch["weight_idx"], batch["timing"], n_psf_samples, profile)
 
 
 def build_training_model(
@@ -242,9 +243,10 @@ def load_checkpoint(path: str | Path, model: TradTrainingModel, device: torch.de
     return checkpoint
 
 
-def train_trad(dataset: QuantPointDataset, config: Mapping[str, Any], protocol_yaml: str | Path, output_dir: str | Path) -> dict[str, Any]:
+def train_trad(dataset: QuantPointDataset, config: Mapping[str, Any], protocol_yaml: str | Path, output_dir: str | Path, *, prepared_inputs: list[str | Path] | None = None, subject_id: str | None = None, command: str = "") -> dict[str, Any]:
     """Run Stage A then Stage B continuously on one model and write requested artifacts."""
 
+    config = normalize_step1_config(config)
     training = _require(config, "training")
     loss_cfg = _require(config, "loss")
     if not isinstance(training, dict) or not isinstance(loss_cfg, dict):
@@ -259,6 +261,8 @@ def train_trad(dataset: QuantPointDataset, config: Mapping[str, Any], protocol_y
     seed = int(training["seed"])
     torch.manual_seed(seed); np.random.seed(seed); random.seed(seed)
     stack_weights = dataset.validate_balanced_samples()
+    sampler = CachedBalancedSampler(dataset)
+    monitor = FixedMonitorSet.from_dataset(dataset, seed=seed, samples_per_weight_per_stack=int(training["monitor_samples_per_weight_per_stack"])) if int(training["monitor_every"]) else None
     intensity_normalization = _intensity_normalization_provenance(training, dataset)
     model, space, protocol = build_training_model(dataset, config, protocol_yaml, device)
     model.intensity_scale.copy_(torch.as_tensor(intensity_normalization["scale"], dtype=model.intensity_scale.dtype, device=device))
@@ -267,12 +271,19 @@ def train_trad(dataset: QuantPointDataset, config: Mapping[str, Any], protocol_y
         raise FileExistsError(f"output_dir must be absent or empty: {output}")
     output.mkdir(parents=True, exist_ok=True)
     _write_resolved_config(output / "config_resolved.yaml", config, protocol, dataset, space, stack_weights, intensity_normalization)
+    repo_root = Path(__file__).resolve().parents[3]
+    if bool(training["require_clean_git"]) and git_provenance(repo_root)["git_dirty"]:
+        raise RuntimeError("require_clean_git=true but the repository has uncommitted changes.")
+    stack_group_counts = {f"stack_{stack}": int(torch.unique(dataset.group_idx[dataset.stack_idx == stack]).numel()) for stack in dataset.stack_idx.unique().tolist()}
+    write_experiment_manifest(output, route="trad_bloch", subject_id=subject_id, repo_root=repo_root, method_root=Path(__file__).resolve().parents[2], config_resolved=output / "config_resolved.yaml", prepared_inputs=list(prepared_inputs or ()), protocol={"tr_ms": protocol.tr_ms, "vps": protocol.vps}, stack_group_counts=stack_group_counts, seed=seed, command=command)
     log_path = output / "training_log.csv"
     global_iter = 0
     stage_a_axisangle_final: torch.Tensor | None = None
-    with log_path.open("w", newline="", encoding="utf-8") as handle:
+    profiler = IterationProfiler(device, every=int(training["profile_every"]), warmup_samples=int(training["profile_warmup_samples"]))
+    with log_path.open("w", newline="", encoding="utf-8") as handle, (output / "monitor_log.csv").open("w", newline="", encoding="utf-8") as monitor_handle:
         writer = csv.DictWriter(handle, fieldnames=["stage", "iteration", "data_mse", "reg_t1", "reg_t2", "reg_b1", "transformation", "total", "intensity_scale", "lr_encoding", "lr_network", "lr_rigid"])
         writer.writeheader()
+        monitor_writer = csv.DictWriter(monitor_handle, fieldnames=["iteration", "stage", "monitor_mse", "per_weight_mse", "per_stack_mse"]); monitor_writer.writeheader()
         for stage, iterations, joint in (("A", int(training["stage_a_iterations"]), False), ("B", int(training["stage_b_iterations"]), True)):
             if iterations < 0:
                 raise ValueError(f"Stage {stage} iterations must be non-negative.")
@@ -282,12 +293,13 @@ def train_trad(dataset: QuantPointDataset, config: Mapping[str, Any], protocol_y
             scheduler = MultiStepLR(optimizer, milestones=milestones, gamma=float(training["scheduler_gamma"]))
             for _ in range(iterations):
                 global_iter += 1
-                batch = _balanced_batch(dataset, int(training["batch_size"]), device)
-                batch["xyz"] = space.local_to_train(batch["xyz"])
-                prediction = model(batch, int(training["psf_samples"]))
-                data_mse = _balanced_mse(prediction, batch["v"] / model.intensity_scale, batch["weight_idx"], _stack_weight_tensor(batch["stack_idx"], stack_weights))
+                profiler.begin(global_iter, stage)
+                with profiler.section("batch_sampling"): batch = sampler.sample(int(training["batch_size"]))
+                with profiler.section("coordinate_conversion"): batch["xyz"] = space.local_to_train(batch["xyz"])
+                prediction = model(batch, int(training["psf_samples"]), profiler.section)
+                with profiler.section("data_loss"): data_mse = _balanced_mse(prediction, batch["v"] / model.intensity_scale, batch["weight_idx"], _stack_weight_tensor(batch["stack_idx"], stack_weights))
                 world_train = _regularization_world_points(model, batch["xyz"], batch["group_idx"])
-                regularization = _quantitative_regularization(model, world_train, space.spatial_scaling, _require(loss_cfg, "quantitative"))
+                with profiler.section("spatial_regularization"): regularization = _quantitative_regularization(model, world_train, space.spatial_scaling, _require(loss_cfg, "quantitative"))
                 trans = model.rigid_psf.transformation_loss(space.spatial_scaling)
                 total = data_mse + sum(float(_require(loss_cfg, "quantitative")[key]) * regularization[key] for key in regularization)
                 if joint:
@@ -295,13 +307,22 @@ def train_trad(dataset: QuantPointDataset, config: Mapping[str, Any], protocol_y
                 if not torch.isfinite(total):
                     raise FloatingPointError(f"Non-finite loss at stage {stage}, iteration {global_iter}.")
                 optimizer.zero_grad(set_to_none=True)
-                total.backward()
+                with profiler.section("backward"): total.backward()
                 _assert_finite_gradients(model, stage, global_iter)
-                optimizer.step()
+                with profiler.section("optimizer_step"): optimizer.step()
                 _assert_finite_parameters(model, stage, global_iter)
                 scheduler.step()
                 writer.writerow({"stage": stage, "iteration": global_iter, "data_mse": float(data_mse.detach()), "reg_t1": float(regularization["t1"].detach()), "reg_t2": float(regularization["t2"].detach()), "reg_b1": float(regularization["b1"].detach()), "transformation": float(trans.detach()), "total": float(total.detach()), "intensity_scale": float(model.intensity_scale.detach()), "lr_encoding": optimizer.param_groups[0]["lr"], "lr_network": optimizer.param_groups[1]["lr"], "lr_rigid": optimizer.param_groups[2]["lr"] if joint else ""})
+                if monitor is not None and global_iter % int(training["monitor_every"]) == 0:
+                    monitor_batch = dict(monitor.batch); monitor_batch["xyz"] = space.local_to_train(monitor_batch["xyz"])
+                    with torch.no_grad(): monitor_prediction = model(monitor_batch, int(training["psf_samples"]))
+                    monitor_error = (monitor_prediction - monitor_batch["v"] / model.intensity_scale).pow(2)
+                    monitor_writer.writerow({"iteration": global_iter, "stage": stage, "monitor_mse": float(monitor_error.mean()), "per_weight_mse": json.dumps({weight: float(monitor_error[monitor_batch["weight_idx"] == weight].mean()) for weight in range(10)}), "per_stack_mse": json.dumps({int(stack): float(monitor_error[monitor_batch["stack_idx"] == stack].mean()) for stack in monitor_batch["stack_idx"].unique().tolist()})})
+                if int(training["checkpoint_every"]) and global_iter % int(training["checkpoint_every"]) == 0:
+                    save_checkpoint(output / f"model_iter_{global_iter:04d}.pt", model, config, protocol, dataset, space, seed, intensity_normalization)
+                profiler.end()
             if stage == "A":
                 stage_a_axisangle_final = model.rigid_psf.axisangle.detach().clone()
     save_checkpoint(output / "model.pt", model, config, protocol, dataset, space, seed, intensity_normalization)
+    profiler.write_csv(output / "timing_profile.csv")
     return {"model": model, "training_space": space, "protocol": protocol, "stack_weights": stack_weights, "intensity_normalization": intensity_normalization, "output_dir": output, "stage_a_axisangle_final": stage_a_axisangle_final if stage_a_axisangle_final is not None else model.rigid_psf.axisangle_init.detach().clone()}
