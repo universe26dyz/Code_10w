@@ -1,15 +1,19 @@
-# Copy outside the repository and replace every path explicitly.  This file is
-# documentation only; server tools take a JSON subject/stack manifest as input.
+# Copy outside the repository and replace only the two data roots when data is
+# migrated. Derived entries must remain relative to their selected root.
+data:
+  local_data_root: /home/universe/SVR/data/Code_10w_v1
+  server_data_root: /data/dengyz/dataset/Code_10w_v1
+  derived:
+    preprocessed_root: Code_10w_preprocessed
+    prepared_root: Code_10w_prepared
+    runs_root: Code_10w_runs
+    runtime_root: Code_10w_runtime
 local:
   code: /home/universe/SVR/multimap_postprogramming/Code_10w
   dicom: /home/universe/SVR/multimap_postprogramming/subject_dicom
   environment: knesvr_torch
   manifest: /absolute/path/subject_stack_manifest.json
-  preprocessed_root: /home/universe/SVR/multimap_postprogramming/Code_10w_runtime/preprocessed
 server:
   code: /data/dengyz/code/Code_10w
   dicom: /data/dengyz/dataset/mapping_subject_dicom
   environment: cr_dreme
-  preprocessed_root: /data/dengyz/dataset/Code_10w_preprocessed
-  prepared_root: /data/dengyz/dataset/Code_10w_prepared
-  runs_root: /data/dengyz/dataset/Code_10w_runs

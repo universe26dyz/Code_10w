@@ -214,7 +214,7 @@ def write_experiment_manifest(output_dir: str | Path, *, route: str, subject_id:
     if diff is not None:
         (output / "code_diff.patch").write_bytes(diff)
     method = Path(method_root) if method_root is not None else root
-    prepared = [Path(value) for value in prepared_inputs]
+    prepared = [Path(value).resolve() for value in prepared_inputs]
     cuda = torch.version.cuda
     try:
         import tinycudann as tcnn
@@ -224,7 +224,7 @@ def write_experiment_manifest(output_dir: str | Path, *, route: str, subject_id:
     manifest: dict[str, Any] = {
         "experiment_id": f"{route}_{subject_id or 'unknown'}_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}", "timestamp": datetime.now(timezone.utc).isoformat(),
         "route": route, "subject_id": subject_id, "repository": "universe26dyz/Code_10w", **git,
-        "vendored_nesvor_commit": _vendored_commit(method), "config_resolved": str(config_resolved), "command": command,
+        "vendored_nesvor_commit": _vendored_commit(method), "config_resolved": str(Path(config_resolved).resolve()), "command": command,
         "prepared_inputs": [str(value) for value in prepared], "prepared_manifest_sha256": hashlib.sha256("".join(_sha256_file(value) for value in prepared).encode("ascii")).hexdigest(),
         "tr_ms": protocol.get("tr_ms"), "vps": protocol.get("vps"), "stack_group_counts": dict(stack_group_counts), "seed": int(seed),
         "python": sys.version, "torch": torch.__version__, "cuda": cuda, "gpu": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,

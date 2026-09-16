@@ -11,10 +11,13 @@ SERVER CODE:  /data/dengyz/code/Code_10w
 SERVER DICOM: /data/dengyz/dataset/mapping_subject_dicom
 SERVER ENV:   cr_dreme
 
-LOCAL MAT:       /home/universe/SVR/multimap_postprogramming/Code_10w_runtime/preprocessed
-SERVER MAT:      /data/dengyz/dataset/Code_10w_preprocessed
-SERVER PREPARED: /data/dengyz/dataset/Code_10w_prepared
-SERVER RUNS:     /data/dengyz/dataset/Code_10w_runs
+LOCAL DATA ROOT:  /home/universe/SVR/data/Code_10w_v1
+SERVER DATA ROOT: /data/dengyz/dataset/Code_10w_v1
+
+Derived roots are configured only in `configs/deployment_paths.example.yaml`:
+`Code_10w_preprocessed`, `Code_10w_prepared`, `Code_10w_runs`, and
+`Code_10w_runtime`. Select either the local or server root; never infer one
+environment's paths from the other.
 ```
 
 MATLAB 只在本地执行 Module 01；服务器从 Module 02 开始且不需要 MATLAB。Trad 与 MLP 共用同一份 `prepared observations.npz`。
