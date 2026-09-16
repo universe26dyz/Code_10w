@@ -70,7 +70,7 @@ def _vendored_commit(method_root: Path) -> str | None:
 
 
 def normalize_step1_config(config: Mapping[str, Any]) -> dict[str, Any]:
-    """Add explicit disabled/default Step-1 controls and reject unavailable modes."""
+    """Resolve explicit Step-2 controls without changing their safe defaults."""
 
     resolved = copy.deepcopy(dict(config))
     training = resolved.setdefault("training", {})
@@ -100,20 +100,50 @@ def normalize_step1_config(config: Mapping[str, Any]) -> dict[str, Any]:
         if train_psf.get(key, expected) != expected:
             raise ValueError(f"Unsupported Step-1 psf.training.{key}={train_psf.get(key)!r}; baseline requires {expected!r}.")
         train_psf.setdefault(key, expected)
-    if export_psf.get("enabled", False):
-        raise ValueError("PSF export is not implemented in Step 1; set psf.export.enabled=false.")
     export_psf.setdefault("enabled", False); export_psf.setdefault("n_samples", 128); export_psf.setdefault("output_psf_factor", 1.0)
+    if int(export_psf["n_samples"]) < 1 or float(export_psf["output_psf_factor"]) <= 0:
+        raise ValueError("psf.export.n_samples and output_psf_factor must be positive.")
     variance = resolved.setdefault("variance", {"enabled": False, "pixel": False, "slice": False})
     if not isinstance(variance, dict):
         raise ValueError("variance must be a mapping.")
     for key in ("enabled", "pixel", "slice"):
         variance.setdefault(key, False)
-    if any(bool(variance[key]) for key in ("enabled", "pixel", "slice")):
-        raise ValueError("variance is not implemented in Step 1; enabled, pixel, and slice must all be false.")
-    regularization = resolved.setdefault("spatial_regularization", {"mode": "current_l2"})
-    if not isinstance(regularization, dict) or regularization.get("mode", "current_l2") != "current_l2":
-        raise ValueError("Only spatial_regularization.mode=current_l2 is available in Step 1.")
-    regularization.setdefault("mode", "current_l2")
+    if (bool(variance["pixel"]) or bool(variance["slice"])) and not bool(variance["enabled"]):
+        raise ValueError("variance.pixel/slice require variance.enabled=true.")
+    variance.setdefault("pixel_hidden_features", 16)
+    if int(variance["pixel_hidden_features"]) < 1:
+        raise ValueError("variance.pixel_hidden_features must be positive.")
+    regularization = resolved.setdefault("spatial_regularization", {})
+    if not isinstance(regularization, dict):
+        raise ValueError("spatial_regularization must be a mapping.")
+    regularization.setdefault("mode", "none")
+    if regularization["mode"] not in {"none", "TV", "L2", "edge-preserving"}:
+        raise ValueError("spatial_regularization.mode must be none, TV, L2, or edge-preserving.")
+    regularization.setdefault("n_points", 256)
+    regularization.setdefault("edge_epsilon", 1e-3)
+    if int(regularization["n_points"]) < 1 or float(regularization["edge_epsilon"]) <= 0:
+        raise ValueError("spatial_regularization.n_points and edge_epsilon must be positive.")
+    amplitude_guidance = regularization.setdefault("amplitude_guidance", {})
+    if not isinstance(amplitude_guidance, dict):
+        raise ValueError("spatial_regularization.amplitude_guidance must be a mapping.")
+    amplitude_guidance.setdefault("enabled", False)
+    amplitude_guidance.setdefault("alpha", 1.0)
+    if float(amplitude_guidance["alpha"]) < 0:
+        raise ValueError("spatial_regularization.amplitude_guidance.alpha must be non-negative.")
+    stack_init = resolved.setdefault("stack_initialization", {})
+    if not isinstance(stack_init, dict):
+        raise ValueError("stack_initialization must be a mapping.")
+    stack_init.setdefault("enabled", False)
+    stack_init.setdefault("args_registration", None)
+    if stack_init["args_registration"] is not None and not isinstance(stack_init["args_registration"], dict):
+        raise ValueError("stack_initialization.args_registration must be a mapping or null.")
+    bbox = resolved.setdefault("bbox", {})
+    if not isinstance(bbox, dict):
+        raise ValueError("bbox must be a mapping.")
+    bbox.setdefault("mode", "training_bbox")
+    bbox.setdefault("margin_mm", 0.0)
+    if bbox["mode"] not in {"training_bbox", "final_registered_support"} or float(bbox["margin_mm"]) < 0:
+        raise ValueError("bbox requires mode=training_bbox|final_registered_support and non-negative margin_mm.")
     return resolved
 
 

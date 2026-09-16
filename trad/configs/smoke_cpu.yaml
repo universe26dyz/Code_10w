@@ -12,7 +12,7 @@ training:
   seed: 20260911
   spatial_scaling: 30.0
   batch_size: 10
-  psf_samples: 2
+  psf_samples: 8
   stage_a_iterations: 10
   stage_b_iterations: 4
   intensity_normalization:

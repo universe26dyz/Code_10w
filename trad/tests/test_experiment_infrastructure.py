@@ -75,11 +75,8 @@ def test_manifest_records_clean_and_dirty_git_provenance(tmp_path):
     assert json.loads((output / "experiment_manifest.json").read_text(encoding="utf-8"))["git_diff_sha256"] == dirty["git_diff_sha256"]
 
 
-def test_step1_schema_rejects_enabled_unimplemented_modes():
-    config = {"training": {"psf_samples": 8}, "variance": {"enabled": True, "pixel": False, "slice": False}}
-    try:
-        normalize_step1_config(config)
-    except ValueError as error:
-        assert "variance" in str(error)
-    else:
-        raise AssertionError("enabled variance must not be silently ignored")
+def test_step2_schema_exposes_disabled_by_default_optional_controls():
+    config = normalize_step1_config({"training": {"psf_samples": 8}, "variance": {"enabled": True, "pixel": True, "slice": True}, "spatial_regularization": {"mode": "edge-preserving", "n_points": 7, "amplitude_guidance": {"enabled": True}}})
+    assert config["variance"]["enabled"] is True
+    assert config["spatial_regularization"]["mode"] == "edge-preserving"
+    assert config["psf"]["export"]["enabled"] is False

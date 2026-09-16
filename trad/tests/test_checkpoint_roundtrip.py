@@ -23,4 +23,5 @@ def test_checkpoint_contains_required_training_space_and_protocol_metadata(tmp_p
     model, _, _ = build_training_model(dataset, _config(), "configs/protocol_hhz_v1.yaml", torch.device("cpu"))
     checkpoint = load_checkpoint(output / "model.pt", model, torch.device("cpu"))
     assert {"center_ras_mm", "spatial_scaling"}.issubset(checkpoint["training_space"])
+    assert {"group_axisangle_dicom_physical", "group_axisangle_post_stack_init_physical", "trained_axisangle_train"}.issubset(checkpoint)
     assert checkpoint["validated_tr_ms"] == 3.2 and checkpoint["validated_vps"] == 32

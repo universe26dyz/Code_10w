@@ -10,6 +10,7 @@ import torch
 
 from modules.module_02_data_bridge.geometry import apply_affine_rc, cropped_affine_lps_rc_to_initial_rigid, lps_to_ras
 from third_party.nesvor.nesvor.image import Stack
+from third_party.nesvor.nesvor.svr.registration import stack_registration
 from third_party.nesvor.nesvor.transform import RigidTransform, ax_transform_points
 
 
@@ -60,6 +61,15 @@ class HB1RegistrationStack:
 class RoundTripResult:
     max_error_mm: float
     mean_error_mm: float
+
+
+@dataclass(frozen=True)
+class StackInitialization:
+    """Registration-only stack initialization, indexed by global native group."""
+
+    dicom_axisangle_physical: torch.Tensor
+    post_stack_init_axisangle_physical: torch.Tensor
+    stack_pose_records: tuple[dict[str, object], ...]
 
 
 def _load(path: str | Path) -> dict[str, np.ndarray]:
@@ -149,3 +159,62 @@ def round_trip_stack_geometry(adapted: HB1RegistrationStack) -> RoundTripResult:
         expected = lps_to_ras(apply_affine_rc(affine, rows, cols))
         errors.extend(np.linalg.norm(actual - expected, axis=1).tolist())
     return RoundTripResult(float(np.max(errors)), float(np.mean(errors)))
+
+
+def initialize_group_poses_from_hb1(
+    dicom_axisangle_physical: torch.Tensor,
+    prepared_inputs: list[str | Path],
+    *,
+    device: str | torch.device = "cpu",
+    args_registration: dict[str, object] | None = None,
+) -> StackInitialization:
+    """Apply vendored stack registration as one rigid delta per prepared stack.
+
+    The adapter view contains only HB1 images/masks.  This function neither
+    rewrites a prepared NPZ nor alters the quantitative 10-weight dataset; it
+    returns replacement *initial* poses for subsequent Stage A/Stage B use.
+    """
+
+    dicom = torch.as_tensor(dicom_axisangle_physical, dtype=torch.float32, device=device).detach().clone()
+    if dicom.ndim != 2 or dicom.shape[1] != 6:
+        raise ValueError("dicom_axisangle_physical must be [G,6].")
+    if not prepared_inputs:
+        raise ValueError("Stack initialization requires one or more prepared observations paths.")
+    audits = [audit_hb1_stack(path) for path in prepared_inputs]
+    adapters = [build_hb1_registration_stack(path, audit, device=device) for path, audit in zip(prepared_inputs, audits)]
+    expected_groups = sum(len(adapter.group_ids) for adapter in adapters)
+    if expected_groups != dicom.shape[0]:
+        raise ValueError(f"Prepared HB1 groups ({expected_groups}) do not match quantitative pose count ({dicom.shape[0]}).")
+    before = [adapter.stack.transformation.clone() for adapter in adapters]
+    images = [adapter.stack.slices.clone() for adapter in adapters]
+    masks = [adapter.stack.mask.clone() for adapter in adapters]
+    registered = stack_registration([[adapter.stack for adapter in adapters]], args_registration=args_registration)
+    post = dicom.clone()
+    records: list[dict[str, object]] = []
+    offset = 0
+    for adapter, initial_transform, initial_images, initial_masks, registered_stack in zip(adapters, before, images, masks, registered):
+        if not torch.equal(adapter.stack.slices, initial_images) or not torch.equal(adapter.stack.mask, initial_masks):
+            raise RuntimeError("Vendored stack registration changed HB1 pixel or mask values.")
+        local_groups = adapter.group_ids.astype(np.int64)
+        expected_local = np.arange(local_groups.size, dtype=np.int64)
+        if not np.array_equal(np.sort(local_groups), expected_local):
+            raise ValueError(f"{adapter.source_path}: source group ids must be contiguous zero-based.")
+        # The stack-level rigid delta is deliberately composed onto every
+        # native group, preserving the shared pose of its ten weights.
+        delta = registered_stack.transformation.mean().compose(initial_transform.mean().inv())
+        group_index = torch.as_tensor(offset + local_groups, dtype=torch.long, device=dicom.device)
+        post[group_index] = delta.compose(RigidTransform(dicom[group_index], trans_first=True)).axisangle(trans_first=True)
+        initial_pose = initial_transform.mean().axisangle(trans_first=True)[0]
+        final_pose = registered_stack.transformation.mean().axisangle(trans_first=True)[0]
+        delta_axisangle = delta.axisangle(trans_first=True)[0]
+        records.append({
+            "prepared_input": str(adapter.source_path),
+            "group_offset": int(offset),
+            "group_count": int(local_groups.size),
+            "dicom_initial_stack_pose_axisangle": initial_pose.detach().cpu().tolist(),
+            "post_stack_init_pose_axisangle": final_pose.detach().cpu().tolist(),
+            "translation_delta_mm": float(torch.linalg.vector_norm(delta_axisangle[3:]).detach().cpu()),
+            "rotation_delta_deg": float(torch.linalg.vector_norm(delta_axisangle[:3]).detach().cpu() * 180.0 / np.pi),
+        })
+        offset += local_groups.size
+    return StackInitialization(dicom.detach().cpu(), post.detach().cpu(), tuple(records))

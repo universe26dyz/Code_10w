@@ -55,7 +55,19 @@ variance:
   pixel: false
   slice: false
 spatial_regularization:
-  mode: current_l2
+  mode: none
+  n_points: 256
+  edge_epsilon: 0.001
+  amplitude_guidance:
+    enabled: false
+    alpha: 1.0
+stack_initialization:
+  enabled: true
+  args_registration: null
+bbox:
+  mode: training_bbox
+  margin_mm: 0.0
 export:
   output_resolution_mm: 1.0
   output_batch_size: 65536
+  amplitude_qc_relative_threshold: 0.05

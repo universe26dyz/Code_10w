@@ -5,6 +5,7 @@ import torch
 from modules.module_03_dataset_geometry.quantitative_point_dataset import QuantPointDataset
 from modules.module_07_objective_training.trad_trainer import build_training_model, load_checkpoint, train_trad
 from modules.module_08_inference_export.export_quantitative import export_quantitative_outputs
+from modules.module_08_inference_export.reprojection import export_native_plane_reprojections
 from modules.module_09_qc_benchmark.qc import validate_smoke_outputs
 
 
@@ -31,7 +32,11 @@ def test_tiny_staged_training_checkpoint_export_and_qc(tmp_path):
     clone, _, _ = build_training_model(dataset, config, "configs/protocol_hhz_v1.yaml", torch.device("cpu"))
     load_checkpoint(output / "model.pt", clone, torch.device("cpu"))
     torch.testing.assert_close(clone(batch, 1), expected)
-    export_quantitative_outputs(model, space, output, 12.0, 256)
+    paths = export_quantitative_outputs(model, space, output, 12.0, 256, dataset=dataset, export_config={"bbox": {"mode": "final_registered_support", "margin_mm": 0.0}})
+    reprojection = export_native_plane_reprojections(model, space, [tmp_path / "observations.npz"], output)
+    assert {"gradient_amplitude", "gradient_t1", "gradient_t2", "gradient_b1", "amplitude_qc_mask", "support_mask", "coverage"}.issubset(paths)
+    assert set(reprojection) == {f"signal_{tmp_path.name}", f"t1_t2_{tmp_path.name}"}
+    assert all(path.is_file() for path in reprojection.values())
     report = validate_smoke_outputs(output)
     assert report["rigid_tensor"] and report["deformable"] is False
     forbidden = ("deform", "b_net", "sigma_net", "log_var_slice", "logit_coef", "slice_scale", "weight_scale")

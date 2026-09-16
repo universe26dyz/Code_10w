@@ -7,7 +7,7 @@ from dataclasses import dataclass
 import torch
 
 from modules.module_03_dataset_geometry.quantitative_point_dataset import QuantPointDataset
-from third_party.nesvor.nesvor.transform import RigidTransform
+from third_party.nesvor.nesvor.transform import RigidTransform, ax_transform_points
 
 
 @dataclass(frozen=True)
@@ -23,21 +23,44 @@ class TrainingSpace:
     spatial_scaling: float
     physical_bbox_ras_mm: torch.Tensor
     bbox_train: torch.Tensor
+    group_axisangle_dicom_physical: torch.Tensor
     group_axisangle_init_physical: torch.Tensor
     group_axisangle_init_train: torch.Tensor
     group_resolution_xyz_mm: torch.Tensor
     group_resolution_train: torch.Tensor
 
     @classmethod
-    def from_dataset(cls, dataset: QuantPointDataset, spatial_scaling: float) -> "TrainingSpace":
+    def from_dataset(
+        cls,
+        dataset: QuantPointDataset,
+        spatial_scaling: float,
+        *,
+        group_axisangle_init_physical: torch.Tensor | None = None,
+        bbox_margin_mm: float = 0.0,
+    ) -> "TrainingSpace":
         if spatial_scaling <= 0:
             raise ValueError("spatial_scaling must be positive.")
-        physical_bbox = dataset.bounding_box.detach().clone()
+        if bbox_margin_mm < 0:
+            raise ValueError("bbox_margin_mm must be non-negative.")
+        dicom_axisangle = dataset.group_axisangle_init.detach().clone()
+        initial_axisangle = dicom_axisangle if group_axisangle_init_physical is None else torch.as_tensor(group_axisangle_init_physical, dtype=dicom_axisangle.dtype, device=dicom_axisangle.device).detach().clone()
+        if initial_axisangle.shape != dicom_axisangle.shape:
+            raise ValueError("group_axisangle_init_physical must match dataset group pose shape.")
+        # Tight support bbox: transformed observed pixels plus an explicit,
+        # caller-controlled margin rather than an implicit broad volume.
+        transformed = ax_transform_points(initial_axisangle[dataset.group_idx], dataset.xyz, trans_first=True)
+        physical_bbox = torch.stack((transformed.amin(0), transformed.amax(0)), 0)
+        # A single acquired plane has zero extent through-plane; retain a
+        # minimal half-voxel support in every axis.  This is intentionally
+        # tighter than the former implicit two-voxel padding.
+        half_support = dataset.group_resolution_xyz_mm.max() * 0.5 + float(bbox_margin_mm)
+        physical_bbox[0] -= half_support
+        physical_bbox[1] += half_support
         center = (physical_bbox[0] + physical_bbox[1]) / 2.0
         center_transform = RigidTransform(
             torch.cat((torch.zeros_like(center), -center))[None], trans_first=True
         )
-        physical = RigidTransform(dataset.group_axisangle_init.detach().clone(), trans_first=True)
+        physical = RigidTransform(initial_axisangle, trans_first=True)
         train_axisangle = center_transform.compose(physical).axisangle(trans_first=True)
         train_axisangle[:, 3:] /= spatial_scaling
         return cls(
@@ -45,7 +68,8 @@ class TrainingSpace:
             spatial_scaling=float(spatial_scaling),
             physical_bbox_ras_mm=physical_bbox,
             bbox_train=(physical_bbox - center) / spatial_scaling,
-            group_axisangle_init_physical=dataset.group_axisangle_init.detach().clone(),
+            group_axisangle_dicom_physical=dicom_axisangle,
+            group_axisangle_init_physical=initial_axisangle,
             group_axisangle_init_train=train_axisangle,
             group_resolution_xyz_mm=dataset.group_resolution_xyz_mm.detach().clone(),
             group_resolution_train=dataset.group_resolution_xyz_mm.detach().clone() / spatial_scaling,
@@ -85,6 +109,26 @@ class TrainingSpace:
             "physical_bbox_ras_mm": self.physical_bbox_ras_mm.detach().cpu(),
             "bbox_train": self.bbox_train.detach().cpu(),
             "group_resolution_xyz_mm": self.group_resolution_xyz_mm.detach().cpu(),
+            "group_axisangle_dicom_physical": self.group_axisangle_dicom_physical.detach().cpu(),
             "group_axisangle_init_physical": self.group_axisangle_init_physical.detach().cpu(),
             "group_axisangle_init_train": self.group_axisangle_init_train.detach().cpu(),
         }
+
+    @classmethod
+    def from_state_dict(cls, state: dict[str, object]) -> "TrainingSpace":
+        required = {"center_ras_mm", "spatial_scaling", "physical_bbox_ras_mm", "bbox_train", "group_resolution_xyz_mm", "group_axisangle_init_physical", "group_axisangle_init_train"}
+        missing = required.difference(state)
+        if missing:
+            raise ValueError(f"training_space lacks: {sorted(missing)}")
+        initial = torch.as_tensor(state["group_axisangle_init_physical"]).detach().clone()
+        return cls(
+            center_ras_mm=torch.as_tensor(state["center_ras_mm"]).detach().clone(),
+            spatial_scaling=float(state["spatial_scaling"]),
+            physical_bbox_ras_mm=torch.as_tensor(state["physical_bbox_ras_mm"]).detach().clone(),
+            bbox_train=torch.as_tensor(state["bbox_train"]).detach().clone(),
+            group_axisangle_dicom_physical=torch.as_tensor(state.get("group_axisangle_dicom_physical", initial)).detach().clone(),
+            group_axisangle_init_physical=initial,
+            group_axisangle_init_train=torch.as_tensor(state["group_axisangle_init_train"]).detach().clone(),
+            group_resolution_xyz_mm=torch.as_tensor(state["group_resolution_xyz_mm"]).detach().clone(),
+            group_resolution_train=torch.as_tensor(state["group_resolution_xyz_mm"]).detach().clone() / float(state["spatial_scaling"]),
+        )
