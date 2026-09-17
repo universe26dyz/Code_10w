@@ -37,7 +37,7 @@ def _protocol_record(protocol: Any) -> dict[str, Any]:
     }
 
 
-def load_h5_split(path: str | Path, split: str) -> TensorDataset:
+def load_h5_split(path: str | Path, split: str, *, include_jacobian: bool = False) -> TensorDataset:
     """Open one split once and retain its float32 tensors in CPU RAM."""
 
     path = Path(path)
@@ -48,9 +48,54 @@ def load_h5_split(path: str | Path, split: str) -> TensorDataset:
             raise ValueError(f"{path} lacks input12/target_signal10/timing_id.")
         inputs = np.asarray(handle["input12"][:], dtype=np.float32)
         targets = np.asarray(handle["target_signal10"][:], dtype=np.float32)
+        jacobian = np.asarray(handle["target_jacobian10x3"][:], dtype=np.float32) if include_jacobian and "target_jacobian10x3" in handle else None
     if inputs.ndim != 2 or inputs.shape[1] != 12 or targets.shape != (inputs.shape[0], 10) or inputs.shape[0] < 1:
         raise ValueError(f"{path} has invalid MLP split shapes.")
+    if include_jacobian:
+        if jacobian is None or jacobian.shape != (inputs.shape[0], 10, 3):
+            raise ValueError(f"{path} lacks valid target_jacobian10x3 [N,10,3].")
+        return TensorDataset(torch.from_numpy(inputs), torch.from_numpy(targets), torch.from_numpy(jacobian))
     return TensorDataset(torch.from_numpy(inputs), torch.from_numpy(targets))
+
+
+def _mlp_loss_settings(settings: Mapping[str, Any] | None) -> dict[str, float]:
+    value = dict(settings or {})
+    value.setdefault("signal_mse_weight", 1.0)
+    value.setdefault("jacobian_weight", 0.0)
+    value.setdefault("cosine_weight", 0.0)
+    if value["signal_mse_weight"] != 1.0 or float(value["jacobian_weight"]) < 0 or float(value["cosine_weight"]) < 0:
+        raise ValueError("mlp_loss requires signal_mse_weight=1 and non-negative optional weights.")
+    return {key: float(value[key]) for key in ("signal_mse_weight", "jacobian_weight", "cosine_weight")}
+
+
+def _mlp_output_jacobian(prediction: torch.Tensor, input12: torch.Tensor) -> torch.Tensor:
+    columns = []
+    for weight in range(10):
+        gradient = torch.autograd.grad(prediction[:, weight].sum(), input12, retain_graph=True, create_graph=True)[0]
+        columns.append(gradient[:, :3])
+    return torch.stack(columns, dim=1)
+
+
+def mlp_training_loss(model: MdmSignalMLP, input12: torch.Tensor, target_signal10: torch.Tensor, target_jacobian10x3: torch.Tensor | None, settings: Mapping[str, Any] | None) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+    """mDM signal MSE plus optional normalized-coordinate Jacobian/cosine terms."""
+
+    cfg = _mlp_loss_settings(settings)
+    optional = cfg["jacobian_weight"] > 0 or cfg["cosine_weight"] > 0
+    if optional and target_jacobian10x3 is None:
+        raise ValueError("Jacobian/cosine MLP losses require target_jacobian10x3.")
+    x = input12.requires_grad_(optional)
+    prediction = model(x)
+    signal_mse = (prediction - target_signal10).pow(2).mean()
+    zero = torch.zeros((), device=prediction.device, dtype=prediction.dtype)
+    jacobian_mse, cosine = zero, zero
+    if optional:
+        predicted_jacobian = _mlp_output_jacobian(prediction, x)
+        # Both targets and predictions differentiate normalized signal with
+        # respect to normalized [T1/1000,T2/1000,B1] coordinates.
+        jacobian_mse = (predicted_jacobian - target_jacobian10x3).pow(2).mean()
+        cosine = 1.0 - torch.nn.functional.cosine_similarity(predicted_jacobian.reshape(prediction.shape[0], -1), target_jacobian10x3.reshape(prediction.shape[0], -1), dim=-1, eps=1e-12).mean()
+    total = signal_mse + cfg["jacobian_weight"] * jacobian_mse + cfg["cosine_weight"] * cosine
+    return total, {"signal_mse": signal_mse, "jacobian_mse": jacobian_mse, "cosine": cosine}
 
 
 def validate_dataset_provenance(dataset_dir: str | Path, timing_pool_path: str | Path, protocol_path: str | Path) -> tuple[dict[str, Any], dict[str, np.ndarray], Any]:
@@ -104,8 +149,10 @@ def train_mlp(dataset_dir: str | Path, timing_pool_path: str | Path, config: Map
         raise ValueError("MLP BatchNorm training requires training.batch_size >= 2.")
     seed = int(train_cfg["seed"]); torch.manual_seed(seed); np.random.seed(seed); random.seed(seed)
     dataset_dir, output = Path(dataset_dir), Path(output_dir)
+    loss_settings = _mlp_loss_settings(config.get("mlp_loss"))
     metadata, pool, teacher_protocol = validate_dataset_provenance(dataset_dir, timing_pool_path, protocol_path)
-    splits = {name: load_h5_split(dataset_dir / f"{name}.h5", name) for name in ("train", "valid", "test")}
+    include_jacobian = loss_settings["jacobian_weight"] > 0 or loss_settings["cosine_weight"] > 0
+    splits = {name: load_h5_split(dataset_dir / f"{name}.h5", name, include_jacobian=include_jacobian) for name in ("train", "valid", "test")}
     _check_loaded_split_sizes(metadata, splits)
     if len(splits["train"]) < batch_size:
         raise ValueError("Training split is smaller than batch_size; refusing a BatchNorm singleton/fallback batch.")
@@ -123,8 +170,10 @@ def train_mlp(dataset_dir: str | Path, timing_pool_path: str | Path, config: Map
     history: list[dict[str, Any]] = []
     for epoch in range(1, int(train_cfg["epochs"]) + 1):
         model.train(); train_total, train_count = 0.0, 0
-        for x, y in loaders["train"]:
-            x, y = x.to(device), y.to(device); loss = (model(x) - y).pow(2).mean()
+        for batch in loaders["train"]:
+            x, y = batch[0].to(device), batch[1].to(device)
+            jacobian = batch[2].to(device) if include_jacobian else None
+            loss, _ = mlp_training_loss(model, x, y, jacobian, loss_settings)
             if not torch.isfinite(loss):
                 raise FloatingPointError(f"Non-finite MLP train loss at epoch {epoch}.")
             optimizer.zero_grad(set_to_none=True); loss.backward(); optimizer.step()
@@ -133,7 +182,8 @@ def train_mlp(dataset_dir: str | Path, timing_pool_path: str | Path, config: Map
             raise RuntimeError("No complete BatchNorm training batch was produced.")
         model.eval(); valid_total = 0.0
         with torch.no_grad():
-            for x, y in loaders["valid"]:
+            for batch in loaders["valid"]:
+                x, y = batch[0], batch[1]
                 valid_total += float((model(x.to(device)) - y.to(device)).pow(2).mean()) * x.shape[0]
         train_loss, valid_loss = train_total / train_count, valid_total / len(splits["valid"])
         scheduler.step(); history.append({"epoch": epoch, "train_mse": train_loss, "valid_mse": valid_loss, "lr": optimizer.param_groups[0]["lr"]})
@@ -148,7 +198,7 @@ def train_mlp(dataset_dir: str | Path, timing_pool_path: str | Path, config: Map
                 "train_timing9_min_ms": metadata["train_timing9_min_ms"], "train_timing9_max_ms": metadata["train_timing9_max_ms"], "pool_timing9_min_ms": metadata["pool_timing9_min_ms"], "pool_timing9_max_ms": metadata["pool_timing9_max_ms"],
                 "train_subject_ids": metadata["train_subject_ids"], "valid_subject_ids": metadata["valid_subject_ids"], "test_subject_ids": metadata["test_subject_ids"],
                 "functional_fixture": bool(metadata["functional_fixture"]), "formal_candidate": not bool(metadata["functional_fixture"]), "validation_status": "functional_smoke" if bool(metadata["functional_fixture"]) else "unvalidated",
-                "parameter_ranges": {"t1_ms": [20, 2500], "t2_ms": [5, 200], "b1": [0.1, 1.2], "constraint": "T1>T2"}, "seed": seed,
+                "parameter_ranges": {"t1_ms": [20, 2500], "t2_ms": [5, 200], "b1": [0.1, 1.2], "constraint": "T1>T2"}, "mlp_loss": loss_settings, "jacobian_target_units": metadata.get("jacobian_target_units"), "seed": seed,
             }, output / "signal_simulator_best.pth")
     with (output / "train_history.csv").open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=["epoch", "train_mse", "valid_mse", "lr"]); writer.writeheader(); writer.writerows(history)

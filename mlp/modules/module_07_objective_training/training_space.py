@@ -7,7 +7,7 @@ from dataclasses import dataclass
 import torch
 
 from modules.module_03_dataset_geometry.quantitative_point_dataset import QuantPointDataset
-from third_party.nesvor.nesvor.transform import RigidTransform
+from third_party.nesvor.nesvor.transform import RigidTransform, ax_transform_points
 
 
 @dataclass(frozen=True)
@@ -23,21 +23,29 @@ class TrainingSpace:
     spatial_scaling: float
     physical_bbox_ras_mm: torch.Tensor
     bbox_train: torch.Tensor
+    group_axisangle_dicom_physical: torch.Tensor
     group_axisangle_init_physical: torch.Tensor
     group_axisangle_init_train: torch.Tensor
     group_resolution_xyz_mm: torch.Tensor
     group_resolution_train: torch.Tensor
 
     @classmethod
-    def from_dataset(cls, dataset: QuantPointDataset, spatial_scaling: float) -> "TrainingSpace":
+    def from_dataset(cls, dataset: QuantPointDataset, spatial_scaling: float, *, group_axisangle_init_physical: torch.Tensor | None = None, bbox_margin_mm: float = 0.0) -> "TrainingSpace":
         if spatial_scaling <= 0:
             raise ValueError("spatial_scaling must be positive.")
-        physical_bbox = dataset.bounding_box.detach().clone()
+        dicom = dataset.group_axisangle_init.detach().clone()
+        initial = dicom if group_axisangle_init_physical is None else torch.as_tensor(group_axisangle_init_physical, dtype=dicom.dtype, device=dicom.device).detach().clone()
+        if initial.shape != dicom.shape or bbox_margin_mm < 0:
+            raise ValueError("Invalid post-stack initial poses or bbox margin.")
+        transformed = ax_transform_points(initial[dataset.group_idx], dataset.xyz, trans_first=True)
+        physical_bbox = torch.stack((transformed.amin(0), transformed.amax(0)), 0)
+        half_support = dataset.group_resolution_xyz_mm.max() * 0.5 + float(bbox_margin_mm)
+        physical_bbox[0] -= half_support; physical_bbox[1] += half_support
         center = (physical_bbox[0] + physical_bbox[1]) / 2.0
         center_transform = RigidTransform(
             torch.cat((torch.zeros_like(center), -center))[None], trans_first=True
         )
-        physical = RigidTransform(dataset.group_axisangle_init.detach().clone(), trans_first=True)
+        physical = RigidTransform(initial, trans_first=True)
         train_axisangle = center_transform.compose(physical).axisangle(trans_first=True)
         train_axisangle[:, 3:] /= spatial_scaling
         return cls(
@@ -45,7 +53,8 @@ class TrainingSpace:
             spatial_scaling=float(spatial_scaling),
             physical_bbox_ras_mm=physical_bbox,
             bbox_train=(physical_bbox - center) / spatial_scaling,
-            group_axisangle_init_physical=dataset.group_axisangle_init.detach().clone(),
+            group_axisangle_dicom_physical=dicom,
+            group_axisangle_init_physical=initial,
             group_axisangle_init_train=train_axisangle,
             group_resolution_xyz_mm=dataset.group_resolution_xyz_mm.detach().clone(),
             group_resolution_train=dataset.group_resolution_xyz_mm.detach().clone() / spatial_scaling,
@@ -85,6 +94,7 @@ class TrainingSpace:
             "physical_bbox_ras_mm": self.physical_bbox_ras_mm.detach().cpu(),
             "bbox_train": self.bbox_train.detach().cpu(),
             "group_resolution_xyz_mm": self.group_resolution_xyz_mm.detach().cpu(),
+            "group_axisangle_dicom_physical": self.group_axisangle_dicom_physical.detach().cpu(),
             "group_axisangle_init_physical": self.group_axisangle_init_physical.detach().cpu(),
             "group_axisangle_init_train": self.group_axisangle_init_train.detach().cpu(),
         }

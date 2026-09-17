@@ -15,7 +15,7 @@ from .trad_teacher.trad_signal_simulator import TradSignalSimulator
 def fidelity_metrics(model: MdmSignalMLP, test_data: TensorDataset, pool: dict[str, Any], protocol_path: str, batch_size: int, gradient_samples: int) -> dict[str, Any]:
     if batch_size < 1 or gradient_samples < 1:
         raise ValueError("batch_size and gradient_samples must be positive.")
-    inputs, target = test_data.tensors
+    inputs, target = test_data.tensors[:2]
     device = next(model.parameters()).device
     was_training = model.training; model.eval()
     squared_sum = torch.zeros((), device=device); absolute_sum = torch.zeros((), device=device)
@@ -33,7 +33,7 @@ def fidelity_metrics(model: MdmSignalMLP, test_data: TensorDataset, pool: dict[s
     mlp_grads = []
     for weight in range(10):
         gradient = torch.autograd.grad(predicted[:, weight].sum(), x, retain_graph=True)[0][:, :3]
-        mlp_grads.append(torch.stack((gradient[:, 0] / 1000.0, gradient[:, 1] / 1000.0, gradient[:, 2]), dim=-1))
+        mlp_grads.append(gradient[:, :3])
     t1 = (inputs[:n, 0].to(device) * 1000.0).detach().clone().requires_grad_(True)
     t2 = (inputs[:n, 1].to(device) * 1000.0).detach().clone().requires_grad_(True)
     b1 = inputs[:n, 2].to(device).detach().clone().requires_grad_(True)
@@ -42,7 +42,7 @@ def fidelity_metrics(model: MdmSignalMLP, test_data: TensorDataset, pool: dict[s
     teacher_grads = []
     for weight in range(10):
         gradients = torch.autograd.grad(teacher_output[:, weight].sum(), (t1, t2, b1), retain_graph=True)
-        teacher_grads.append(torch.stack(gradients, dim=-1))
+        teacher_grads.append(torch.stack((gradients[0] * 1000.0, gradients[1] * 1000.0, gradients[2]), dim=-1))
     mlp_gradient = torch.stack(mlp_grads, dim=1)
     teacher_gradient = torch.stack(teacher_grads, dim=1)
     absolute = (mlp_gradient - teacher_gradient).abs()

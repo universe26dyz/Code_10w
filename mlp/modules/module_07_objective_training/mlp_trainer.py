@@ -22,6 +22,7 @@ from modules.module_05_signal_decoder.checkpoint_loader import load_frozen_mlp_d
 from modules.module_05_signal_decoder.provenance import sha256_file
 from modules.module_05_signal_decoder.trad_teacher.trad_signal_simulator import TradProtocol
 from modules.module_06_rigid_psf.rigid_psf_forward import GroupRigidPSF, TradQuantitativeForward
+from modules.module_06_rigid_psf.hb1_stack_adapter import StackInitialization, initialize_group_poses_from_hb1
 from .training_space import TrainingSpace
 from .experiment_infrastructure import CachedBalancedSampler, FixedMonitorSet, IterationProfiler, git_provenance, normalize_step1_config, write_experiment_manifest
 
@@ -57,16 +58,20 @@ def build_protocol_from_dataset(dataset: QuantPointDataset, protocol_yaml: str |
 class MLPTrainingModel(nn.Module):
     """The frozen MLP is injected into the exact existing rigid/PSF forward."""
 
-    def __init__(self, inr: QuantitativeINR, rigid_psf: GroupRigidPSF, signal_simulator: nn.Module, protocol: TradProtocol) -> None:
+    def __init__(self, inr: QuantitativeINR, rigid_psf: GroupRigidPSF, signal_simulator: nn.Module, protocol: TradProtocol, variance: Mapping[str, Any]) -> None:
         super().__init__()
         self.inr, self.rigid_psf, self.signal_simulator, self.protocol = inr, rigid_psf, signal_simulator, protocol
         self.forward_model = TradQuantitativeForward(inr, signal_simulator, rigid_psf, protocol)
+        self.register_buffer("intensity_scale", torch.ones(()))
+        self.variance_head = nn.Sequential(nn.Linear(3, int(variance.get("pixel_hidden_features", 16))), nn.SiLU(), nn.Linear(int(variance.get("pixel_hidden_features", 16)), 1)) if bool(variance.get("enabled", False)) and bool(variance.get("pixel", False)) else None
+        self.slice_log_variance = nn.Embedding(rigid_psf.group_count, 1) if bool(variance.get("enabled", False)) and bool(variance.get("slice", False)) else None
 
     def forward(self, batch: Mapping[str, torch.Tensor], n_psf_samples: int, profile: Any = None) -> torch.Tensor:
         return self.forward_model(batch["xyz"], batch["group_idx"], batch["weight_idx"], batch["timing"], n_psf_samples, profile)
 
 
-def build_mlp_training_model(dataset: QuantPointDataset, config: Mapping[str, Any], protocol_yaml: str | Path, device: torch.device) -> tuple[MLPTrainingModel, TrainingSpace, TradProtocol, dict[str, Any]]:
+def build_mlp_training_model(dataset: QuantPointDataset, config: Mapping[str, Any], protocol_yaml: str | Path, device: torch.device, *, initial_group_axisangle_physical: torch.Tensor | None = None) -> tuple[MLPTrainingModel, TrainingSpace, TradProtocol, dict[str, Any]]:
+    config = normalize_step1_config(config)
     inr_cfg, training_cfg, decoder_cfg = _require(config, "inr"), _require(config, "training"), _require(config, "decoder")
     if not isinstance(inr_cfg, dict) or not isinstance(training_cfg, dict) or not isinstance(decoder_cfg, dict):
         raise ValueError("inr, training, and decoder must be YAML mappings.")
@@ -77,13 +82,14 @@ def build_mlp_training_model(dataset: QuantPointDataset, config: Mapping[str, An
     checkpoint_path, allowance = _require(decoder_cfg, "checkpoint"), _require(decoder_cfg, "allow_functional_fixture_checkpoint")
     if not isinstance(allowance, bool):
         raise ValueError("decoder.allow_functional_fixture_checkpoint must be explicit boolean.")
-    space = TrainingSpace.from_dataset(dataset, float(_require(training_cfg, "spatial_scaling")))
+    bbox = _require(config, "bbox")
+    space = TrainingSpace.from_dataset(dataset, float(_require(training_cfg, "spatial_scaling")), group_axisangle_init_physical=initial_group_axisangle_physical, bbox_margin_mm=float(bbox["margin_mm"]))
     protocol = build_protocol_from_dataset(dataset, protocol_yaml)
     inr = QuantitativeINR(space.bbox_train.to(device), QuantitativeINRConfig(**{key: inr_cfg[key] for key in required_inr}), spatial_scaling=space.spatial_scaling).to(device)
     rigid = GroupRigidPSF(space.group_axisangle_init_train.to(device), space.group_resolution_train.to(device)).to(device)
     decoder = load_frozen_mlp_decoder(checkpoint_path, dataset, protocol_yaml, allow_functional_fixture=allowance, device=device)
     source_metadata = torch.load(Path(checkpoint_path), map_location="cpu", weights_only=False)
-    return MLPTrainingModel(inr, rigid, decoder, protocol).to(device), space, protocol, source_metadata
+    return MLPTrainingModel(inr, rigid, decoder, protocol, _require(config, "variance")).to(device), space, protocol, source_metadata
 
 
 def _balanced_batch(dataset: QuantPointDataset, batch_size: int, device: torch.device) -> dict[str, torch.Tensor]:
@@ -111,6 +117,31 @@ def _balanced_mse(prediction: torch.Tensor, observed: torch.Tensor, weight_idx: 
     return torch.stack([weighted[weight_idx == weight].mean() for weight in range(10)]).mean()
 
 
+def _data_loss(model: MLPTrainingModel, prediction: torch.Tensor, observed: torch.Tensor, batch: Mapping[str, torch.Tensor], stack_weights: torch.Tensor) -> torch.Tensor:
+    if model.variance_head is None and model.slice_log_variance is None:
+        return _balanced_mse(prediction, observed, batch["weight_idx"], stack_weights)
+    log_variance = torch.zeros_like(prediction)
+    if model.variance_head is not None: log_variance = log_variance + model.variance_head(batch["xyz"]).squeeze(-1)
+    if model.slice_log_variance is not None: log_variance = log_variance + model.slice_log_variance(batch["group_idx"]).squeeze(-1)
+    log_variance = log_variance.clamp(-10, 10); variance = log_variance.exp()
+    weighted = ((prediction - observed).pow(2) / variance + log_variance) * 0.5 * stack_weights
+    return torch.stack([weighted[batch["weight_idx"] == weight].mean() for weight in range(10)]).mean()
+
+
+def _intensity_scale(dataset: QuantPointDataset) -> torch.Tensor:
+    lower, upper = torch.quantile(dataset.v, 0.1), torch.quantile(dataset.v, 0.9)
+    trimmed = dataset.v[(dataset.v > lower) & (dataset.v < upper)]
+    if trimmed.numel() == 0 or not torch.isfinite(trimmed).all() or trimmed.mean() <= 0:
+        raise ValueError("MLP subject intensity normalization requires finite positive trimmed mean.")
+    return trimmed.mean()
+
+
+def _assert_finite(model: nn.Module, stage: str, iteration: int) -> None:
+    for name, parameter in model.named_parameters():
+        if parameter.requires_grad and ((parameter.grad is not None and not torch.isfinite(parameter.grad).all()) or not torch.isfinite(parameter).all()):
+            raise FloatingPointError(f"Non-finite MLP parameter/gradient at {stage} iteration {iteration}: {name}.")
+
+
 def _quantitative_regularization(model: MLPTrainingModel, train_xyz: torch.Tensor, spatial_scaling: float, weights: Mapping[str, Any]) -> dict[str, torch.Tensor]:
     requested = {"t1": float(_require(weights, "t1")), "t2": float(_require(weights, "t2")), "b1": float(_require(weights, "b1"))}
     if not any(requested.values()):
@@ -136,6 +167,8 @@ def _optimizer(model: MLPTrainingModel, rates: Mapping[str, Any], joint: bool) -
     groups = [{"name": "encoding", "params": encoding, "lr": float(_require(rates, "encoding"))}, {"name": "network", "params": networks, "lr": float(_require(rates, "network")), "weight_decay": float(_require(rates, "weight_decay"))}]
     if joint:
         groups.append({"name": "rigid", "params": [model.rigid_psf.axisangle], "lr": float(_require(rates, "rigid"))})
+    variance = ([] if model.variance_head is None else list(model.variance_head.parameters())) + ([] if model.slice_log_variance is None else list(model.slice_log_variance.parameters()))
+    if variance: groups.append({"name": "variance", "params": variance, "lr": float(_require(rates, "variance"))})
     return AdamW(groups, betas=(0.9, 0.99), eps=1e-15)
 
 
@@ -159,7 +192,7 @@ def _write_resolved_config(path: Path, config: Mapping[str, Any], protocol: Trad
 
 
 def save_mlp_reconstruction_checkpoint(path: str | Path, model: MLPTrainingModel, config: Mapping[str, Any], protocol: TradProtocol, dataset: QuantPointDataset, space: TrainingSpace, seed: int, source_checkpoint_path: str | Path, source_metadata: Mapping[str, Any]) -> None:
-    torch.save({"model_state": model.state_dict(), "resolved_config": dict(config), "protocol_hhz_v1": asdict(protocol), "validated_tr_ms": protocol.tr_ms, "validated_vps": protocol.vps, "training_space": space.state_dict(), "group_resolution_xyz_mm": dataset.group_resolution_xyz_mm.detach().cpu(), "group_axisangle_init_physical": space.group_axisangle_init_physical.detach().cpu(), "group_axisangle_init_train": space.group_axisangle_init_train.detach().cpu(), "trained_axisangle_train": model.rigid_psf.axisangle.detach().cpu(), "random_seed": int(seed), "source_mlp_checkpoint_path": str(source_checkpoint_path), "source_mlp_checkpoint_sha256": sha256_file(source_checkpoint_path), "source_mlp_checkpoint_metadata": dict(source_metadata), "scientific_checkpoint": bool(source_metadata["scientific_checkpoint"])}, Path(path))
+    torch.save({"model_state": model.state_dict(), "resolved_config": dict(config), "protocol_hhz_v1": asdict(protocol), "validated_tr_ms": protocol.tr_ms, "validated_vps": protocol.vps, "training_space": space.state_dict(), "group_resolution_xyz_mm": dataset.group_resolution_xyz_mm.detach().cpu(), "group_axisangle_dicom_physical": space.group_axisangle_dicom_physical.detach().cpu(), "group_axisangle_post_stack_init_physical": space.group_axisangle_init_physical.detach().cpu(), "group_axisangle_init_physical": space.group_axisangle_init_physical.detach().cpu(), "group_axisangle_init_train": space.group_axisangle_init_train.detach().cpu(), "trained_axisangle_train": model.rigid_psf.axisangle.detach().cpu(), "random_seed": int(seed), "intensity_normalization": {"method": "trimmed_mean", "scale": float(model.intensity_scale.detach().cpu()), "amplitude_export_units": "original_input_intensity"}, "source_mlp_checkpoint_path": str(source_checkpoint_path), "source_mlp_checkpoint_sha256": sha256_file(source_checkpoint_path), "source_mlp_checkpoint_metadata": dict(source_metadata), "scientific_checkpoint": bool(source_metadata["scientific_checkpoint"])}, Path(path))
 
 
 def load_mlp_reconstruction_checkpoint(path: str | Path, model: MLPTrainingModel, device: torch.device) -> dict[str, Any]:
@@ -187,11 +220,19 @@ def train_mlp_reconstruction(dataset: QuantPointDataset, config: Mapping[str, An
     seed = int(training["seed"]); torch.manual_seed(seed); np.random.seed(seed); random.seed(seed)
     stack_weights = dataset.validate_balanced_samples(); sampler = CachedBalancedSampler(dataset)
     monitor = FixedMonitorSet.from_dataset(dataset, seed=seed, samples_per_weight_per_stack=int(training["monitor_samples_per_weight_per_stack"])) if int(training["monitor_every"]) else None
-    model, space, protocol, source_metadata = build_mlp_training_model(dataset, config, protocol_yaml, device)
+    stack_initialization: StackInitialization | None = None
+    if bool(_require(config, "stack_initialization")["enabled"]):
+        if not prepared_inputs: raise ValueError("stack_initialization.enabled requires prepared_inputs.")
+        stack_initialization = initialize_group_poses_from_hb1(dataset.group_axisangle_init, list(prepared_inputs), device=device, args_registration=_require(config, "stack_initialization")["args_registration"])
+    initial = stack_initialization.post_stack_init_axisangle_physical.to(device) if stack_initialization is not None else None
+    model, space, protocol, source_metadata = build_mlp_training_model(dataset, config, protocol_yaml, device, initial_group_axisangle_physical=initial)
+    model.intensity_scale.copy_(_intensity_scale(dataset).to(device))
     output = Path(output_dir)
     if output.exists() and any(output.iterdir()):
         raise FileExistsError(f"output_dir must be absent or empty: {output}")
     output.mkdir(parents=True, exist_ok=True); _write_resolved_config(output / "config_resolved.yaml", config, protocol, dataset, space, stack_weights)
+    if stack_initialization is not None:
+        (output / "stack_initialization_poses.json").write_text(json.dumps({"coordinate_convention": "physical RAS mm; trans_first=true", "stacks": list(stack_initialization.stack_pose_records)}, indent=2), encoding="utf-8")
     repo_root = Path(__file__).resolve().parents[3]
     if bool(training["require_clean_git"]) and git_provenance(repo_root)["git_dirty"]: raise RuntimeError("require_clean_git=true but the repository has uncommitted changes.")
     stack_group_counts = {f"stack_{stack}": int(torch.unique(dataset.group_idx[dataset.stack_idx == stack]).numel()) for stack in dataset.stack_idx.unique().tolist()}
@@ -213,7 +254,7 @@ def train_mlp_reconstruction(dataset: QuantPointDataset, config: Mapping[str, An
                 with profiler.section("batch_sampling"): batch = sampler.sample(int(training["batch_size"]))
                 with profiler.section("coordinate_conversion"): batch["xyz"] = space.local_to_train(batch["xyz"])
                 prediction = model(batch, int(training["psf_samples"]), profiler.section)
-                with profiler.section("data_loss"): data_mse = _balanced_mse(prediction, batch["v"], batch["weight_idx"], _stack_weight_tensor(batch["stack_idx"], stack_weights))
+                with profiler.section("data_loss"): data_mse = _data_loss(model, prediction, batch["v"] / model.intensity_scale, batch, _stack_weight_tensor(batch["stack_idx"], stack_weights))
                 world_train = _regularization_world_points(model, batch["xyz"], batch["group_idx"])
                 with profiler.section("spatial_regularization"): regularization = _quantitative_regularization(model, world_train, space.spatial_scaling, _require(loss_cfg, "quantitative"))
                 trans = model.rigid_psf.transformation_loss(space.spatial_scaling)
@@ -224,6 +265,7 @@ def train_mlp_reconstruction(dataset: QuantPointDataset, config: Mapping[str, An
                     raise FloatingPointError(f"Non-finite loss at stage {stage}, iteration {global_iter}.")
                 optimizer.zero_grad(set_to_none=True)
                 with profiler.section("backward"): total.backward()
+                _assert_finite(model, stage, global_iter)
                 with profiler.section("optimizer_step"): optimizer.step()
                 scheduler.step()
                 writer.writerow({"stage": stage, "iteration": global_iter, "data_mse": float(data_mse.detach()), "reg_t1": float(regularization["t1"].detach()), "reg_t2": float(regularization["t2"].detach()), "reg_b1": float(regularization["b1"].detach()), "transformation": float(trans.detach()), "total": float(total.detach()), "lr_encoding": optimizer.param_groups[0]["lr"], "lr_network": optimizer.param_groups[1]["lr"], "lr_rigid": optimizer.param_groups[2]["lr"] if joint else ""})

@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any
+import importlib.util
+import sys
 
 import numpy as np
 import torch
@@ -43,7 +45,8 @@ def sample_quantitative_fields(model: torch.nn.Module, space: TrainingSpace, out
             train_points = space.physical_ras_to_train(physical[start : start + batch_size].to(device))
             fields = model.inr(train_points)
             for key in result:
-                result[key].append(fields[key].detach().cpu())
+                value = fields[key] * model.intensity_scale if key == "amplitude" and hasattr(model, "intensity_scale") else fields[key]
+                result[key].append(value.detach().cpu())
     if was_training:
         model.train()
     return {key: torch.cat(value).reshape(shape).numpy().astype(np.float32) for key, value in result.items()}, affine
@@ -86,3 +89,15 @@ def export_quantitative_outputs(model: torch.nn.Module, space: TrainingSpace, ou
         json.dump(_physical_pose_payload(model, space), handle, indent=2)
     paths["poses"] = pose_path
     return paths
+
+
+# STEP 3 deliberately shares the verified STEP 2 exporter implementation.
+# Its imports resolve to the MLP route's TrainingSpace/dataset at runtime, while
+# preserving its support/coverage, QC-mask, gradient-map and final-support bbox contracts.
+_TRAD_EXPORT = Path(__file__).resolve().parents[3] / "trad" / "modules" / "module_08_inference_export" / "export_quantitative.py"
+_SPEC = importlib.util.spec_from_file_location("code10w_trad_export", _TRAD_EXPORT)
+if _SPEC is None or _SPEC.loader is None:
+    raise ImportError(f"Cannot load shared STEP 2 exporter: {_TRAD_EXPORT}")
+_MODULE = importlib.util.module_from_spec(_SPEC); sys.modules[_SPEC.name] = _MODULE; _SPEC.loader.exec_module(_MODULE)
+sample_quantitative_fields = _MODULE.sample_quantitative_fields
+export_quantitative_outputs = _MODULE.export_quantitative_outputs

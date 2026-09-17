@@ -16,6 +16,25 @@ from .provenance import sha256_file
 from .trad_teacher.trad_signal_simulator import TradProtocol, TradSignalSimulator
 
 
+FORMAL_MLP_SUBJECTS = ("CYJ", "DYZ", "HHZ", "HJL")
+FORMAL_MLP_SPLIT = {"train_subjects": ["CYJ", "DYZ"], "valid_subjects": ["HHZ"], "test_subjects": ["HJL"]}
+
+
+def validate_formal_mlp_subject_split(subject_ids: np.ndarray, split: Mapping[str, Any]) -> dict[str, list[str]]:
+    """Enforce the fixed VPS=87 formal MLP pool; DYL is Trad-only here."""
+
+    observed = set(np.asarray(subject_ids).astype(str).tolist())
+    if "DYL" in observed:
+        raise ValueError("DYL is excluded from the formal MLP pool (VPS=85; Trad/Bloch only).")
+    expected = set(FORMAL_MLP_SUBJECTS)
+    if observed != expected:
+        raise ValueError(f"Formal MLP pool must be exactly {sorted(expected)}, got {sorted(observed)}.")
+    actual = {key: [str(value) for value in split.get(key, [])] for key in FORMAL_MLP_SPLIT}
+    if actual != FORMAL_MLP_SPLIT:
+        raise ValueError("Formal MLP split is fixed: CYJ/DYZ -> HHZ -> HJL.")
+    return {key.replace("_subjects", ""): list(value) for key, value in FORMAL_MLP_SPLIT.items()}
+
+
 def load_timing_pool(path: str | Path) -> dict[str, np.ndarray]:
     path = Path(path)
     if not path.is_file():
@@ -105,6 +124,18 @@ def _teacher_device(value: str) -> torch.device:
     return device
 
 
+def _teacher_signal_and_jacobian(teacher: TradSignalSimulator, t1: torch.Tensor, t2: torch.Tensor, b1: torch.Tensor, timing: torch.Tensor, protocol: TradProtocol) -> tuple[torch.Tensor, torch.Tensor]:
+    """Offline Bloch targets; Jacobian is d(normalized signal)/d(T1/1000,T2/1000,B1)."""
+
+    t1, t2, b1 = (value.detach().clone().requires_grad_(True) for value in (t1, t2, b1))
+    signal = teacher(t1, t2, b1, timing, protocol, normalize=True)
+    columns = []
+    for weight in range(10):
+        gradients = torch.autograd.grad(signal[:, weight].sum(), (t1, t2, b1), retain_graph=True)[0:3]
+        columns.append(torch.stack((gradients[0] * 1000.0, gradients[1] * 1000.0, gradients[2]), dim=-1))
+    return signal.detach(), torch.stack(columns, dim=1).detach()
+
+
 def _generate_split(path: Path, n_samples: int, timing_ids: np.ndarray, pool: Mapping[str, np.ndarray], protocol: TradProtocol, seed: int, chunk_size: int, teacher_device: torch.device) -> None:
     if n_samples < 1 or timing_ids.size < 1 or chunk_size < 1:
         raise ValueError("Dataset split size, timing IDs, and chunk_size must be positive.")
@@ -113,6 +144,9 @@ def _generate_split(path: Path, n_samples: int, timing_ids: np.ndarray, pool: Ma
     with h5py.File(path, "w") as handle:
         input_set = handle.create_dataset("input12", shape=(n_samples, 12), dtype="f4")
         target_set = handle.create_dataset("target_signal10", shape=(n_samples, 10), dtype="f4")
+        jacobian_set = handle.create_dataset("target_jacobian10x3", shape=(n_samples, 10, 3), dtype="f4")
+        jacobian_set.attrs["parameter_space"] = "T1/1000,T2/1000,B1"
+        jacobian_set.attrs["units"] = "normalized_signal_per_normalized_parameter"
         timing_set = handle.create_dataset("timing_id", shape=(n_samples,), dtype="i8")
         for start in range(0, n_samples, chunk_size):
             end = min(start + chunk_size, n_samples)
@@ -123,10 +157,10 @@ def _generate_split(path: Path, n_samples: int, timing_ids: np.ndarray, pool: Ma
             chosen = rng.choice(timing_ids, size=count, replace=True)
             timing = np.asarray(pool["timing9_ms"][chosen], dtype=np.float32)
             t1_t, t2_t, b1_t, timing_t = (torch.from_numpy(value) for value in (t1, t2, b1, timing))
-            with torch.no_grad():
-                target = teacher(t1_t.to(teacher_device), t2_t.to(teacher_device), b1_t.to(teacher_device), timing_t.to(teacher_device), protocol, normalize=True).detach().cpu().numpy().astype(np.float32)
+            target, jacobian = _teacher_signal_and_jacobian(teacher, t1_t.to(teacher_device), t2_t.to(teacher_device), b1_t.to(teacher_device), timing_t.to(teacher_device), protocol)
             input_set[start:end] = make_input12(t1_t, t2_t, b1_t, timing_t).numpy().astype(np.float32)
-            target_set[start:end] = target
+            target_set[start:end] = target.cpu().numpy().astype(np.float32)
+            jacobian_set[start:end] = jacobian.cpu().numpy().astype(np.float32)
             timing_set[start:end] = chosen
 
 
@@ -147,7 +181,7 @@ def generate_mlp_dataset(timing_pool_path: str | Path, protocol_path: str | Path
     if not isinstance(split_cfg, Mapping) or "mode" not in split_cfg: raise ValueError("dataset.split with explicit mode is required.")
     if split_cfg["mode"] == "subject":
         if "subject_id" not in pool: raise ValueError("Formal subject split requires timing-pool subject_id provenance.")
-        subject_splits = split_subject_ids(pool["subject_id"], split_cfg)
+        subject_splits = validate_formal_mlp_subject_split(pool["subject_id"], split_cfg) if bool(split_cfg.get("formal_mlp", False)) else split_subject_ids(pool["subject_id"], split_cfg)
         splits = {name: np.flatnonzero(np.isin(pool["subject_id"].astype(str), subjects)) for name, subjects in subject_splits.items()}
         domain = timing_domain_metadata(pool["timing9_ms"], pool["subject_id"], subject_splits)
     elif split_cfg["mode"] == "timing":
@@ -156,7 +190,7 @@ def generate_mlp_dataset(timing_pool_path: str | Path, protocol_path: str | Path
     for offset, split in enumerate(required):
         _generate_split(output / f"{split}.h5", int(sizes[split]), splits[split], pool, protocol, seed + offset, chunk_size, device)
     timing = np.asarray(pool["timing9_ms"], dtype=np.float64)
-    metadata = {"timing_pool": str(Path(timing_pool_path)), "timing_pool_sha256": sha256_file(timing_pool_path), "functional_fixture": bool(pool["functional_fixture"]), "timing9_min_ms": timing.min(axis=0).tolist(), "timing9_max_ms": timing.max(axis=0).tolist(), "tr_ms": protocol.tr_ms, "vps": protocol.vps, "split_mode": split_cfg["mode"], "train_subject_ids": subject_splits["train"], "valid_subject_ids": subject_splits["valid"], "test_subject_ids": subject_splits["test"], **domain, "timing_split_ids": {key: value.tolist() for key, value in splits.items()}, "protocol": {"tr_ms": protocol.tr_ms, "vps": protocol.vps, "fa_deg": list(protocol.fa_deg), "ti_ms": list(protocol.ti_ms), "t2prep_ms": list(protocol.t2prep_ms), "n_ramp_up": protocol.n_ramp_up}, "sizes": {key: int(sizes[key]) for key in required}, "seed": int(seed), "teacher_device": str(device)}
+    metadata = {"timing_pool": str(Path(timing_pool_path)), "timing_pool_sha256": sha256_file(timing_pool_path), "functional_fixture": bool(pool["functional_fixture"]), "timing9_min_ms": timing.min(axis=0).tolist(), "timing9_max_ms": timing.max(axis=0).tolist(), "tr_ms": protocol.tr_ms, "vps": protocol.vps, "split_mode": split_cfg["mode"], "formal_mlp_split": bool(split_cfg.get("formal_mlp", False)), "train_subject_ids": subject_splits["train"], "valid_subject_ids": subject_splits["valid"], "test_subject_ids": subject_splits["test"], **domain, "timing_split_ids": {key: value.tolist() for key, value in splits.items()}, "protocol": {"tr_ms": protocol.tr_ms, "vps": protocol.vps, "fa_deg": list(protocol.fa_deg), "ti_ms": list(protocol.ti_ms), "t2prep_ms": list(protocol.t2prep_ms), "n_ramp_up": protocol.n_ramp_up}, "sizes": {key: int(sizes[key]) for key in required}, "seed": int(seed), "teacher_device": str(device), "jacobian_target": "target_jacobian10x3", "jacobian_target_units": "normalized_signal_per_normalized_T1_T2_B1"}
     with (output / "dataset_metadata.json").open("w", encoding="utf-8") as handle:
         json.dump(metadata, handle, indent=2)
     return metadata
