@@ -98,3 +98,19 @@ class TrainingSpace:
             "group_axisangle_init_physical": self.group_axisangle_init_physical.detach().cpu(),
             "group_axisangle_init_train": self.group_axisangle_init_train.detach().cpu(),
         }
+
+    @classmethod
+    def from_state_dict(cls, state: dict[str, object]) -> "TrainingSpace":
+        required = {"center_ras_mm", "spatial_scaling", "physical_bbox_ras_mm", "bbox_train", "group_resolution_xyz_mm", "group_axisangle_init_physical", "group_axisangle_init_train"}
+        missing = required.difference(state)
+        if missing:
+            raise ValueError(f"training_space lacks: {sorted(missing)}")
+        initial = torch.as_tensor(state["group_axisangle_init_physical"]).detach().clone()
+        scaling = float(state["spatial_scaling"])
+        return cls(
+            center_ras_mm=torch.as_tensor(state["center_ras_mm"]).detach().clone(), spatial_scaling=scaling,
+            physical_bbox_ras_mm=torch.as_tensor(state["physical_bbox_ras_mm"]).detach().clone(), bbox_train=torch.as_tensor(state["bbox_train"]).detach().clone(),
+            group_axisangle_dicom_physical=torch.as_tensor(state.get("group_axisangle_dicom_physical", initial)).detach().clone(), group_axisangle_init_physical=initial,
+            group_axisangle_init_train=torch.as_tensor(state["group_axisangle_init_train"]).detach().clone(),
+            group_resolution_xyz_mm=torch.as_tensor(state["group_resolution_xyz_mm"]).detach().clone(), group_resolution_train=torch.as_tensor(state["group_resolution_xyz_mm"]).detach().clone() / scaling,
+        )

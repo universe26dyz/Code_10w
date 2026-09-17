@@ -142,17 +142,43 @@ def _assert_finite(model: nn.Module, stage: str, iteration: int) -> None:
             raise FloatingPointError(f"Non-finite MLP parameter/gradient at {stage} iteration {iteration}: {name}.")
 
 
-def _quantitative_regularization(model: MLPTrainingModel, train_xyz: torch.Tensor, spatial_scaling: float, weights: Mapping[str, Any]) -> dict[str, torch.Tensor]:
-    requested = {"t1": float(_require(weights, "t1")), "t2": float(_require(weights, "t2")), "b1": float(_require(weights, "b1"))}
-    if not any(requested.values()):
-        zero = torch.zeros((), dtype=train_xyz.dtype, device=train_xyz.device)
-        return {key: zero for key in requested}
-    points = train_xyz[: min(4, train_xyz.shape[0])].detach().clone().requires_grad_(True)
+def _quantitative_regularization(model: MLPTrainingModel, train_xyz: torch.Tensor, spatial_scaling: float, weights: Mapping[str, Any], settings: Mapping[str, Any] | None = None) -> dict[str, torch.Tensor]:
+    """Trad-identical normalized per-field smoothness and amplitude guidance."""
+
+    settings = dict(settings or {"mode": "L2", "n_points": train_xyz.shape[0], "edge_epsilon": 1e-3, "amplitude_guidance": {"enabled": False}})
+    settings.setdefault("n_points", train_xyz.shape[0]); settings.setdefault("edge_epsilon", 1e-3)
+    field_names = ("t1", "t2", "b1")
+    field_settings = {key: dict(settings.get(key, {"mode": settings.get("mode", "L2"), "weight": float(_require(weights, key))})) for key in field_names}
+    guidance = dict(settings.get("amplitude_guidance", {}))
+    guidance.setdefault("enabled", False); guidance.setdefault("alpha", 1.0)
+    guidance.setdefault("t1_weight", 0.0); guidance.setdefault("t2_weight", 0.0)
+    zero = torch.zeros((), dtype=train_xyz.dtype, device=train_xyz.device)
+    if all(field_settings[key].get("mode", "none") == "none" for key in field_names):
+        return {"t1": zero, "t2": zero, "b1": zero, "amplitude_t1": zero, "amplitude_t2": zero}
+    points = train_xyz[: min(int(settings["n_points"]), train_xyz.shape[0])].detach().clone().requires_grad_(True)
     fields = model.inr(points)
     normalized = {"t1": fields["t1_ms"] / 2500.0, "t2": (fields["t2_ms"] - 5.0) / 195.0, "b1": (fields["b1"] - 0.1) / 1.1}
-    values = {}
+    amplitude_edge_weight: torch.Tensor | None = None
+    amplitude_active = bool(guidance["enabled"]) and (float(guidance["t1_weight"]) > 0 or float(guidance["t2_weight"]) > 0)
+    if amplitude_active:
+        amplitude_gradient = torch.autograd.grad(fields["amplitude"].sum(), points, create_graph=False, retain_graph=True)[0].detach() / spatial_scaling
+        amplitude_edge_weight = torch.exp(-float(guidance["alpha"]) * torch.linalg.vector_norm(amplitude_gradient, dim=-1))
+    values: dict[str, torch.Tensor] = {}
     for key, value in normalized.items():
-        values[key] = (torch.autograd.grad(value.sum(), points, create_graph=True)[0] / spatial_scaling).pow(2).sum(dim=-1).sqrt().mean()
+        mode = str(field_settings[key].get("mode", settings.get("mode", "none")))
+        if mode == "none":
+            values[key] = zero
+            if key in {"t1", "t2"}: values[f"amplitude_{key}"] = zero
+            continue
+        gradient = torch.autograd.grad(value.sum(), points, create_graph=True)[0] / spatial_scaling
+        magnitude_sq = gradient.pow(2).sum(dim=-1)
+        if mode == "TV": penalty = torch.sqrt(magnitude_sq + 1e-12)
+        elif mode == "L2": penalty = magnitude_sq
+        elif mode == "edge-preserving": penalty = torch.sqrt(magnitude_sq + float(settings["edge_epsilon"]) ** 2) - float(settings["edge_epsilon"])
+        else: raise ValueError(f"Unsupported spatial regularization mode: {mode}")
+        values[key] = penalty.mean()
+        if key in {"t1", "t2"}:
+            values[f"amplitude_{key}"] = (penalty * amplitude_edge_weight).mean() if amplitude_edge_weight is not None and float(guidance[f"{key}_weight"]) > 0 else zero
     return values
 
 
@@ -240,7 +266,7 @@ def train_mlp_reconstruction(dataset: QuantPointDataset, config: Mapping[str, An
     bn_before = _bn_buffers(model.signal_simulator); global_iter = 0; stage_a_axisangle_final = None
     profiler = IterationProfiler(device, every=int(training["profile_every"]), warmup_samples=int(training["profile_warmup_samples"]))
     with (output / "training_log.csv").open("w", newline="", encoding="utf-8") as handle, (output / "monitor_log.csv").open("w", newline="", encoding="utf-8") as monitor_handle:
-        writer = csv.DictWriter(handle, fieldnames=["stage", "iteration", "data_mse", "reg_t1", "reg_t2", "reg_b1", "transformation", "total", "lr_encoding", "lr_network", "lr_rigid"]); writer.writeheader()
+        writer = csv.DictWriter(handle, fieldnames=["stage", "iteration", "data_mse", "reg_t1", "reg_t2", "reg_b1", "amplitude_reg_t1", "amplitude_reg_t2", "transformation", "total", "lr_encoding", "lr_network", "lr_rigid", "lr_variance"]); writer.writeheader()
         monitor_writer = csv.DictWriter(monitor_handle, fieldnames=["iteration", "stage", "monitor_mse", "per_weight_mse", "per_stack_mse"]); monitor_writer.writeheader()
         for stage, iterations, joint in (("A", int(training["stage_a_iterations"]), False), ("B", int(training["stage_b_iterations"]), True)):
             if iterations < 0:
@@ -256,9 +282,11 @@ def train_mlp_reconstruction(dataset: QuantPointDataset, config: Mapping[str, An
                 prediction = model(batch, int(training["psf_samples"]), profiler.section)
                 with profiler.section("data_loss"): data_mse = _data_loss(model, prediction, batch["v"] / model.intensity_scale, batch, _stack_weight_tensor(batch["stack_idx"], stack_weights))
                 world_train = _regularization_world_points(model, batch["xyz"], batch["group_idx"])
-                with profiler.section("spatial_regularization"): regularization = _quantitative_regularization(model, world_train, space.spatial_scaling, _require(loss_cfg, "quantitative"))
+                regularization_cfg = _require(config, "spatial_regularization")
+                with profiler.section("spatial_regularization"): regularization = _quantitative_regularization(model, world_train, space.spatial_scaling, _require(loss_cfg, "quantitative"), regularization_cfg)
                 trans = model.rigid_psf.transformation_loss(space.spatial_scaling)
-                total = data_mse + sum(float(_require(loss_cfg, "quantitative")[key]) * regularization[key] for key in regularization)
+                total = data_mse + sum(float(regularization_cfg[key]["weight"]) * regularization[key] for key in ("t1", "t2", "b1"))
+                total = total + float(regularization_cfg["amplitude_guidance"]["t1_weight"]) * regularization["amplitude_t1"] + float(regularization_cfg["amplitude_guidance"]["t2_weight"]) * regularization["amplitude_t2"]
                 if joint:
                     total = total + float(_require(loss_cfg, "transformation")) * trans
                 if not torch.isfinite(total):
@@ -268,7 +296,8 @@ def train_mlp_reconstruction(dataset: QuantPointDataset, config: Mapping[str, An
                 _assert_finite(model, stage, global_iter)
                 with profiler.section("optimizer_step"): optimizer.step()
                 scheduler.step()
-                writer.writerow({"stage": stage, "iteration": global_iter, "data_mse": float(data_mse.detach()), "reg_t1": float(regularization["t1"].detach()), "reg_t2": float(regularization["t2"].detach()), "reg_b1": float(regularization["b1"].detach()), "transformation": float(trans.detach()), "total": float(total.detach()), "lr_encoding": optimizer.param_groups[0]["lr"], "lr_network": optimizer.param_groups[1]["lr"], "lr_rigid": optimizer.param_groups[2]["lr"] if joint else ""})
+                lrs = {group["name"]: group["lr"] for group in optimizer.param_groups}
+                writer.writerow({"stage": stage, "iteration": global_iter, "data_mse": float(data_mse.detach()), "reg_t1": float(regularization["t1"].detach()), "reg_t2": float(regularization["t2"].detach()), "reg_b1": float(regularization["b1"].detach()), "amplitude_reg_t1": float(regularization["amplitude_t1"].detach()), "amplitude_reg_t2": float(regularization["amplitude_t2"].detach()), "transformation": float(trans.detach()), "total": float(total.detach()), "lr_encoding": lrs["encoding"], "lr_network": lrs["network"], "lr_rigid": lrs.get("rigid", ""), "lr_variance": lrs.get("variance", "")})
                 if monitor is not None and global_iter % int(training["monitor_every"]) == 0:
                     monitor_batch = dict(monitor.batch); monitor_batch["xyz"] = space.local_to_train(monitor_batch["xyz"])
                     with torch.no_grad(): monitor_prediction = model(monitor_batch, int(training["psf_samples"]))
