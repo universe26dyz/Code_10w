@@ -76,7 +76,7 @@ def test_manifest_records_clean_and_dirty_git_provenance(tmp_path):
 
 
 def test_step2_schema_exposes_disabled_by_default_optional_controls():
-    config = normalize_step1_config({"training": {"psf_samples": 8}, "variance": {"enabled": True, "pixel": True, "slice": True}, "spatial_regularization": {"mode": "edge-preserving", "n_points": 7, "amplitude_guidance": {"enabled": True}}})
+    config = normalize_step1_config({"training": {"psf_samples": 8, "learning_rates": {"variance": 0.001}}, "variance": {"enabled": True, "pixel": True, "slice": True}, "spatial_regularization": {"mode": "edge-preserving", "n_points": 7, "amplitude_guidance": {"enabled": True}}})
     assert config["variance"]["enabled"] is True
     assert config["spatial_regularization"]["mode"] == "edge-preserving"
     assert config["psf"]["export"]["enabled"] is False

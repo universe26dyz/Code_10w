@@ -111,8 +111,15 @@ def normalize_step1_config(config: Mapping[str, Any]) -> dict[str, Any]:
     if (bool(variance["pixel"]) or bool(variance["slice"])) and not bool(variance["enabled"]):
         raise ValueError("variance.pixel/slice require variance.enabled=true.")
     variance.setdefault("pixel_hidden_features", 16)
+    variance.setdefault("method", "experimental_project_heteroscedastic")
     if int(variance["pixel_hidden_features"]) < 1:
         raise ValueError("variance.pixel_hidden_features must be positive.")
+    if variance["method"] != "experimental_project_heteroscedastic":
+        raise ValueError("variance.method must be experimental_project_heteroscedastic; it is not an upstream NeSVoR sigma_net.")
+    learning_rates = training.get("learning_rates")
+    if bool(variance["enabled"]):
+        if not isinstance(learning_rates, dict) or "variance" not in learning_rates or float(learning_rates["variance"]) <= 0:
+            raise ValueError("variance.enabled=true requires explicit positive training.learning_rates.variance.")
     regularization = resolved.setdefault("spatial_regularization", {})
     if not isinstance(regularization, dict):
         raise ValueError("spatial_regularization must be a mapping.")
@@ -128,8 +135,28 @@ def normalize_step1_config(config: Mapping[str, Any]) -> dict[str, Any]:
         raise ValueError("spatial_regularization.amplitude_guidance must be a mapping.")
     amplitude_guidance.setdefault("enabled", False)
     amplitude_guidance.setdefault("alpha", 1.0)
+    amplitude_guidance.setdefault("t1_weight", 0.0)
+    amplitude_guidance.setdefault("t2_weight", 0.0)
     if float(amplitude_guidance["alpha"]) < 0:
         raise ValueError("spatial_regularization.amplitude_guidance.alpha must be non-negative.")
+    if float(amplitude_guidance["t1_weight"]) < 0 or float(amplitude_guidance["t2_weight"]) < 0:
+        raise ValueError("spatial_regularization.amplitude_guidance T1/T2 weights must be non-negative.")
+    loss = resolved.setdefault("loss", {})
+    if not isinstance(loss, dict):
+        raise ValueError("loss must be a mapping.")
+    legacy_weights = loss.setdefault("quantitative", {})
+    if not isinstance(legacy_weights, dict):
+        raise ValueError("loss.quantitative must be a mapping.")
+    for field in ("t1", "t2", "b1"):
+        field_settings = regularization.setdefault(field, {})
+        if not isinstance(field_settings, dict):
+            raise ValueError(f"spatial_regularization.{field} must be a mapping.")
+        field_settings.setdefault("mode", regularization["mode"])
+        field_settings.setdefault("weight", float(legacy_weights.get(field, 0.0)))
+        if field_settings["mode"] not in {"none", "TV", "L2", "edge-preserving"}:
+            raise ValueError(f"spatial_regularization.{field}.mode is invalid.")
+        if float(field_settings["weight"]) < 0:
+            raise ValueError(f"spatial_regularization.{field}.weight must be non-negative.")
     stack_init = resolved.setdefault("stack_initialization", {})
     if not isinstance(stack_init, dict):
         raise ValueError("stack_initialization must be a mapping.")
