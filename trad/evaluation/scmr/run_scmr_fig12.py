@@ -19,6 +19,14 @@ from typing import Any
 import numpy as np
 
 from .metrics import METRIC_COLUMNS, agreement_metrics
+from .quality_control import (
+    DISPLAY_RANGES_MS,
+    RESIDUAL_RANGES_MS,
+    SCMRColorbars,
+    load_legacy_scmr_colorbars,
+    render_all_slice_montages,
+    write_range_audit,
+)
 from .reference_2d import NativeReference, STACKS, load_verified_reference, sha256
 
 
@@ -26,6 +34,8 @@ LEGACY_FILES = [
     "python/visualization/scmr/make_figure1_throughplane_svr.py",
     "python/visualization/qc/make_figure1_throughplane_candidates.py",
     "python/visualization/scmr/make_figure2_reprojection_residual.py",
+    "python/visualization/colormaps.py",
+    "python/visualization/plotting.py",
     "python/evaluation/reprojection/prepare_common_evaluation_mask.py",
     "python/evaluation/reprojection/refine_common_support_to_central_component.py",
     "python/evaluation/utils/metrics.py",
@@ -170,13 +180,14 @@ def _crop(data: np.ndarray, mask: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     return data[r0:r1, c0:c1], mask[r0:r1, c0:c1]
 
 
-def _render_figure2(reference: NativeReference, loaded: dict[str, dict[str, np.ndarray]], selected: dict[str, int], output: Path) -> dict[str, Any]:
+def _render_figure2(reference: NativeReference, loaded: dict[str, dict[str, np.ndarray]], selected: dict[str, int], output: Path, colorbars: SCMRColorbars) -> dict[str, Any]:
     import matplotlib.pyplot as plt
 
     output.mkdir(parents=True, exist_ok=True)
-    metadata: dict[str, Any] = {"selected_groups": selected, "mask_definition": "native_valid AND Trad_support AND finite(reference,prediction)"}
+    metadata: dict[str, Any] = {"selected_groups": selected, "mask_definition": "native_valid AND Trad_support AND finite(reference,prediction)", "colorbars": colorbars.metadata}
     masks_to_save: dict[str, np.ndarray] = {}
-    for parameter, key, display_range in (("T1", "t1_ms", (0, 2500)), ("T2", "t2_ms", (0, 200))):
+    for parameter, key in (("T1", "t1_ms"), ("T2", "t2_ms")):
+        display_range = DISPLAY_RANGES_MS[parameter]
         panels = []
         for stack in STACKS:
             group, native = selected[stack], reference.stacks[stack]
@@ -195,9 +206,9 @@ def _render_figure2(reference: NativeReference, loaded: dict[str, dict[str, np.n
             cropped_ref, cropped_mask = _crop(ref, mask)
             cropped_pred, _ = _crop(pred, mask)
             residual, _ = _crop(np.abs(pred - ref), mask)
-            for axis, data, title, cmap, limits in ((axes[row, 0], cropped_ref, "Native 2-D", "viridis", display_range),
-                                                     (axes[row, 1], cropped_pred, "Trad 3-D → native plane", "viridis", display_range),
-                                                     (axes[row, 2], residual, "|Difference|", "magma", (0, residual_max))):
+            for axis, data, title, cmap, limits in ((axes[row, 0], cropped_ref, "Native 2-D", colorbars.mapping[parameter], display_range),
+                                                     (axes[row, 1], cropped_pred, "Trad 3-D → native plane", colorbars.mapping[parameter], display_range),
+                                                     (axes[row, 2], residual, "|Difference|", colorbars.residual, RESIDUAL_RANGES_MS[parameter])):
                 rendered = np.ma.masked_where(~cropped_mask, data)
                 handle = axis.imshow(rendered, cmap=cmap, vmin=limits[0], vmax=limits[1], origin="lower", interpolation="nearest", aspect="equal")
                 axis.set_title(title if row == 0 else "")
@@ -212,7 +223,7 @@ def _render_figure2(reference: NativeReference, loaded: dict[str, dict[str, np.n
         figure.savefig(png, dpi=320, bbox_inches="tight")
         figure.savefig(png.with_suffix(".pdf"), bbox_inches="tight")
         plt.close(figure)
-        metadata[parameter] = {"mapping_range_ms": list(display_range), "residual_range_ms": [0, residual_max], "png": str(png), "pdf": str(png.with_suffix('.pdf'))}
+        metadata[parameter] = {"colormap": colorbars.metadata["mapping_colormaps"][parameter]["name"], "mapping_range_ms": list(display_range), "residual_colormap": colorbars.metadata["residual_colormap_name"], "residual_range_ms": list(RESIDUAL_RANGES_MS[parameter]), "observed_p99_residual_ms": residual_max, "png": str(png), "pdf": str(png.with_suffix('.pdf'))}
     np.savez_compressed(output / "selected_common_masks.npz", **masks_to_save)
     _write_json(metadata, output / "figure2_metadata.json")
     return metadata
@@ -255,7 +266,7 @@ def _foreground_center(data: np.ndarray, axis: int) -> int:
     return int(np.median(indices)) if indices.size else data.shape[axis] // 2
 
 
-def _render_figure1_candidates(native: np.ndarray, native_affine: np.ndarray, trad: np.ndarray, trad_affine: np.ndarray, output: Path, axis_name: str) -> dict[str, Any]:
+def _render_figure1_candidates(native: np.ndarray, native_affine: np.ndarray, trad: np.ndarray, trad_affine: np.ndarray, output: Path, axis_name: str, colorbars: SCMRColorbars) -> dict[str, Any]:
     """Save a compact, deterministic candidate montage for manual plane QC."""
 
     import matplotlib.pyplot as plt
@@ -272,7 +283,7 @@ def _render_figure1_candidates(native: np.ndarray, native_affine: np.ndarray, tr
         trad_plane = _sample_plane_shaped(trad, np.linalg.inv(trad_affine), world, plane_shape, order=1)
         mask = np.isfinite(native_plane) & (native_plane > 0)
         for column, (data, title) in enumerate(((native_plane, "Native (nearest)"), (trad_plane, "Trad (linear)"))):
-            axes[row, column].imshow(np.ma.masked_where(~mask, data), cmap="viridis", vmin=0, vmax=2500,
+            axes[row, column].imshow(np.ma.masked_where(~mask, data), cmap=colorbars.mapping["T1"], vmin=DISPLAY_RANGES_MS["T1"][0], vmax=DISPLAY_RANGES_MS["T1"][1],
                                      origin="lower", interpolation="nearest", extent=[0, extent[0], 0, extent[1]], aspect="equal")
             axes[row, column].set_title(title if row == 0 else "")
             axes[row, column].set_ylabel(f"{axis_name}={index}")
@@ -285,7 +296,7 @@ def _render_figure1_candidates(native: np.ndarray, native_affine: np.ndarray, tr
     return {"plane_axis": axis_name, "candidate_indices": indices, "selection_rule": "foreground-centre unless --plane-index is supplied", "outputs": paths}
 
 
-def _render_figure1(reference: NativeReference, run: Path, output: Path, axis_name: str, requested_index: int | None, reference_group: int) -> dict[str, Any]:
+def _render_figure1(reference: NativeReference, run: Path, output: Path, axis_name: str, requested_index: int | None, reference_group: int, colorbars: SCMRColorbars) -> dict[str, Any]:
     import matplotlib.pyplot as plt
 
     nib, _ = _require_nifti()
@@ -303,17 +314,18 @@ def _render_figure1(reference: NativeReference, run: Path, output: Path, axis_na
         raise IndexError(f"Plane index {index} is outside native axis {axis_name}.")
     world, plane_shape, extent = _plane_world(native_affines["t1"], native_images["t1"].shape, axis, index)
     output.mkdir(parents=True, exist_ok=True)
-    candidates = _render_figure1_candidates(native_images["t1"], native_affines["t1"], trad_images["t1"], trad_affines["t1"], output, axis_name)
+    candidates = _render_figure1_candidates(native_images["t1"], native_affines["t1"], trad_images["t1"], trad_affines["t1"], output, axis_name, colorbars)
     figure, axes = plt.subplots(2, 4, figsize=(13, 7), gridspec_kw={"width_ratios": [1, 1, 1, 0.055]})
     planes: dict[str, dict[str, np.ndarray]] = {}
-    for row, (parameter, key, limits) in enumerate((("T1", "t1", (0, 2500)), ("T2", "t2", (0, 200)))):
+    for row, (parameter, key) in enumerate((("T1", "t1"), ("T2", "t2"))):
+        limits = DISPLAY_RANGES_MS[parameter]
         native = _sample_plane_shaped(native_images[key], np.linalg.inv(native_affines[key]), world, plane_shape, order=0)
         trad = _sample_plane_shaped(trad_images[key], np.linalg.inv(trad_affines[key]), world, plane_shape, order=1)
         mask = np.isfinite(native) & (native > 0)
         native = np.ma.masked_where(~mask, native)
         trad = np.ma.masked_where(~mask, trad)
         source = native_images[key][:, :, reference_group].T
-        axes[row, 0].imshow(np.ma.masked_where(~np.isfinite(source) | (source <= 0), source), cmap="viridis", vmin=limits[0], vmax=limits[1], origin="lower", aspect="equal")
+        axes[row, 0].imshow(np.ma.masked_where(~np.isfinite(source) | (source <= 0), source), cmap=colorbars.mapping[parameter], vmin=limits[0], vmax=limits[1], origin="lower", aspect="equal")
         if axis == 0:
             axes[row, 0].axvline(index, color="white", linewidth=0.8)
         else:
@@ -321,7 +333,7 @@ def _render_figure1(reference: NativeReference, run: Path, output: Path, axis_na
         axes[row, 0].set_title("Native SAX + cut line" if row == 0 else "")
         axes[row, 0].set_ylabel(parameter)
         for column, data, title, interpolation in ((1, native, "Native through-plane (nearest)", "nearest"), (2, trad, "Trad 1-mm through-plane (linear)", "nearest")):
-            image = axes[row, column].imshow(data, cmap="viridis", vmin=limits[0], vmax=limits[1], origin="lower", interpolation=interpolation, extent=[0, extent[0], 0, extent[1]], aspect="equal")
+            image = axes[row, column].imshow(data, cmap=colorbars.mapping[parameter], vmin=limits[0], vmax=limits[1], origin="lower", interpolation=interpolation, extent=[0, extent[0], 0, extent[1]], aspect="equal")
             axes[row, column].set_title(title if row == 0 else "")
             axes[row, column].axis("off")
         axes[row, 0].axis("off")
@@ -333,7 +345,7 @@ def _render_figure1(reference: NativeReference, run: Path, output: Path, axis_na
     metadata = {"plane_axis": axis_name, "plane_index": index, "reference_sax_group": reference_group,
                 "world_plane_affine_source": str(reference.figure1_stacks["t1"]), "world_point_count": int(world.shape[0]),
                 "plane_shape": list(plane_shape), "physical_extent_mm": list(extent), "same_world_plane_check": "PASS",
-                "native_interpolation": "nearest-neighbor", "trad_interpolation": "linear", "display_ranges_ms": {"T1": [0, 2500], "T2": [0, 200]},
+                "native_interpolation": "nearest-neighbor", "trad_interpolation": "linear", "display_ranges_ms": {key: list(value) for key, value in DISPLAY_RANGES_MS.items()}, "colorbars": colorbars.metadata,
                 "png": str(png), "pdf": str(png.with_suffix(".pdf")), "candidates": candidates}
     _write_json(metadata, output / "figure1_metadata.json")
     return metadata
@@ -355,6 +367,7 @@ def run(args: argparse.Namespace) -> Path | None:
     per_slice, per_stack, agreement_summary, loaded = _quantitative_metrics(reference, run_root)
     signal_rows, signal_summary = _signal_metrics(run_root, args.subject_id)
     selected = _select_groups(loaded, _parse_selected_groups(args.selected_group))
+    colorbars = load_legacy_scmr_colorbars(args.legacy_source)
     if args.dry_run:
         print(json.dumps({"status": "DRY_RUN_PASS", "selected_groups": selected, "quantitative_rows": len(per_slice), "signal_rows": len(signal_rows)}, indent=2))
         return None
@@ -362,23 +375,25 @@ def run(args: argparse.Namespace) -> Path | None:
     if output.exists() and any(output.iterdir()) and not args.overwrite:
         raise FileExistsError(f"Refusing to overwrite non-empty evaluation output: {output}")
     output.mkdir(parents=True, exist_ok=True)
-    figure1 = _render_figure1(reference, run_root, output / "figure1", args.plane_axis, args.plane_index, args.figure1_reference_group if args.figure1_reference_group is not None else selected["sax"])
-    figure2 = _render_figure2(reference, loaded, selected, output / "figure2")
+    figure1 = _render_figure1(reference, run_root, output / "figure1", args.plane_axis, args.plane_index, args.figure1_reference_group if args.figure1_reference_group is not None else selected["sax"], colorbars)
+    figure2 = _render_figure2(reference, loaded, selected, output / "figure2", colorbars)
     _write_csv(per_slice, output / "metrics" / "quantitative_agreement_per_slice.csv")
     _write_csv(per_stack, output / "metrics" / "quantitative_agreement_per_stack.csv")
     _write_json(agreement_summary, output / "metrics" / "quantitative_agreement_summary.json")
     _write_csv(signal_rows, output / "metrics" / "signal_reprojection_metrics.csv")
     _write_json(signal_summary, output / "metrics" / "signal_reprojection_summary.json")
+    all_slices = render_all_slice_montages(reference, loaded, per_slice, output / "all_slices", colorbars)
+    range_audit = write_range_audit(reference, loaded, run_root, output / "range_audit")
     repo = Path(__file__).resolve().parents[3]
     manifest = {"status": "COMPLETE", "subject_id": args.subject_id, "code_10w_git_commit": _git_value(repo, "rev-parse", "HEAD"),
                 "git_dirty_status": _git_value(repo, "status", "--short"), "legacy_2d_fit_first_source_path": str(Path(args.legacy_source).resolve()),
                 "legacy_files_inspected_and_adapted": LEGACY_FILES, "native_reference": {"root": str(reference.root), "manifest": str(reference.manifest_path), "same_mind_mppca_provenance_verified": True, "sha256": reference.file_hashes},
                 "trad_run": str(run_root), "trad_experiment_manifest_sha256": sha256(run_root / "experiment_manifest.json"),
                 "prepared_observations_sha256": {stack: sha256(prepared_root / args.subject_id / stack / "observations.npz") for stack in STACKS},
-                "figure1": figure1, "figure2": figure2, "metrics": {"quantitative": "bias, MAE, RMSE, range-NRMSE, Pearson r, NCC, ROI-bounded SSIM", "signal": "RMSE, range-NRMSE, MAE, NCC"},
+                "figure1": figure1, "figure2": figure2, "all_slices": all_slices, "range_audit": range_audit, "colorbars": colorbars.metadata, "metrics": {"quantitative": "bias, MAE, RMSE, range-NRMSE, Pearson r, NCC, ROI-bounded SSIM", "signal": "RMSE, range-NRMSE, MAE, NCC"},
                 "figure3": "SKIPPED / ROI_PENDING: no aligned myocardial/AHA masks", "command": sys.argv, "timestamp_utc": datetime.now(timezone.utc).isoformat()}
     _write_json(manifest, output / "evaluation_manifest.json")
-    (output / "README.md").write_text("# SCMR Figure 1/2 evaluation\n\nFigure 1 shows through-plane continuity only. Figure 2 and quantitative metrics report consistency with native 2-D dictionary maps, not ground-truth accuracy. Figure 3 is planned, pending aligned myocardial/AHA masks.\n", encoding="utf-8")
+    (output / "README.md").write_text("# SCMR evaluation and QC\n\n## Existing\n\n- Figure 1: through-plane continuity only.\n- Figure 2 representative groups, per-slice/per-stack quantitative agreement, and signal reprojection metrics.\n\n## Added\n\n- `all_slices/`: all-slice visual QC montage of native 2-D vs Trad native-plane reprojection vs absolute residual for every group.\n- SCMR-matched Lipari (T1) / Navia (T2) colormap provenance in figure metadata.\n- `range_audit/`: unit, value-range, and normalization-chain audit.\n\nFigure 2 metrics are native dictionary-map consistency, not ground-truth accuracy. There is no Trad-versus-2D-fit-first method comparison, no myocardial/AHA evaluation, and no all-slice signal montage. Figure 3 remains `SKIPPED / ROI_PENDING`.\n", encoding="utf-8")
     return output
 
 

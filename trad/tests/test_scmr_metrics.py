@@ -65,14 +65,23 @@ def test_scmr_runner_validates_alignment_and_writes_figures(tmp_path) -> None:
     nib.save(nib.Nifti1Image((50 + rows / 2 + cols / 20)[..., None].astype(np.float32), affine), native_t2)
     nib.save(nib.Nifti1Image((1100 + rows * 8 + cols)[..., None].astype(np.float32), affine), run_root / "T1_3D.nii.gz")
     nib.save(nib.Nifti1Image((55 + rows / 3 + cols / 30)[..., None].astype(np.float32), affine), run_root / "T2_3D.nii.gz")
+    nib.save(nib.Nifti1Image(np.full((9, 9, 1), 0.8, dtype=np.float32), affine), run_root / "B1_3D.nii.gz")
+    nib.save(nib.Nifti1Image(np.full((9, 9, 1), 75.0, dtype=np.float32), affine), run_root / "amplitude_3D.nii.gz")
     (run_root / "experiment_manifest.json").write_text("{}")
     (reference_root / "native_reference_manifest.json").write_text(__import__("json").dumps({"subject_id": subject, "preprocessing_semantics": "MP-PCA(MIND_mag_reg)", "map_units": "ms", "preprocessed_mat_sha256": ref_hashes, "maps": maps, "figure1_native_stacks": {"t1": native_t1.name, "t2": native_t2.name}}))
     output = tmp_path / "out"
-    result = run(Namespace(subject_id=subject, prepared_root=str(prepared_root), preprocessed_root=str(preprocessed_root), trad_run=str(run_root), native_reference_root=str(reference_root), output=str(output), legacy_source=".", plane_axis="x", plane_index=4, figure1_reference_group=0, selected_group=["sax=0", "2ch=0", "4ch=0"], dry_run=False, overwrite=False))
+    result = run(Namespace(subject_id=subject, prepared_root=str(prepared_root), preprocessed_root=str(preprocessed_root), trad_run=str(run_root), native_reference_root=str(reference_root), output=str(output), legacy_source="/home/universe/SVR/multimap_postprogramming/MultiMapCode/method_repositories/2D_fit_first", plane_axis="x", plane_index=4, figure1_reference_group=0, selected_group=["sax=0", "2ch=0", "4ch=0"], dry_run=False, overwrite=False))
     assert result == output
     assert (output / "figure1" / "Figure1_native_vs_trad_through_plane.png").is_file()
     assert (output / "figure1" / "candidates" / "Figure1_T1_x_candidates.png").is_file()
     assert (output / "figure2" / "Figure2_T1_native_vs_reprojection.pdf").is_file()
+    assert (output / "all_slices" / "T1" / "T1_SAX_all_slices_montage.png").is_file()
+    assert (output / "all_slices" / "T2" / "T2_4CH_all_slices_montage.pdf").is_file()
+    all_slice_metadata = __import__("json").loads((output / "all_slices" / "all_slice_metadata.json").read_text())
+    assert all_slice_metadata["row_annotations"]["T1"]["sax"][0].startswith("group_idx=0; N=81; RMSE=5.0; bias=+5.0")
+    assert (output / "range_audit" / "range_audit_summary.json").is_file()
+    assert "all-slice visual QC montage" in (output / "README.md").read_text()
+    assert "Lipari" in __import__("json").loads((output / "figure2" / "figure2_metadata.json").read_text())["T1"]["colormap"]
     assert (output / "metrics" / "quantitative_agreement_per_slice.csv").is_file()
     manifest = __import__("json").loads((output / "evaluation_manifest.json").read_text())
     assert manifest["figure1"]["same_world_plane_check"] == "PASS"
