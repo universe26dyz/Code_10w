@@ -1,0 +1,18 @@
+dataset:
+  n_rhythms: 500
+  tissue_samples_per_rhythm: 500
+  split_rhythms: {train: 400, valid: 50, test: 50}
+  seed: 20260911
+  store_jacobian: false
+  teacher_chunk_size: 8192
+  teacher_device: cuda:0
+training:
+  device: cuda:0
+  seed: 20260911
+  epochs: 50
+  batch_size: 1024
+  learning_rate: 0.001
+  scheduler_step_size: 5
+  scheduler_gamma: 0.5
+  gradient_samples: 64
+mlp_loss: {signal_mse_weight: 1.0, jacobian_weight: 0.0, cosine_weight: 0.0}

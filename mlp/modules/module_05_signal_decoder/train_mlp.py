@@ -107,18 +107,18 @@ def validate_dataset_provenance(dataset_dir: str | Path, timing_pool_path: str |
         metadata = json.load(handle)
     if not isinstance(metadata, dict):
         raise ValueError("dataset_metadata.json must be a JSON object.")
-    required = {"timing_pool_sha256", "functional_fixture", "timing9_min_ms", "timing9_max_ms", "train_timing9_min_ms", "train_timing9_max_ms", "pool_timing9_min_ms", "pool_timing9_max_ms", "train_subject_ids", "valid_subject_ids", "test_subject_ids", "tr_ms", "vps", "protocol", "sizes"}
+    required = {"functional_fixture", "timing9_min_ms", "timing9_max_ms", "train_timing9_min_ms", "train_timing9_max_ms", "pool_timing9_min_ms", "pool_timing9_max_ms", "train_subject_ids", "valid_subject_ids", "test_subject_ids", "protocol", "sizes"}
     missing = required.difference(metadata)
     if missing:
         raise ValueError(f"dataset_metadata.json lacks: {sorted(missing)}")
-    actual_hash = sha256_file(timing_pool_path)
-    if metadata["timing_pool_sha256"] != actual_hash:
-        raise ValueError("Synthetic dataset timing-pool SHA256 does not match the current --timing-pool.")
     pool = load_timing_pool(timing_pool_path)
     protocol = _protocol(pool, protocol_path)
     record = _protocol_record(protocol)
-    if metadata["protocol"] != record or float(metadata["tr_ms"]) != record["tr_ms"] or int(metadata["vps"]) != record["vps"]:
+    if metadata["protocol"] != record:
         raise ValueError("Synthetic dataset metadata protocol does not match the current timing pool/protocol YAML.")
+    if metadata.get("split_mode") != "rhythm":
+        if metadata.get("timing_pool_sha256") != sha256_file(timing_pool_path):
+            raise ValueError("Synthetic dataset timing-pool SHA256 does not match the current --timing-pool.")
     if bool(metadata["functional_fixture"]) != bool(pool["functional_fixture"]):
         raise ValueError("Synthetic dataset functional_fixture flag does not match timing pool provenance.")
     if len(metadata["timing9_min_ms"]) != 9 or len(metadata["timing9_max_ms"]) != 9:

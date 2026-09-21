@@ -1,0 +1,18 @@
+dataset:
+  n_rhythms: 8
+  tissue_samples_per_rhythm: 16
+  split_rhythms: {train: 4, valid: 2, test: 2}
+  seed: 20260911
+  store_jacobian: false
+  teacher_chunk_size: 128
+  teacher_device: cpu
+training:
+  device: cpu
+  seed: 20260911
+  epochs: 1
+  batch_size: 32
+  learning_rate: 0.001
+  scheduler_step_size: 5
+  scheduler_gamma: 0.5
+  gradient_samples: 16
+mlp_loss: {signal_mse_weight: 1.0, jacobian_weight: 0.0, cosine_weight: 0.0}

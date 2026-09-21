@@ -12,7 +12,7 @@ import numpy as np
 from scipy.io import savemat
 
 from .build_native_reference import _load_mapping
-from .metrics import agreement_metrics
+from .metrics import agreement_metrics, signal_agreement_metrics
 from .reference_2d import STACKS, load_verified_reference, sha256
 
 
@@ -141,7 +141,7 @@ def compute_metrics(reference_root: Path, preprocessed_root: Path, signal_root: 
         groups, weights, masks = validate_signal_rows(signal, stack)
         for weight in range(10):
             rows = np.flatnonzero(weights == weight)
-            signal_rows.append({"subject_id": subject_id, "stack": stack, "weight_idx": weight, "region": "global_prepared_support", **agreement_metrics(signal["observed"][rows], signal["predicted"][rows], masks[rows])})
+            signal_rows.append({"schema": "signal_metrics/v2", "subject_id": subject_id, "stack": stack, "weight_idx": weight, "region": "global_prepared_support", **signal_agreement_metrics(signal["observed"][rows], signal["predicted"][rows], masks[rows])})
         signal_pool.append((signal["observed"], signal["predicted"], masks))
         t1, t2, synthetic_valid, map_groups = _load_mapping(apparent_root / f"{stack}_apparent_mapping.mat")
         native = reference.stacks[stack]
@@ -168,8 +168,8 @@ def compute_metrics(reference_root: Path, preprocessed_root: Path, signal_root: 
                         synthetic_group = float(pred[group][paired_group].mean()) if paired_group.any() else float("nan")
                         myo_slice_rows.append({"subject_id": subject_id, "parameter": parameter, "stack": stack, "group_idx": int(group), "region": region, "units": "ms", "native_mean_ms": native_group, "synthetic_mean_ms": synthetic_group, "relative_bias_percent": 100 * float(group_metric["bias_ms"]) / native_group if native_group else float("nan"), **group_metric})
     observed = np.concatenate([x[0].ravel() for x in signal_pool]); predicted = np.concatenate([x[1].ravel() for x in signal_pool]); support = np.concatenate([x[2].ravel() for x in signal_pool])
-    signal_overall = agreement_metrics(observed, predicted, support)
-    signal_rows.append({"subject_id": subject_id, "stack": "ALL", "weight_idx": "ALL", "region": "global_prepared_support", **signal_overall})
+    signal_overall = signal_agreement_metrics(observed, predicted, support)
+    signal_rows.append({"schema": "signal_metrics/v2", "subject_id": subject_id, "stack": "ALL", "weight_idx": "ALL", "region": "global_prepared_support", **signal_overall})
     quantitative_overall = {}
     for parameter, entries in quantitative_pool.items():
         quantitative_overall[parameter] = agreement_metrics(np.concatenate([x[0].ravel() for x in entries]), np.concatenate([x[1].ravel() for x in entries]), np.concatenate([x[2].ravel() for x in entries]))

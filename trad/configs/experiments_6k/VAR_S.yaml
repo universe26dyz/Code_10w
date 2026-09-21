@@ -1,0 +1,3 @@
+base_config: B6.yaml
+variance: {enabled: true, slice: true, pixel: false, method: experimental_project_heteroscedastic, pixel_hidden_features: 16}
+experiment: {id: VAR_S, output_root: Code_10w_runs/trad_v3/VAR_S}

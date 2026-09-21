@@ -43,6 +43,16 @@ def agreement_metrics(reference: np.ndarray, prediction: np.ndarray, mask: np.nd
     }
 
 
+def signal_agreement_metrics(reference: np.ndarray, prediction: np.ndarray, mask: np.ndarray, *, min_pixels: int = 16) -> dict[str, float | int | str]:
+    """Signal-space metrics with a schema that cannot be mistaken for ms."""
+
+    metric = agreement_metrics(reference, prediction, mask, min_pixels=min_pixels)
+    result: dict[str, float | int | str] = {"units": "original_input_intensity"}
+    for key, value in metric.items():
+        result[{"bias_ms": "bias_signal", "MAE_ms": "MAE_signal", "RMSE_ms": "RMSE_signal"}.get(key, key)] = value
+    return result
+
+
 def _roi_bounded_ssim(reference: np.ndarray, prediction: np.ndarray, valid: np.ndarray, a: np.ndarray, b: np.ndarray) -> float:
     """Evaluate SSIM in the support bounding box without zero-filled background."""
 

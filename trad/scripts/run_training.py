@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 from pathlib import Path
 
@@ -16,9 +17,31 @@ from modules.module_08_inference_export.reprojection import export_native_plane_
 from modules.module_09_qc_benchmark.qc import validate_smoke_outputs
 
 
-def run_reconstruction(config_path: str | Path, protocol_path: str | Path, observations: list[str | Path], output_dir: str | Path, subject_id: str | None = None) -> dict[str, object]:
-    with Path(config_path).open(encoding="utf-8") as handle:
+def _deep_merge(base: dict, override: dict) -> dict:
+    result = copy.deepcopy(base)
+    for key, value in override.items():
+        result[key] = _deep_merge(result[key], value) if isinstance(result.get(key), dict) and isinstance(value, dict) else copy.deepcopy(value)
+    return result
+
+
+def load_training_config(config_path: str | Path) -> dict:
+    """Load a compact experiment override over an explicit checked-in base YAML."""
+    path = Path(config_path)
+    with path.open(encoding="utf-8") as handle:
         config = yaml.safe_load(handle)
+    if not isinstance(config, dict):
+        raise ValueError("Training config must be a YAML mapping.")
+    base_ref = config.pop("base_config", None)
+    if base_ref is None:
+        return config
+    base_path = (path.parent / str(base_ref)).resolve()
+    if base_path == path.resolve():
+        raise ValueError("Training config cannot inherit itself.")
+    return _deep_merge(load_training_config(base_path), config)
+
+
+def run_reconstruction(config_path: str | Path, protocol_path: str | Path, observations: list[str | Path], output_dir: str | Path, subject_id: str | None = None) -> dict[str, object]:
+    config = load_training_config(config_path)
     if not isinstance(config, dict) or not isinstance(config.get("training"), dict):
         raise ValueError("--config must be a mapping containing training.")
     if "device" not in config["training"]:

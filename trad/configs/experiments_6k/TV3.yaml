@@ -1,0 +1,5 @@
+base_config: B6.yaml
+spatial_regularization:
+  t1: {mode: TV, weight: 0.0003}
+  t2: {mode: TV, weight: 0.0003}
+experiment: {id: TV3, output_root: Code_10w_runs/trad_v3/TV3}
