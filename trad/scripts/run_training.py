@@ -40,12 +40,21 @@ def load_training_config(config_path: str | Path) -> dict:
     return _deep_merge(load_training_config(base_path), config)
 
 
+def reject_blocked_experiment(config: dict) -> None:
+    experiment = config.get("experiment", {})
+    if isinstance(experiment, dict) and experiment.get("blocked") is True:
+        identifier = experiment.get("id", "unnamed")
+        reason = experiment.get("blocked_reason", "no reason supplied")
+        raise ValueError(f"Experiment {identifier} is blocked: {reason}")
+
+
 def run_reconstruction(config_path: str | Path, protocol_path: str | Path, observations: list[str | Path], output_dir: str | Path, subject_id: str | None = None) -> dict[str, object]:
     config = load_training_config(config_path)
     if not isinstance(config, dict) or not isinstance(config.get("training"), dict):
         raise ValueError("--config must be a mapping containing training.")
     if "device" not in config["training"]:
         raise ValueError("training.device must be explicit.")
+    reject_blocked_experiment(config)
     # The CLI is the reconstruction pipeline: HB1 registration is on unless a
     # caller explicitly disables it for a controlled tiny/unit invocation.
     config.setdefault("stack_initialization", {}).setdefault("enabled", True)

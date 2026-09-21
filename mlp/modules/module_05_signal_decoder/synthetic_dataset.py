@@ -84,8 +84,20 @@ def _protocol(pool: Mapping[str, np.ndarray], protocol_path: str | Path) -> Trad
     required = ("flip_angle_degrees", "inversion_times_ms", "t2prep_ms", "ramp_up_pulses")
     if not isinstance(cfg, dict) or any(key not in cfg for key in required):
         raise ValueError("Protocol YAML lacks fixed HHZ values.")
-    protocol = TradProtocol(float(pool["tr_ms"].reshape(-1)[0]), int(pool["vps"].reshape(-1)[0]), tuple(float(x) for x in cfg["flip_angle_degrees"]), tuple(float(x) for x in cfg["inversion_times_ms"]), tuple(float(x) for x in cfg["t2prep_ms"]), int(cfg["ramp_up_pulses"]))
+    protocol = protocol_from_record({"tr_ms": float(pool["tr_ms"].reshape(-1)[0]), "vps": int(pool["vps"].reshape(-1)[0]), "fa_deg": cfg["flip_angle_degrees"], "ti_ms": cfg["inversion_times_ms"], "t2prep_ms": cfg["t2prep_ms"], "n_ramp_up": cfg["ramp_up_pulses"]}, protocol_path, require_hhz_vps87=False)
+    return protocol
+
+
+def protocol_from_record(record: Mapping[str, Any], protocol_path: str | Path, *, require_hhz_vps87: bool = True) -> TradProtocol:
+    """Validate a dataset/checkpoint protocol against authoritative HHZ YAML."""
+    with Path(protocol_path).open(encoding="utf-8") as handle:
+        cfg = yaml.safe_load(handle)
+    protocol = TradProtocol(float(record["tr_ms"]), int(record["vps"]), tuple(float(x) for x in record["fa_deg"]), tuple(float(x) for x in record["ti_ms"]), tuple(float(x) for x in record["t2prep_ms"]), int(record["n_ramp_up"]))
     protocol.validate()
+    expected = {"tr_ms": 2.61, "vps": 87, "fa_deg": tuple(float(x) for x in cfg["flip_angle_degrees"]), "ti_ms": tuple(float(x) for x in cfg["inversion_times_ms"]), "t2prep_ms": tuple(float(x) for x in cfg["t2prep_ms"]), "n_ramp_up": int(cfg["ramp_up_pulses"])}
+    actual = {"tr_ms": protocol.tr_ms, "vps": protocol.vps, "fa_deg": protocol.fa_deg, "ti_ms": protocol.ti_ms, "t2prep_ms": protocol.t2prep_ms, "n_ramp_up": protocol.n_ramp_up}
+    if require_hhz_vps87 and actual != expected:
+        raise ValueError("Dataset protocol does not equal the authoritative fixed HHZ VPS=87 contract.")
     return protocol
 
 

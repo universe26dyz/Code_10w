@@ -2,4 +2,8 @@ base_config: B6.yaml
 # BLOCKED until a full/pre-crop processed HB1 source with MIND/MP-PCA provenance
 # and exact group geometry mapping is supplied. This config must not be run yet.
 stack_initialization: {enabled: true, registration_source: FULL_FOV_PROVENANCE_REQUIRED}
-experiment: {id: REG_FULL, output_root: Code_10w_runs/trad_v3/REG_FULL_BLOCKED}
+experiment:
+  id: REG_FULL
+  blocked: true
+  blocked_reason: "No verified full/pre-crop processed HB1 source with exact geometry + MIND/MP-PCA provenance."
+  output_root: Code_10w_runs/trad_v3/REG_FULL_BLOCKED

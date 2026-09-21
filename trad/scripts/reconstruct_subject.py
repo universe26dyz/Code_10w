@@ -9,12 +9,18 @@ from pathlib import Path
 from scripts.run_training import run_reconstruction
 
 
-def reconstruct_subject(prepared_root: str | Path, subject_id: str, config: str | Path, output: str | Path) -> dict[str, object]:
+def resolve_subject_observations(prepared_root: str | Path, subject_id: str) -> list[Path]:
+    """Resolve the only supported CYJ-style prepared stack contract."""
     root = Path(prepared_root)
     observations = [root / subject_id / stack / "observations.npz" for stack in ("sax", "2ch", "4ch")]
     missing = [str(path) for path in observations if not path.is_file()]
     if missing:
         raise FileNotFoundError("Required exact prepared stack observations are missing: " + "; ".join(missing))
+    return observations
+
+
+def reconstruct_subject(prepared_root: str | Path, subject_id: str, config: str | Path, output: str | Path) -> dict[str, object]:
+    observations = resolve_subject_observations(prepared_root, subject_id)
     method_root = Path(__file__).resolve().parents[1]
     return run_reconstruction(config, method_root / "configs" / "protocol_hhz_v1.yaml", observations, output, subject_id=subject_id)
 

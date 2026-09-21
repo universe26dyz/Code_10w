@@ -52,15 +52,20 @@ with disjoint train/valid/test rhythm IDs. Signal-only datasets set
 
 ```bash
 cd /data/dengyz/code/Code_10w/trad
-conda run -n cr_dreme python -m scripts.run_training --config configs/experiments_6k/B6.yaml --protocol configs/protocol_hhz_v1.yaml --observations /data/dengyz/dataset/Code_10w_v1/prepared/CYJ/sax/observations.npz --observations /data/dengyz/dataset/Code_10w_v1/prepared/CYJ/lax/observations.npz --output-dir /data/dengyz/dataset/Code_10w_v1/Code_10w_runs/trad_v3/B6
-conda run -n cr_dreme python -m scripts.run_training --config configs/experiments_6k/TV2.yaml --protocol configs/protocol_hhz_v1.yaml --observations /data/dengyz/dataset/Code_10w_v1/prepared/CYJ/sax/observations.npz --observations /data/dengyz/dataset/Code_10w_v1/prepared/CYJ/lax/observations.npz --output-dir /data/dengyz/dataset/Code_10w_v1/Code_10w_runs/trad_v3/TV2
-conda run -n cr_dreme python -m scripts.run_training --config configs/experiments_6k/TV3.yaml --protocol configs/protocol_hhz_v1.yaml --observations /data/dengyz/dataset/Code_10w_v1/prepared/CYJ/sax/observations.npz --observations /data/dengyz/dataset/Code_10w_v1/prepared/CYJ/lax/observations.npz --output-dir /data/dengyz/dataset/Code_10w_v1/Code_10w_runs/trad_v3/TV3
+conda run --no-capture-output -n cr_dreme python -m scripts.reconstruct_subject --prepared-root /data/dengyz/dataset/Code_10w_v1/Code_10w_prepared --subject-id CYJ --config configs/experiments_6k/B6.yaml --output /data/dengyz/dataset/Code_10w_v1/Code_10w_runs/trad_v3/CYJ_B6
+conda run --no-capture-output -n cr_dreme python -m scripts.reconstruct_subject --prepared-root /data/dengyz/dataset/Code_10w_v1/Code_10w_prepared --subject-id CYJ --config configs/experiments_6k/TV2.yaml --output /data/dengyz/dataset/Code_10w_v1/Code_10w_runs/trad_v3/CYJ_TV2
+conda run --no-capture-output -n cr_dreme python -m scripts.reconstruct_subject --prepared-root /data/dengyz/dataset/Code_10w_v1/Code_10w_prepared --subject-id CYJ --config configs/experiments_6k/TV3.yaml --output /data/dengyz/dataset/Code_10w_v1/Code_10w_runs/trad_v3/CYJ_TV3
+conda run --no-capture-output -n cr_dreme python -m scripts.reconstruct_subject --prepared-root /data/dengyz/dataset/Code_10w_v1/Code_10w_prepared --subject-id CYJ --config configs/experiments_6k/PSF4.yaml --output /data/dengyz/dataset/Code_10w_v1/Code_10w_runs/trad_v3/CYJ_PSF4
+conda run --no-capture-output -n cr_dreme python -m scripts.reconstruct_subject --prepared-root /data/dengyz/dataset/Code_10w_v1/Code_10w_prepared --subject-id CYJ --config configs/experiments_6k/PSF16.yaml --output /data/dengyz/dataset/Code_10w_v1/Code_10w_runs/trad_v3/CYJ_PSF16
 ```
 
 ```bash
 cd /data/dengyz/code/Code_10w/mlp
 conda run -n cr_dreme python -m modules.module_05_signal_decoder.generate_rr_mlp_dataset --config configs/rr_synthetic/smoke.yaml --output-dir /data/dengyz/dataset/Code_10w_v1/mlp_rr_v3/smoke
 conda run -n cr_dreme python -m modules.module_05_signal_decoder.generate_rr_mlp_dataset --config configs/rr_synthetic/pilot_signalonly.yaml --output-dir /data/dengyz/dataset/Code_10w_v1/mlp_rr_v3/pilot
+conda run --no-capture-output -n cr_dreme python -m modules.module_05_signal_decoder.train_mlp --config configs/rr_synthetic/smoke.yaml --dataset-dir /data/dengyz/dataset/Code_10w_v1/mlp_rr_v3/smoke --protocol configs/protocol_hhz_v1.yaml --output-dir /data/dengyz/dataset/Code_10w_v1/mlp_rr_v3/smoke_model
+conda run --no-capture-output -n cr_dreme python -m modules.module_05_signal_decoder.train_mlp --config configs/rr_synthetic/pilot_signalonly.yaml --dataset-dir /data/dengyz/dataset/Code_10w_v1/mlp_rr_v3/pilot --protocol configs/protocol_hhz_v1.yaml --output-dir /data/dengyz/dataset/Code_10w_v1/mlp_rr_v3/pilot_model
+conda run --no-capture-output -n cr_dreme python -m modules.module_05_signal_decoder.validate_formal_mlp --checkpoint /data/dengyz/dataset/Code_10w_v1/mlp_rr_v3/pilot_model/signal_simulator_best.pth --dataset-dir /data/dengyz/dataset/Code_10w_v1/mlp_rr_v3/pilot --protocol configs/protocol_hhz_v1.yaml --output /data/dengyz/dataset/Code_10w_v1/mlp_rr_v3/pilot_model/synthetic_validation.json --device cuda:0 --batch-size 1024 --gradient-samples 64
 ```
 
 The formal 12.5M generation, formal MLP training, Wave 3, and online MLP

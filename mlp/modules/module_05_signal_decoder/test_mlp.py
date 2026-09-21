@@ -12,7 +12,7 @@ from .synthetic_dataset import _protocol
 from .trad_teacher.trad_signal_simulator import TradSignalSimulator
 
 
-def fidelity_metrics(model: MdmSignalMLP, test_data: TensorDataset, pool: dict[str, Any], protocol_path: str, batch_size: int, gradient_samples: int) -> dict[str, Any]:
+def fidelity_metrics(model: MdmSignalMLP, test_data: TensorDataset, pool: dict[str, Any] | None, protocol_path: str, batch_size: int, gradient_samples: int, *, protocol: Any | None = None) -> dict[str, Any]:
     if batch_size < 1 or gradient_samples < 1:
         raise ValueError("batch_size and gradient_samples must be positive.")
     inputs, target = test_data.tensors[:2]
@@ -38,7 +38,7 @@ def fidelity_metrics(model: MdmSignalMLP, test_data: TensorDataset, pool: dict[s
     t2 = (inputs[:n, 1].to(device) * 1000.0).detach().clone().requires_grad_(True)
     b1 = inputs[:n, 2].to(device).detach().clone().requires_grad_(True)
     timing = inputs[:n, 3:].to(device) * 1000.0
-    teacher_output = TradSignalSimulator()(t1, t2, b1, timing, _protocol(pool, protocol_path), normalize=True)
+    teacher_output = TradSignalSimulator()(t1, t2, b1, timing, protocol if protocol is not None else _protocol(pool, protocol_path), normalize=True)
     teacher_grads = []
     for weight in range(10):
         gradients = torch.autograd.grad(teacher_output[:, weight].sum(), (t1, t2, b1), retain_graph=True)
