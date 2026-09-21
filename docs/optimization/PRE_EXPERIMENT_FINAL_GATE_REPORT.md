@@ -8,8 +8,10 @@
    completed generation, training, and gradient diagnostics.
 3. **RR decoder benchmark — FAIL.** Existing benchmark remains legacy-pool
    based and has not yet been refactored for RR dataset/checkpoint metadata.
-4. **Dictionary cache — FAIL.** The MATLAB cache/refactor and equivalence test
-   are not implemented.
+4. **Dictionary cache — PASS (synthetic equivalence).** Stage-2 accepts an
+   explicit cache root; cache identity hashes scientific protocol/timing/grid
+   fields plus simulator source. MATLAB synthetic uncached/miss/hit matching is
+   exactly equal. Real-CYJ signature audit remains NOT RUN.
 5. **Common map-domain PSF — FAIL.** The exported-NIfTI common operator and
    deterministic geometry test are not implemented.
 

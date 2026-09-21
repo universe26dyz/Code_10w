@@ -94,10 +94,11 @@ def write_synthetic_mat(signal_path: Path, target: Path, stack: str) -> None:
     savemat(target, {"Mag_synthetic": volume, "group_idx": np.arange(volume.shape[3], dtype=np.int32), "weight_idx": np.arange(10, dtype=np.int32)}, do_compression=True)
 
 
-def run_matcher(source: Path, signal: Path, output: Path, matlab: str) -> None:
+def run_matcher(source: Path, signal: Path, output: Path, matlab: str, cache_root: Path | None = None) -> None:
     matlab_dir = Path(__file__).resolve().parent / "matlab"
     quote = lambda value: str(value).replace("'", "''")
-    command = f"addpath('{quote(matlab_dir)}'); build_synthetic_apparent_maps('{quote(source)}','{quote(signal)}','{quote(output)}');"
+    cache = "" if cache_root is None else f",'{quote(cache_root)}'"
+    command = f"addpath('{quote(matlab_dir)}'); build_synthetic_apparent_maps('{quote(source)}','{quote(signal)}','{quote(output)}'{cache});"
     subprocess.run([matlab, "-batch", command], check=True)
     if not output.is_file():
         raise RuntimeError(f"MATLAB did not create {output}.")

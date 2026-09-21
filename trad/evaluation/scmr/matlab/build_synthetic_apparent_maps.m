@@ -1,4 +1,4 @@
-function build_synthetic_apparent_maps(source_mat_path, synthetic_signal_path, output_mat_path)
+function build_synthetic_apparent_maps(source_mat_path, synthetic_signal_path, output_mat_path, cache_root)
 %BUILD_SYNTHETIC_APPARENT_MAPS Match PSF-reprojected signals with original MultiMap code.
 %   Only the signal tensor is synthetic. Protocol metadata and dictionary
 %   physics come from the exact current preprocessed.mat and the original
@@ -8,6 +8,7 @@ function build_synthetic_apparent_maps(source_mat_path, synthetic_signal_path, o
         source_mat_path (1, :) char
         synthetic_signal_path (1, :) char
         output_mat_path (1, :) char
+        cache_root (1, :) char = ''
     end
     assert(isfile(source_mat_path), 'build_synthetic_apparent_maps:SourceMissing', ...
         'Source MAT is missing: %s', source_mat_path);
@@ -68,17 +69,16 @@ function build_synthetic_apparent_maps(source_mat_path, synthetic_signal_path, o
     Tlist = unique(Tlist, 'rows');
 
     rows = size(Y.Mag_synthetic, 1); cols = size(Y.Mag_synthetic, 2);
-    t1_ms = zeros(groups, rows, cols, 'single');
+    t1_ms = zeros(groups, rows, cols, 'single'); cache_records=cell(groups,1);
     t2_ms = zeros(groups, rows, cols, 'single');
     valid_mask = false(groups, rows, cols);
     for group_index = 1:groups
         info = S.Info_by_slice{group_index};
         assert(isfield(info, 'RepetitionTime') && isfield(info, 'EchoTrainLength'), ...
             'build_synthetic_apparent_maps:Info', 'Group %d lacks TR/VPS.', group_index - 1);
-        [T1map, T2map] = function_T1T2_10HB_bssfp( ...
-            Y.Mag_synthetic(:, :, :, group_index), info, S.Acq_time(:, group_index), ...
-            S.FA, Tlist, S.T2_prep, S.TI);
-        valid = isfinite(T1map) & isfinite(T2map) & T1map > 0 & T2map > 0;
+        [dictionary, cache_record] = get_or_build_multimap_dictionary(info, S.Acq_time(:, group_index), S.FA, Tlist, S.T2_prep, S.TI, cache_root, fullfile(utility_dir,'sim_T1T2_10HB_bssfp.m'));
+        [T1map, T2map, ~, valid] = match_multimap_dictionary(Y.Mag_synthetic(:, :, :, group_index), dictionary);
+        valid = valid & isfinite(T1map) & isfinite(T2map) & T1map > 0 & T2map > 0; cache_records{group_index}=cache_record;
         t1_ms(group_index, :, :) = reshape(single(T1map), [1, rows, cols]);
         t2_ms(group_index, :, :) = reshape(single(T2map), [1, rows, cols]);
         valid_mask(group_index, :, :) = reshape(valid, [1, rows, cols]);
@@ -89,7 +89,8 @@ function build_synthetic_apparent_maps(source_mat_path, synthetic_signal_path, o
     psf_samples = int32(8);
     matcher_function = matcher_path;
     physics_parameters_changed = false;
-    save(output_mat_path, 't1_ms', 't2_ms', 'valid_mask', 'group_idx', 'psf_samples', ...
+    cache_hits=sum(cellfun(@(x) strcmp(x.cache_status,'hit'),cache_records)); cache_misses=sum(cellfun(@(x) strcmp(x.cache_status,'miss'),cache_records)); cache_provenance=struct('cache_enabled',~isempty(cache_root),'cache_root',cache_root,'cache_hits',cache_hits,'cache_misses',cache_misses,'unique_signatures',numel(unique(cellfun(@(x)x.signature,cache_records,'UniformOutput',false))),'per_group',{cache_records});
+    save(output_mat_path, 't1_ms', 't2_ms', 'valid_mask', 'group_idx', 'psf_samples', 'cache_provenance', ...
         'source_mat_path', 'synthetic_signal_path', 'matcher_function', ...
         'physics_parameters_changed', '-v7');
 end

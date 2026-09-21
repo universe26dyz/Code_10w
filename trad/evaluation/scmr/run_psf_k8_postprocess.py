@@ -38,7 +38,7 @@ def run(args: argparse.Namespace) -> dict:
         source = args.preprocessed_root / args.subject_id / stack / "preprocessed.mat"
         if not source.is_file():
             raise FileNotFoundError(f"Current exact preprocessed MAT is missing: {source}")
-        run_matcher(source, synthetic, mapping, args.matlab_executable)
+        run_matcher(source, synthetic, mapping, args.matlab_executable, args.dictionary_cache_root)
     render_signal_qc(stage1 / "signals", output / "qc_all_slices_all_weights")
     metrics = compute_metrics(args.native_reference, args.preprocessed_root, stage1 / "signals", apparent_root, args.mask_bundle, metrics_root, args.subject_id)
     manifest = {
@@ -46,7 +46,7 @@ def run(args: argparse.Namespace) -> dict:
         "stage1": {"path": str(stage1), "manifest_sha256": sha256(stage1 / "stage1_manifest.json"), "verified": True},
         "native_reference_manifest_sha256": sha256(args.native_reference / "native_reference_manifest.json"),
         "mask_bundle_manifest_sha256": sha256(args.mask_bundle / "manifest.json"),
-        "dictionary_matching": {"matlab_wrapper": str((Path(__file__).resolve().parent / "matlab" / "build_synthetic_apparent_maps.m").resolve()), "physics_parameters_changed": False},
+        "dictionary_matching": {"matlab_wrapper": str((Path(__file__).resolve().parent / "matlab" / "build_synthetic_apparent_maps.m").resolve()), "dictionary_cache_root": str(args.dictionary_cache_root) if args.dictionary_cache_root else None, "physics_parameters_changed": False},
         "metrics": metrics,
     }
     write_json(manifest, output / "evaluation_manifest.json")
@@ -59,6 +59,7 @@ def main() -> None:
     parser.add_argument("--preprocessed-root", required=True, type=Path); parser.add_argument("--native-reference", required=True, type=Path)
     parser.add_argument("--mask-bundle", required=True, type=Path); parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--matlab-executable", default="matlab")
+    parser.add_argument("--dictionary-cache-root", type=Path)
     args = parser.parse_args()
     try:
         print(json.dumps(run(args), indent=2, sort_keys=True, allow_nan=True))
