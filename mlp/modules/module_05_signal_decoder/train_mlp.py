@@ -14,7 +14,7 @@ import numpy as np
 import torch
 from torch.optim import Adam
 from torch.optim.lr_scheduler import StepLR
-from torch.utils.data import DataLoader, TensorDataset
+from torch.utils.data import DataLoader, Dataset, TensorDataset
 import yaml
 
 from .mlp_model import MdmSignalMLP
@@ -56,6 +56,30 @@ def load_h5_split(path: str | Path, split: str, *, include_jacobian: bool = Fals
             raise ValueError(f"{path} lacks valid target_jacobian10x3 [N,10,3].")
         return TensorDataset(torch.from_numpy(inputs), torch.from_numpy(targets), torch.from_numpy(jacobian))
     return TensorDataset(torch.from_numpy(inputs), torch.from_numpy(targets))
+
+
+class LazyRRSplit(Dataset):
+    """Process-local, row-on-demand RR HDF5 dataset; never materializes arrays."""
+    def __init__(self, path: str | Path, split: str, *, include_jacobian: bool = False) -> None:
+        self.path, self.split, self.include_jacobian, self._handle = Path(path), split, include_jacobian, None
+        with h5py.File(self.path, "r") as handle:
+            if not {"input12", "target_signal10", "rhythm_id"}.issubset(handle):
+                raise ValueError(f"{self.path} is not an RR HDF5 split.")
+            self._length = int(handle["input12"].shape[0])
+            if handle["input12"].shape != (self._length, 12) or handle["target_signal10"].shape != (self._length, 10):
+                raise ValueError(f"{self.path} has invalid RR input/target shapes.")
+            if include_jacobian and "target_jacobian10x3" not in handle:
+                raise ValueError(f"{self.path} lacks requested Jacobian targets.")
+    def __len__(self) -> int: return self._length
+    def __getstate__(self):
+        state = self.__dict__.copy(); state["_handle"] = None; return state
+    def _file(self):
+        if self._handle is None: self._handle = h5py.File(self.path, "r")
+        return self._handle
+    def __getitem__(self, index: int):
+        handle = self._file(); values = [torch.from_numpy(np.asarray(handle["input12"][index], dtype=np.float32)), torch.from_numpy(np.asarray(handle["target_signal10"][index], dtype=np.float32))]
+        if self.include_jacobian: values.append(torch.from_numpy(np.asarray(handle["target_jacobian10x3"][index], dtype=np.float32)))
+        return tuple(values)
 
 
 def _mlp_loss_settings(settings: Mapping[str, Any] | None) -> dict[str, float]:
@@ -140,7 +164,7 @@ def validate_dataset_provenance(dataset_dir: str | Path, timing_pool_path: str |
     return metadata, pool, protocol
 
 
-def _check_loaded_split_sizes(metadata: Mapping[str, Any], splits: Mapping[str, TensorDataset]) -> None:
+def _check_loaded_split_sizes(metadata: Mapping[str, Any], splits: Mapping[str, Dataset]) -> None:
     for name, dataset in splits.items():
         if len(dataset) != int(metadata["sizes"][name]):
             raise ValueError(f"{name}.h5 size does not match dataset_metadata.json.")
@@ -163,7 +187,8 @@ def train_mlp(dataset_dir: str | Path, timing_pool_path: str | Path | None, conf
     loss_settings = _mlp_loss_settings(config.get("mlp_loss"))
     metadata, pool, teacher_protocol = validate_dataset_provenance(dataset_dir, timing_pool_path, protocol_path)
     include_jacobian = loss_settings["jacobian_weight"] > 0 or loss_settings["cosine_weight"] > 0
-    splits = {name: load_h5_split(dataset_dir / f"{name}.h5", name, include_jacobian=include_jacobian) for name in ("train", "valid", "test")}
+    loader = LazyRRSplit if metadata.get("schema") == "mlp_rr_synthetic/v1" else load_h5_split
+    splits = {name: loader(dataset_dir / f"{name}.h5", name, include_jacobian=include_jacobian) for name in ("train", "valid", "test")}
     _check_loaded_split_sizes(metadata, splits)
     if len(splits["train"]) < batch_size:
         raise ValueError("Training split is smaller than batch_size; refusing a BatchNorm singleton/fallback batch.")
@@ -171,8 +196,8 @@ def train_mlp(dataset_dir: str | Path, timing_pool_path: str | Path | None, conf
         raise FileExistsError(f"MLP output must be absent or empty: {output}")
     output.mkdir(parents=True, exist_ok=True)
     loaders = {
-        "train": DataLoader(splits["train"], batch_size=batch_size, shuffle=True, drop_last=True),
-        "valid": DataLoader(splits["valid"], batch_size=batch_size, shuffle=False),
+        "train": DataLoader(splits["train"], batch_size=batch_size, shuffle=True, drop_last=True, num_workers=0),
+        "valid": DataLoader(splits["valid"], batch_size=batch_size, shuffle=False, num_workers=0),
     }
     model = MdmSignalMLP().to(device)
     optimizer = Adam(model.parameters(), lr=float(train_cfg["learning_rate"]))

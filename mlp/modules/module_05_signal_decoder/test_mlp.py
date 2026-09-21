@@ -5,30 +5,32 @@ from __future__ import annotations
 from typing import Any
 
 import torch
-from torch.utils.data import TensorDataset
+from torch.utils.data import DataLoader, Dataset, TensorDataset
 
 from .mlp_model import MdmSignalMLP
 from .synthetic_dataset import _protocol
 from .trad_teacher.trad_signal_simulator import TradSignalSimulator
 
 
-def fidelity_metrics(model: MdmSignalMLP, test_data: TensorDataset, pool: dict[str, Any] | None, protocol_path: str, batch_size: int, gradient_samples: int, *, protocol: Any | None = None) -> dict[str, Any]:
+def fidelity_metrics(model: MdmSignalMLP, test_data: Dataset, pool: dict[str, Any] | None, protocol_path: str, batch_size: int, gradient_samples: int, *, protocol: Any | None = None) -> dict[str, Any]:
     if batch_size < 1 or gradient_samples < 1:
         raise ValueError("batch_size and gradient_samples must be positive.")
-    inputs, target = test_data.tensors[:2]
     device = next(model.parameters()).device
     was_training = model.training; model.eval()
     squared_sum = torch.zeros((), device=device); absolute_sum = torch.zeros((), device=device)
     maximum = torch.zeros((), device=device); per_weight_squared = torch.zeros(10, device=device)
+    prefix = []
     with torch.no_grad():
-        for start in range(0, inputs.shape[0], batch_size):
-            error = model(inputs[start:start + batch_size].to(device)) - target[start:start + batch_size].to(device)
+        for batch in DataLoader(test_data, batch_size=batch_size, shuffle=False, num_workers=0):
+            inputs, target = batch[:2]
+            error = model(inputs.to(device)) - target.to(device)
             squared_sum += error.pow(2).sum(); absolute_sum += error.abs().sum()
             maximum = torch.maximum(maximum, error.abs().max()); per_weight_squared += error.pow(2).sum(0)
-    count = inputs.shape[0]
+            if sum(item.shape[0] for item in prefix) < gradient_samples: prefix.append(inputs)
+    count = len(test_data)
     metrics: dict[str, Any] = {"overall_rmse": float((squared_sum / (count * 10)).sqrt()), "mae": float(absolute_sum / (count * 10)), "max_abs_error": float(maximum), "per_weight_rmse": (per_weight_squared / count).sqrt().detach().cpu().tolist()}
-    n = min(gradient_samples, inputs.shape[0])
-    x = inputs[:n].to(device).clone().requires_grad_(True)
+    inputs = torch.cat(prefix, 0)[: min(gradient_samples, count)]
+    n = inputs.shape[0]; x = inputs.to(device).clone().requires_grad_(True)
     predicted = model(x)
     mlp_grads = []
     for weight in range(10):
