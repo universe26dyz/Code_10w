@@ -1,0 +1,1818 @@
+{
+  "CYJ": {
+    "composite_reference": {
+      "affine_ras": [
+        [
+          -0.51985872,
+          0.97640157,
+          -3.72569704,
+          -86.57253265
+        ],
+        [
+          -0.95246959,
+          -0.02470549,
+          5.17843294,
+          116.22232819
+        ],
+        [
+          -0.62052304,
+          -0.78008318,
+          -4.82732058,
+          297.52740479
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "dtype": "float32",
+      "finite_max": 1.0,
+      "finite_min": 0.00011583224113564938,
+      "mtime_utc": "2026-08-22T05:16:39.094067+00:00",
+      "nonzero_voxels_per_slice": [
+        73728,
+        73728,
+        73728,
+        73728,
+        73728,
+        73728,
+        73728,
+        73728,
+        73728,
+        73728,
+        73728,
+        73728,
+        73728,
+        73728
+      ],
+      "path": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/subjects/CYJ/data/roi/20260821_corrected_sequence_v1/sax_composite_reference.nii.gz",
+      "sha256": "4378e3f3b9a0a8a33f83d10ef6f58dc01470f8342659d2010f6cb0eb8c0d6d4f",
+      "shape_xyz": [
+        256,
+        288,
+        14
+      ],
+      "size_bytes": 3694733,
+      "type": "NIfTI-1/2 gzip",
+      "zooms_xyz_mm": [
+        1.25,
+        1.25,
+        8.000000953674316
+      ]
+    },
+    "geometry_relations_to_composite": {
+      "inner_filled": {
+        "reason": "geometry_header_mismatch",
+        "status": "STOP",
+        "voxel_transform_source_to_reference": [
+          [
+            0.99999998,
+            3e-08,
+            -0.0,
+            -1.91e-06
+          ],
+          [
+            4e-08,
+            0.99999999,
+            0.0,
+            4.03e-06
+          ],
+          [
+            -0.0,
+            1e-08,
+            -1.0,
+            13.00000068
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ]
+      },
+      "landmark_labels": {
+        "reason": "geometry_header_mismatch",
+        "status": "STOP",
+        "voxel_transform_source_to_reference": [
+          [
+            0.99999998,
+            3e-08,
+            -0.0,
+            -1.91e-06
+          ],
+          [
+            4e-08,
+            0.99999999,
+            0.0,
+            4.03e-06
+          ],
+          [
+            -0.0,
+            1e-08,
+            -1.0,
+            13.00000068
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ]
+      },
+      "outer_filled": {
+        "reason": "geometry_header_mismatch",
+        "status": "STOP",
+        "voxel_transform_source_to_reference": [
+          [
+            0.99999998,
+            3e-08,
+            -0.0,
+            -1.91e-06
+          ],
+          [
+            4e-08,
+            0.99999999,
+            0.0,
+            4.03e-06
+          ],
+          [
+            -0.0,
+            1e-08,
+            -1.0,
+            13.00000068
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ]
+      }
+    },
+    "integration_allowed": false,
+    "manual_masks": {
+      "inner_filled": {
+        "affine_ras": [
+          [
+            -0.51985866,
+            0.97640151,
+            3.72569704,
+            -135.0065918
+          ],
+          [
+            -0.95246959,
+            -0.02470548,
+            -5.17843294,
+            183.54196167
+          ],
+          [
+            -0.62052304,
+            -0.78008324,
+            4.82732058,
+            234.77223206
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "dtype": "int16",
+        "label_values": [
+          0,
+          1
+        ],
+        "mtime_utc": "2026-08-23T08:51:53.396499+00:00",
+        "nonzero_voxels_per_slice": [
+          0,
+          256,
+          491,
+          705,
+          770,
+          1037,
+          1166,
+          1283,
+          1265,
+          1216,
+          1067,
+          0,
+          0,
+          0
+        ],
+        "path": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/subjects/CYJ/data/roi/20260821_corrected_sequence_v1/Segmentation_2-in-label.nii.gz",
+        "sha256": "a51e5fcf660d5a42ab237a487810f160ec971b6dac736488e1b4980fb0a5b055",
+        "shape_xyz": [
+          256,
+          288,
+          14
+        ],
+        "size_bytes": 3049,
+        "type": "NIfTI-1/2 gzip",
+        "zooms_xyz_mm": [
+          1.25,
+          1.25,
+          8.000000953674316
+        ]
+      },
+      "landmark_labels": {
+        "affine_ras": [
+          [
+            -0.51985866,
+            0.97640151,
+            3.72569704,
+            -135.0065918
+          ],
+          [
+            -0.95246959,
+            -0.02470548,
+            -5.17843294,
+            183.54196167
+          ],
+          [
+            -0.62052304,
+            -0.78008324,
+            4.82732058,
+            234.77223206
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "dtype": "int16",
+        "label_values": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6
+        ],
+        "mtime_utc": "2026-08-23T09:04:00.395303+00:00",
+        "nonzero_voxels_per_slice": [
+          0,
+          0,
+          0,
+          0,
+          2,
+          0,
+          2,
+          0,
+          2,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "path": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/subjects/CYJ/data/roi/20260821_corrected_sequence_v1/Segmentation_3-label_point.nii.gz",
+        "sha256": "997e92bd57661f533c89b03dc8d5ba00d4464bd5bbceccd15a9a74d7ad6c3a11",
+        "shape_xyz": [
+          256,
+          288,
+          14
+        ],
+        "size_bytes": 2226,
+        "type": "NIfTI-1/2 gzip",
+        "zooms_xyz_mm": [
+          1.25,
+          1.25,
+          8.000000953674316
+        ]
+      },
+      "outer_filled": {
+        "affine_ras": [
+          [
+            -0.51985866,
+            0.97640151,
+            3.72569704,
+            -135.0065918
+          ],
+          [
+            -0.95246959,
+            -0.02470548,
+            -5.17843294,
+            183.54196167
+          ],
+          [
+            -0.62052304,
+            -0.78008324,
+            4.82732058,
+            234.77223206
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "dtype": "int16",
+        "label_values": [
+          0,
+          1
+        ],
+        "mtime_utc": "2026-08-23T08:46:17.614490+00:00",
+        "nonzero_voxels_per_slice": [
+          0,
+          577,
+          877,
+          1161,
+          1345,
+          1787,
+          1912,
+          2085,
+          2317,
+          2179,
+          1975,
+          0,
+          0,
+          0
+        ],
+        "path": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/subjects/CYJ/data/roi/20260821_corrected_sequence_v1/Segmentation_1-out-label.nii.gz",
+        "sha256": "8e4e592ccce175622019ed605ca524354e1b3540b24343590e65059ab2c83ca3",
+        "shape_xyz": [
+          256,
+          288,
+          14
+        ],
+        "size_bytes": 3327,
+        "type": "NIfTI-1/2 gzip",
+        "zooms_xyz_mm": [
+          1.25,
+          1.25,
+          8.000000953674316
+        ]
+      }
+    },
+    "mask_semantics_from_legacy_code": {
+      "inner_filled": "endocardium-enclosed filled area / blood-pool candidate",
+      "landmark_labels": "anterior labels [1,3,5], inferior labels [2,4,6]",
+      "myocardium_core": "myocardium_full distance-transform erosion > 1.0 mm",
+      "myocardium_full": "outer_filled AND NOT inner_filled",
+      "outer_filled": "epicardium-enclosed filled area"
+    },
+    "schema": "legacy_myocardium_mask_audit/v1",
+    "source_coordinate_system": "NIfTI RAS affine",
+    "source_directory": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/subjects/CYJ/data/roi/20260821_corrected_sequence_v1",
+    "status": "STOP",
+    "subject_id": "CYJ"
+  },
+  "DYL": {
+    "composite_reference": {
+      "affine_ras": [
+        [
+          -0.77409744,
+          0.78880382,
+          -3.73763156,
+          -18.93232536
+        ],
+        [
+          -0.77404428,
+          -0.03335685,
+          6.27801466,
+          98.55679321
+        ],
+        [
+          -0.60343081,
+          -0.96911085,
+          -3.25831938,
+          244.02284241
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "dtype": "float32",
+      "finite_max": 1.0,
+      "finite_min": 0.0,
+      "mtime_utc": "2026-08-22T05:16:35.622092+00:00",
+      "nonzero_voxels_per_slice": [
+        73728,
+        73728,
+        73728,
+        73728,
+        73728,
+        73728,
+        73728,
+        73725,
+        73728,
+        73728,
+        73728,
+        73728,
+        73727,
+        73725
+      ],
+      "path": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/subjects/DYL/data/roi/20260821_corrected_sequence_v1/sax_composite_reference.nii.gz",
+      "sha256": "cac3b0af103bc534ce1cd634a0a0d401594ee14310769836f6c771e0d1f6c07b",
+      "shape_xyz": [
+        256,
+        288,
+        14
+      ],
+      "size_bytes": 3692087,
+      "type": "NIfTI-1/2 gzip",
+      "zooms_xyz_mm": [
+        1.25,
+        1.25,
+        8.0
+      ]
+    },
+    "geometry_relations_to_composite": {
+      "inner_filled": {
+        "reason": "geometry_header_mismatch",
+        "status": "STOP",
+        "voxel_transform_source_to_reference": [
+          [
+            1.0,
+            -0.0,
+            2.4e-07,
+            6.47e-06
+          ],
+          [
+            0.0,
+            1.0,
+            1e-08,
+            5.9e-07
+          ],
+          [
+            -0.0,
+            0.0,
+            -1.00000005,
+            12.99999936
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ]
+      },
+      "landmark_labels": {
+        "reason": "geometry_header_mismatch",
+        "status": "STOP",
+        "voxel_transform_source_to_reference": [
+          [
+            1.0,
+            -0.0,
+            2.4e-07,
+            6.47e-06
+          ],
+          [
+            0.0,
+            1.0,
+            1e-08,
+            5.9e-07
+          ],
+          [
+            -0.0,
+            0.0,
+            -1.00000005,
+            12.99999936
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ]
+      },
+      "outer_filled": {
+        "reason": "geometry_header_mismatch",
+        "status": "STOP",
+        "voxel_transform_source_to_reference": [
+          [
+            1.0,
+            -0.0,
+            2.4e-07,
+            6.47e-06
+          ],
+          [
+            0.0,
+            1.0,
+            1e-08,
+            5.9e-07
+          ],
+          [
+            -0.0,
+            0.0,
+            -1.00000005,
+            12.99999936
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ]
+      }
+    },
+    "integration_allowed": false,
+    "manual_masks": {
+      "inner_filled": {
+        "affine_ras": [
+          [
+            -0.77409744,
+            0.78880382,
+            3.73763156,
+            -67.52153778
+          ],
+          [
+            -0.77404428,
+            -0.03335685,
+            -6.27801514,
+            180.17097473
+          ],
+          [
+            -0.60343081,
+            -0.96911085,
+            3.25831938,
+            201.66468811
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "dtype": "int16",
+        "label_values": [
+          0,
+          1
+        ],
+        "mtime_utc": "2026-08-23T11:00:07.357586+00:00",
+        "nonzero_voxels_per_slice": [
+          0,
+          0,
+          430,
+          715,
+          1001,
+          1129,
+          1273,
+          1247,
+          1290,
+          1233,
+          1122,
+          0,
+          0,
+          0
+        ],
+        "path": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/subjects/DYL/data/roi/20260821_corrected_sequence_v1/Segmentation_2-in-label.nii.gz",
+        "sha256": "4f07108a3d640f3dd813dcff36e90129d03246e3532a6a3d2251f825557bd3a7",
+        "shape_xyz": [
+          256,
+          288,
+          14
+        ],
+        "size_bytes": 3029,
+        "type": "NIfTI-1/2 gzip",
+        "zooms_xyz_mm": [
+          1.25,
+          1.25,
+          8.0
+        ]
+      },
+      "landmark_labels": {
+        "affine_ras": [
+          [
+            -0.77409744,
+            0.78880382,
+            3.73763156,
+            -67.52153778
+          ],
+          [
+            -0.77404428,
+            -0.03335685,
+            -6.27801514,
+            180.17097473
+          ],
+          [
+            -0.60343081,
+            -0.96911085,
+            3.25831938,
+            201.66468811
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "dtype": "int16",
+        "label_values": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6
+        ],
+        "mtime_utc": "2026-08-23T11:00:22.311647+00:00",
+        "nonzero_voxels_per_slice": [
+          0,
+          0,
+          0,
+          2,
+          0,
+          0,
+          2,
+          0,
+          0,
+          2,
+          0,
+          0,
+          0,
+          0
+        ],
+        "path": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/subjects/DYL/data/roi/20260821_corrected_sequence_v1/Segmentation_3-label_point.nii.gz",
+        "sha256": "180e56ef68d240f8379d858acd508792be10867d0dace6b079b001f9697ee96b",
+        "shape_xyz": [
+          256,
+          288,
+          14
+        ],
+        "size_bytes": 2224,
+        "type": "NIfTI-1/2 gzip",
+        "zooms_xyz_mm": [
+          1.25,
+          1.25,
+          8.0
+        ]
+      },
+      "outer_filled": {
+        "affine_ras": [
+          [
+            -0.77409744,
+            0.78880382,
+            3.73763156,
+            -67.52153778
+          ],
+          [
+            -0.77404428,
+            -0.03335685,
+            -6.27801514,
+            180.17097473
+          ],
+          [
+            -0.60343081,
+            -0.96911085,
+            3.25831938,
+            201.66468811
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "dtype": "int16",
+        "label_values": [
+          0,
+          1
+        ],
+        "mtime_utc": "2026-08-23T10:59:29.166408+00:00",
+        "nonzero_voxels_per_slice": [
+          0,
+          0,
+          909,
+          1365,
+          1641,
+          1931,
+          2085,
+          2090,
+          2138,
+          2103,
+          1812,
+          0,
+          0,
+          0
+        ],
+        "path": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/subjects/DYL/data/roi/20260821_corrected_sequence_v1/Segmentation_1-out-label.nii.gz",
+        "sha256": "c9b5ab48ab4d1ab7a4310bd7cb86ac666b7fb4787856f2d796e892ce6e7a7020",
+        "shape_xyz": [
+          256,
+          288,
+          14
+        ],
+        "size_bytes": 3237,
+        "type": "NIfTI-1/2 gzip",
+        "zooms_xyz_mm": [
+          1.25,
+          1.25,
+          8.0
+        ]
+      }
+    },
+    "mask_semantics_from_legacy_code": {
+      "inner_filled": "endocardium-enclosed filled area / blood-pool candidate",
+      "landmark_labels": "anterior labels [1,3,5], inferior labels [2,4,6]",
+      "myocardium_core": "myocardium_full distance-transform erosion > 1.0 mm",
+      "myocardium_full": "outer_filled AND NOT inner_filled",
+      "outer_filled": "epicardium-enclosed filled area"
+    },
+    "schema": "legacy_myocardium_mask_audit/v1",
+    "source_coordinate_system": "NIfTI RAS affine",
+    "source_directory": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/subjects/DYL/data/roi/20260821_corrected_sequence_v1",
+    "status": "STOP",
+    "subject_id": "DYL"
+  },
+  "DYZ": {
+    "composite_reference": {
+      "affine_ras": [
+        [
+          -1.07719684,
+          0.15094271,
+          -3.94191766,
+          122.62931061
+        ],
+        [
+          -0.44758922,
+          -1.04102087,
+          3.37710977,
+          184.36711121
+        ],
+        [
+          0.44923365,
+          -0.67527163,
+          -6.08739614,
+          80.68941498
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "dtype": "float32",
+      "finite_max": 1.0,
+      "finite_min": 7.767225179122761e-05,
+      "mtime_utc": "2026-08-23T11:08:30.334747+00:00",
+      "nonzero_voxels_per_slice": [
+        73728,
+        73728,
+        73728,
+        73728,
+        73728,
+        73728,
+        73728,
+        73728,
+        73728,
+        73728,
+        73728,
+        73728
+      ],
+      "path": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/subjects/DYZ/data/roi/20260823_v5_newdata_v1/sax_composite_reference.nii.gz",
+      "sha256": "40efe311007cab52584790d6a90a467ca52ae195e5a06ad54a1e8938aafe30dc",
+      "shape_xyz": [
+        288,
+        256,
+        12
+      ],
+      "size_bytes": 3140918,
+      "type": "NIfTI-1/2 gzip",
+      "zooms_xyz_mm": [
+        1.25,
+        1.25,
+        7.999998569488525
+      ]
+    },
+    "geometry_relations_to_composite": {
+      "inner_filled": {
+        "reason": "geometry_header_mismatch",
+        "status": "STOP",
+        "voxel_transform_source_to_reference": [
+          [
+            1.0,
+            -0.0,
+            -0.0,
+            -2.29e-06
+          ],
+          [
+            0.0,
+            1.0,
+            -0.0,
+            -3.3e-07
+          ],
+          [
+            -0.0,
+            -0.0,
+            -1.0,
+            10.99999995
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ]
+      },
+      "landmark_labels": {
+        "reason": "geometry_header_mismatch",
+        "status": "STOP",
+        "voxel_transform_source_to_reference": [
+          [
+            1.0,
+            -0.0,
+            -0.0,
+            -2.29e-06
+          ],
+          [
+            0.0,
+            1.0,
+            -0.0,
+            -3.3e-07
+          ],
+          [
+            -0.0,
+            -0.0,
+            -1.0,
+            10.99999995
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ]
+      },
+      "outer_filled": {
+        "reason": "geometry_header_mismatch",
+        "status": "STOP",
+        "voxel_transform_source_to_reference": [
+          [
+            1.0,
+            -0.0,
+            -0.0,
+            -2.29e-06
+          ],
+          [
+            0.0,
+            1.0,
+            -0.0,
+            -3.3e-07
+          ],
+          [
+            -0.0,
+            -0.0,
+            -1.0,
+            10.99999995
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ]
+      }
+    },
+    "integration_allowed": false,
+    "manual_masks": {
+      "inner_filled": {
+        "affine_ras": [
+          [
+            -1.07719684,
+            0.15094271,
+            3.94191766,
+            79.26821899
+          ],
+          [
+            -0.44758922,
+            -1.04102087,
+            -3.37710977,
+            221.51531982
+          ],
+          [
+            0.44923365,
+            -0.67527163,
+            6.08739614,
+            13.72805691
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "dtype": "int16",
+        "label_values": [
+          0,
+          1
+        ],
+        "mtime_utc": "2026-08-23T12:01:28.982639+00:00",
+        "nonzero_voxels_per_slice": [
+          0,
+          0,
+          587,
+          733,
+          925,
+          944,
+          959,
+          972,
+          870,
+          765,
+          0,
+          0
+        ],
+        "path": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/subjects/DYZ/data/roi/20260823_v5_newdata_v1/Segmentation_2-in-label.nii.gz",
+        "sha256": "c41fd4dfa623e7ce5746ad0ea27656308406898332f2548f44f3293316364d98",
+        "shape_xyz": [
+          288,
+          256,
+          12
+        ],
+        "size_bytes": 2576,
+        "type": "NIfTI-1/2 gzip",
+        "zooms_xyz_mm": [
+          1.25,
+          1.25,
+          7.999998569488525
+        ]
+      },
+      "landmark_labels": {
+        "affine_ras": [
+          [
+            -1.07719684,
+            0.15094271,
+            3.94191766,
+            79.26821899
+          ],
+          [
+            -0.44758922,
+            -1.04102087,
+            -3.37710977,
+            221.51531982
+          ],
+          [
+            0.44923365,
+            -0.67527163,
+            6.08739614,
+            13.72805691
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "dtype": "int16",
+        "label_values": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6
+        ],
+        "mtime_utc": "2026-08-23T12:01:40.185714+00:00",
+        "nonzero_voxels_per_slice": [
+          0,
+          0,
+          0,
+          2,
+          0,
+          2,
+          0,
+          2,
+          0,
+          0,
+          0,
+          0
+        ],
+        "path": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/subjects/DYZ/data/roi/20260823_v5_newdata_v1/Segmentation_3-label_point.nii.gz",
+        "sha256": "c6879191812962a52dbb52904d09a6c22933e98adc6d84c1b2c14e5c31f7d358",
+        "shape_xyz": [
+          288,
+          256,
+          12
+        ],
+        "size_bytes": 1940,
+        "type": "NIfTI-1/2 gzip",
+        "zooms_xyz_mm": [
+          1.25,
+          1.25,
+          7.999998569488525
+        ]
+      },
+      "outer_filled": {
+        "affine_ras": [
+          [
+            -1.07719684,
+            0.15094271,
+            3.94191766,
+            79.26821899
+          ],
+          [
+            -0.44758922,
+            -1.04102087,
+            -3.37710977,
+            221.51531982
+          ],
+          [
+            0.44923365,
+            -0.67527163,
+            6.08739614,
+            13.72805691
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "dtype": "int16",
+        "label_values": [
+          0,
+          1
+        ],
+        "mtime_utc": "2026-08-23T12:01:22.883597+00:00",
+        "nonzero_voxels_per_slice": [
+          0,
+          0,
+          973,
+          1212,
+          1387,
+          1416,
+          1568,
+          1624,
+          1564,
+          1199,
+          0,
+          0
+        ],
+        "path": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/subjects/DYZ/data/roi/20260823_v5_newdata_v1/Segmentation_1-out-label.nii.gz",
+        "sha256": "4dd80e60115d783557d70e869344b6147171f0153de22a7806928963079fc7cc",
+        "shape_xyz": [
+          288,
+          256,
+          12
+        ],
+        "size_bytes": 2800,
+        "type": "NIfTI-1/2 gzip",
+        "zooms_xyz_mm": [
+          1.25,
+          1.25,
+          7.999998569488525
+        ]
+      }
+    },
+    "mask_semantics_from_legacy_code": {
+      "inner_filled": "endocardium-enclosed filled area / blood-pool candidate",
+      "landmark_labels": "anterior labels [1,3,5], inferior labels [2,4,6]",
+      "myocardium_core": "myocardium_full distance-transform erosion > 1.0 mm",
+      "myocardium_full": "outer_filled AND NOT inner_filled",
+      "outer_filled": "epicardium-enclosed filled area"
+    },
+    "schema": "legacy_myocardium_mask_audit/v1",
+    "source_coordinate_system": "NIfTI RAS affine",
+    "source_directory": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/subjects/DYZ/data/roi/20260823_v5_newdata_v1",
+    "status": "STOP",
+    "subject_id": "DYZ"
+  },
+  "HHZ": {
+    "composite_reference": {
+      "affine_ras": [
+        [
+          -0.90401077,
+          0.35965174,
+          5.02273941,
+          -0.31083384
+        ],
+        [
+          -0.85053337,
+          -0.56566113,
+          -4.61120319,
+          234.03622437
+        ],
+        [
+          0.14784256,
+          -1.05507267,
+          4.18437147,
+          102.63104248
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "dtype": "float32",
+      "finite_max": 1.0,
+      "finite_min": 0.0002585352340247482,
+      "mtime_utc": "2026-08-22T05:16:37.371079+00:00",
+      "nonzero_voxels_per_slice": [
+        73728,
+        73728,
+        73728,
+        73728,
+        73728,
+        73728,
+        73728,
+        73728,
+        73728,
+        73728,
+        73728,
+        73728
+      ],
+      "path": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/subjects/HHZ/data/roi/20260821_corrected_sequence_v1/sax_composite_reference.nii.gz",
+      "sha256": "c86ed9a715f55b1e8ec27be015fc2f6e9627ceb7c1b4bad2d3de273a19f3050c",
+      "shape_xyz": [
+        256,
+        288,
+        12
+      ],
+      "size_bytes": 3136895,
+      "type": "NIfTI-1/2 gzip",
+      "zooms_xyz_mm": [
+        1.25,
+        1.25,
+        8.000004768371582
+      ]
+    },
+    "geometry_relations_to_composite": {
+      "inner_filled": {
+        "reason": "geometry_identical",
+        "status": "PASS",
+        "voxel_transform_source_to_reference": [
+          [
+            1.00000003,
+            1e-08,
+            5.2e-07,
+            -0.0
+          ],
+          [
+            -1e-08,
+            0.99999992,
+            3.5e-07,
+            -0.0
+          ],
+          [
+            -0.0,
+            1e-08,
+            1.00000007,
+            -0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ]
+      },
+      "landmark_labels": {
+        "reason": "geometry_identical",
+        "status": "PASS",
+        "voxel_transform_source_to_reference": [
+          [
+            1.00000003,
+            1e-08,
+            5.2e-07,
+            -0.0
+          ],
+          [
+            -1e-08,
+            0.99999992,
+            3.5e-07,
+            -0.0
+          ],
+          [
+            -0.0,
+            1e-08,
+            1.00000007,
+            -0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ]
+      },
+      "outer_filled": {
+        "reason": "geometry_identical",
+        "status": "PASS",
+        "voxel_transform_source_to_reference": [
+          [
+            1.00000003,
+            1e-08,
+            5.2e-07,
+            -0.0
+          ],
+          [
+            -1e-08,
+            0.99999992,
+            3.5e-07,
+            -0.0
+          ],
+          [
+            -0.0,
+            1e-08,
+            1.00000007,
+            -0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ]
+      }
+    },
+    "integration_allowed": true,
+    "manual_masks": {
+      "inner_filled": {
+        "affine_ras": [
+          [
+            -0.90401083,
+            0.35965174,
+            5.02273941,
+            -0.31083384
+          ],
+          [
+            -0.85053337,
+            -0.56566113,
+            -4.61120415,
+            234.03622437
+          ],
+          [
+            0.14784256,
+            -1.05507255,
+            4.18437147,
+            102.63104248
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "dtype": "int16",
+        "label_values": [
+          0,
+          1
+        ],
+        "mtime_utc": "2026-08-23T11:17:07.325678+00:00",
+        "nonzero_voxels_per_slice": [
+          0,
+          331,
+          611,
+          939,
+          1209,
+          1268,
+          1382,
+          1318,
+          1277,
+          1201,
+          0,
+          0
+        ],
+        "path": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/subjects/HHZ/data/roi/20260821_corrected_sequence_v1/Segmentation_2-in-label.nii.gz",
+        "sha256": "d69300106925a9e5d7746085e2158baa64ad47ae0387a59eefdfb9c1f46a7796",
+        "shape_xyz": [
+          256,
+          288,
+          12
+        ],
+        "size_bytes": 2730,
+        "type": "NIfTI-1/2 gzip",
+        "zooms_xyz_mm": [
+          1.25,
+          1.25,
+          8.000004768371582
+        ]
+      },
+      "landmark_labels": {
+        "affine_ras": [
+          [
+            -0.90401083,
+            0.35965174,
+            5.02273941,
+            -0.31083384
+          ],
+          [
+            -0.85053337,
+            -0.56566113,
+            -4.61120415,
+            234.03622437
+          ],
+          [
+            0.14784256,
+            -1.05507255,
+            4.18437147,
+            102.63104248
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "dtype": "int16",
+        "label_values": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6
+        ],
+        "mtime_utc": "2026-08-23T11:17:17.671625+00:00",
+        "nonzero_voxels_per_slice": [
+          0,
+          0,
+          0,
+          0,
+          2,
+          0,
+          2,
+          0,
+          2,
+          0,
+          0,
+          0
+        ],
+        "path": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/subjects/HHZ/data/roi/20260821_corrected_sequence_v1/Segmentation_3-label_point.nii.gz",
+        "sha256": "121976efd61b55e29c62f4e4f9f71792ef23e07e1f518a1a566fa7a96d51386a",
+        "shape_xyz": [
+          256,
+          288,
+          12
+        ],
+        "size_bytes": 1939,
+        "type": "NIfTI-1/2 gzip",
+        "zooms_xyz_mm": [
+          1.25,
+          1.25,
+          8.000004768371582
+        ]
+      },
+      "outer_filled": {
+        "affine_ras": [
+          [
+            -0.90401083,
+            0.35965174,
+            5.02273941,
+            -0.31083384
+          ],
+          [
+            -0.85053337,
+            -0.56566113,
+            -4.61120415,
+            234.03622437
+          ],
+          [
+            0.14784256,
+            -1.05507255,
+            4.18437147,
+            102.63104248
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "dtype": "int16",
+        "label_values": [
+          0,
+          1
+        ],
+        "mtime_utc": "2026-08-23T11:16:53.295749+00:00",
+        "nonzero_voxels_per_slice": [
+          0,
+          852,
+          1246,
+          1619,
+          1952,
+          2202,
+          2361,
+          2469,
+          2447,
+          2117,
+          0,
+          0
+        ],
+        "path": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/subjects/HHZ/data/roi/20260821_corrected_sequence_v1/Segmentation_1-out-label.nii.gz",
+        "sha256": "256ae4feaaa298620d97acbe6c7b5b15ebc01be7d05c7d6438e766e1f48794e1",
+        "shape_xyz": [
+          256,
+          288,
+          12
+        ],
+        "size_bytes": 3019,
+        "type": "NIfTI-1/2 gzip",
+        "zooms_xyz_mm": [
+          1.25,
+          1.25,
+          8.000004768371582
+        ]
+      }
+    },
+    "mask_semantics_from_legacy_code": {
+      "inner_filled": "endocardium-enclosed filled area / blood-pool candidate",
+      "landmark_labels": "anterior labels [1,3,5], inferior labels [2,4,6]",
+      "myocardium_core": "myocardium_full distance-transform erosion > 1.0 mm",
+      "myocardium_full": "outer_filled AND NOT inner_filled",
+      "outer_filled": "epicardium-enclosed filled area"
+    },
+    "schema": "legacy_myocardium_mask_audit/v1",
+    "source_coordinate_system": "NIfTI RAS affine",
+    "source_directory": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/subjects/HHZ/data/roi/20260821_corrected_sequence_v1",
+    "status": "PASS",
+    "subject_id": "HHZ"
+  },
+  "HJL": {
+    "composite_reference": {
+      "affine_ras": [
+        [
+          -1.02695799,
+          0.13696688,
+          -4.47587204,
+          127.93772888
+        ],
+        [
+          -0.56028819,
+          -0.91322309,
+          4.12092829,
+          188.89532471
+        ],
+        [
+          0.44037983,
+          -0.8424747,
+          -5.194664,
+          98.33291626
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "dtype": "float32",
+      "finite_max": 1.0,
+      "finite_min": 0.0,
+      "mtime_utc": "2026-08-22T05:16:40.760055+00:00",
+      "nonzero_voxels_per_slice": [
+        73727,
+        73728,
+        73728,
+        73728,
+        73728,
+        73728,
+        73727,
+        73728,
+        73728,
+        73728,
+        73728,
+        73728
+      ],
+      "path": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/subjects/HJL/data/roi/20260821_corrected_sequence_v1/sax_composite_reference.nii.gz",
+      "sha256": "bccc3a8cde09e4ec694a70b391a1a053e6f7307ece69d3ab72cedecfd7c52b6c",
+      "shape_xyz": [
+        288,
+        256,
+        12
+      ],
+      "size_bytes": 3162655,
+      "type": "NIfTI-1/2 gzip",
+      "zooms_xyz_mm": [
+        1.25,
+        1.25,
+        8.000000953674316
+      ]
+    },
+    "geometry_relations_to_composite": {
+      "inner_filled": {
+        "reason": "geometry_header_mismatch",
+        "status": "STOP",
+        "voxel_transform_source_to_reference": [
+          [
+            1.0,
+            -0.0,
+            -0.0,
+            9.7e-07
+          ],
+          [
+            -0.0,
+            1.0,
+            -0.0,
+            -2.84e-06
+          ],
+          [
+            -0.0,
+            -0.0,
+            -1.0,
+            11.00000054
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ]
+      },
+      "landmark_labels": {
+        "reason": "geometry_header_mismatch",
+        "status": "STOP",
+        "voxel_transform_source_to_reference": [
+          [
+            1.0,
+            -0.0,
+            -0.0,
+            9.7e-07
+          ],
+          [
+            -0.0,
+            1.0,
+            -0.0,
+            -2.84e-06
+          ],
+          [
+            -0.0,
+            -0.0,
+            -1.0,
+            11.00000054
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ]
+      },
+      "outer_filled": {
+        "reason": "geometry_header_mismatch",
+        "status": "STOP",
+        "voxel_transform_source_to_reference": [
+          [
+            1.0,
+            -0.0,
+            -0.0,
+            9.7e-07
+          ],
+          [
+            -0.0,
+            1.0,
+            -0.0,
+            -2.84e-06
+          ],
+          [
+            -0.0,
+            -0.0,
+            -1.0,
+            11.00000054
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ]
+      }
+    },
+    "integration_allowed": false,
+    "manual_masks": {
+      "inner_filled": {
+        "affine_ras": [
+          [
+            -1.02695799,
+            0.13696688,
+            4.47587204,
+            78.70313263
+          ],
+          [
+            -0.56028819,
+            -0.91322309,
+            -4.12092829,
+            234.22554016
+          ],
+          [
+            0.44037983,
+            -0.8424747,
+            5.194664,
+            41.19161224
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "dtype": "int16",
+        "label_values": [
+          0,
+          1
+        ],
+        "mtime_utc": "2026-08-23T12:23:19.044657+00:00",
+        "nonzero_voxels_per_slice": [
+          0,
+          0,
+          573,
+          828,
+          1100,
+          1258,
+          1347,
+          1365,
+          1433,
+          1270,
+          917,
+          0
+        ],
+        "path": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/subjects/HJL/data/roi/20260821_corrected_sequence_v1/Segmentation_2-in-label.nii.gz",
+        "sha256": "17ad45845c8750fa1f8bca91f01562a13519ea47e19089719e36c3363dbc8f37",
+        "shape_xyz": [
+          288,
+          256,
+          12
+        ],
+        "size_bytes": 2828,
+        "type": "NIfTI-1/2 gzip",
+        "zooms_xyz_mm": [
+          1.25,
+          1.25,
+          8.000000953674316
+        ]
+      },
+      "landmark_labels": {
+        "affine_ras": [
+          [
+            -1.02695799,
+            0.13696688,
+            4.47587204,
+            78.70313263
+          ],
+          [
+            -0.56028819,
+            -0.91322309,
+            -4.12092829,
+            234.22554016
+          ],
+          [
+            0.44037983,
+            -0.8424747,
+            5.194664,
+            41.19161224
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "dtype": "int16",
+        "label_values": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6
+        ],
+        "mtime_utc": "2026-08-23T12:23:35.766644+00:00",
+        "nonzero_voxels_per_slice": [
+          0,
+          0,
+          2,
+          0,
+          2,
+          0,
+          0,
+          2,
+          0,
+          0,
+          0,
+          0
+        ],
+        "path": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/subjects/HJL/data/roi/20260821_corrected_sequence_v1/Segmentation_3-label_point.nii.gz",
+        "sha256": "ddb2c67f48d2f00acc72f5eb51146866f3a626615ebcd9f04a0e06bfb905421c",
+        "shape_xyz": [
+          288,
+          256,
+          12
+        ],
+        "size_bytes": 1938,
+        "type": "NIfTI-1/2 gzip",
+        "zooms_xyz_mm": [
+          1.25,
+          1.25,
+          8.000000953674316
+        ]
+      },
+      "outer_filled": {
+        "affine_ras": [
+          [
+            -1.02695799,
+            0.13696688,
+            4.47587204,
+            78.70313263
+          ],
+          [
+            -0.56028819,
+            -0.91322309,
+            -4.12092829,
+            234.22554016
+          ],
+          [
+            0.44037983,
+            -0.8424747,
+            5.194664,
+            41.19161224
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ],
+        "dtype": "int16",
+        "label_values": [
+          0,
+          1
+        ],
+        "mtime_utc": "2026-08-23T12:23:15.631668+00:00",
+        "nonzero_voxels_per_slice": [
+          0,
+          0,
+          1155,
+          1395,
+          1766,
+          1992,
+          2044,
+          2037,
+          2152,
+          2039,
+          1499,
+          0
+        ],
+        "path": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/subjects/HJL/data/roi/20260821_corrected_sequence_v1/Segmentation_1-out-label.nii.gz",
+        "sha256": "b5420a1fa3a233cf5d5e465f357ae7e0eaa58927d3fae60a8c1fe1bfda055f29",
+        "shape_xyz": [
+          288,
+          256,
+          12
+        ],
+        "size_bytes": 3094,
+        "type": "NIfTI-1/2 gzip",
+        "zooms_xyz_mm": [
+          1.25,
+          1.25,
+          8.000000953674316
+        ]
+      }
+    },
+    "mask_semantics_from_legacy_code": {
+      "inner_filled": "endocardium-enclosed filled area / blood-pool candidate",
+      "landmark_labels": "anterior labels [1,3,5], inferior labels [2,4,6]",
+      "myocardium_core": "myocardium_full distance-transform erosion > 1.0 mm",
+      "myocardium_full": "outer_filled AND NOT inner_filled",
+      "outer_filled": "epicardium-enclosed filled area"
+    },
+    "schema": "legacy_myocardium_mask_audit/v1",
+    "source_coordinate_system": "NIfTI RAS affine",
+    "source_directory": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/subjects/HJL/data/roi/20260821_corrected_sequence_v1",
+    "status": "STOP",
+    "subject_id": "HJL"
+  }
+}
