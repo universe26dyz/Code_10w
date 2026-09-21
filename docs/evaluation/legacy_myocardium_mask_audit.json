@@ -64,8 +64,30 @@
     },
     "geometry_relations_to_composite": {
       "inner_filled": {
-        "reason": "geometry_header_mismatch",
-        "status": "STOP",
+        "axis_signs_reference": [
+          1,
+          1,
+          -1
+        ],
+        "corner_mapping_pass": true,
+        "geometry_class": "EXACT_REORIENTABLE_GRID",
+        "integer_translation_pass": true,
+        "integer_translation_reference": [
+          0,
+          0,
+          13
+        ],
+        "lattice_mapping_pass": true,
+        "physical_coordinate_error_max": 2.2351741790771484e-05,
+        "reason": "exact_signed_axis_reorientation",
+        "shape_permutation_pass": true,
+        "signed_permutation_pass": true,
+        "source_axis_for_reference": [
+          0,
+          1,
+          2
+        ],
+        "status": "PASS",
         "voxel_transform_source_to_reference": [
           [
             0.99999998,
@@ -94,8 +116,30 @@
         ]
       },
       "landmark_labels": {
-        "reason": "geometry_header_mismatch",
-        "status": "STOP",
+        "axis_signs_reference": [
+          1,
+          1,
+          -1
+        ],
+        "corner_mapping_pass": true,
+        "geometry_class": "EXACT_REORIENTABLE_GRID",
+        "integer_translation_pass": true,
+        "integer_translation_reference": [
+          0,
+          0,
+          13
+        ],
+        "lattice_mapping_pass": true,
+        "physical_coordinate_error_max": 2.2351741790771484e-05,
+        "reason": "exact_signed_axis_reorientation",
+        "shape_permutation_pass": true,
+        "signed_permutation_pass": true,
+        "source_axis_for_reference": [
+          0,
+          1,
+          2
+        ],
+        "status": "PASS",
         "voxel_transform_source_to_reference": [
           [
             0.99999998,
@@ -124,8 +168,30 @@
         ]
       },
       "outer_filled": {
-        "reason": "geometry_header_mismatch",
-        "status": "STOP",
+        "axis_signs_reference": [
+          1,
+          1,
+          -1
+        ],
+        "corner_mapping_pass": true,
+        "geometry_class": "EXACT_REORIENTABLE_GRID",
+        "integer_translation_pass": true,
+        "integer_translation_reference": [
+          0,
+          0,
+          13
+        ],
+        "lattice_mapping_pass": true,
+        "physical_coordinate_error_max": 2.2351741790771484e-05,
+        "reason": "exact_signed_axis_reorientation",
+        "shape_permutation_pass": true,
+        "signed_permutation_pass": true,
+        "source_axis_for_reference": [
+          0,
+          1,
+          2
+        ],
+        "status": "PASS",
         "voxel_transform_source_to_reference": [
           [
             0.99999998,
@@ -154,7 +220,7 @@
         ]
       }
     },
-    "integration_allowed": false,
+    "integration_allowed": true,
     "manual_masks": {
       "inner_filled": {
         "affine_ras": [
@@ -361,10 +427,10 @@
       "myocardium_full": "outer_filled AND NOT inner_filled",
       "outer_filled": "epicardium-enclosed filled area"
     },
-    "schema": "legacy_myocardium_mask_audit/v1",
+    "schema": "legacy_myocardium_mask_audit/v2",
     "source_coordinate_system": "NIfTI RAS affine",
     "source_directory": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/subjects/CYJ/data/roi/20260821_corrected_sequence_v1",
-    "status": "STOP",
+    "status": "PASS",
     "subject_id": "CYJ"
   },
   "DYL": {
@@ -432,8 +498,30 @@
     },
     "geometry_relations_to_composite": {
       "inner_filled": {
-        "reason": "geometry_header_mismatch",
-        "status": "STOP",
+        "axis_signs_reference": [
+          1,
+          1,
+          -1
+        ],
+        "corner_mapping_pass": true,
+        "geometry_class": "EXACT_REORIENTABLE_GRID",
+        "integer_translation_pass": true,
+        "integer_translation_reference": [
+          0,
+          0,
+          13
+        ],
+        "lattice_mapping_pass": true,
+        "physical_coordinate_error_max": 1.52587890625e-05,
+        "reason": "exact_signed_axis_reorientation",
+        "shape_permutation_pass": true,
+        "signed_permutation_pass": true,
+        "source_axis_for_reference": [
+          0,
+          1,
+          2
+        ],
+        "status": "PASS",
         "voxel_transform_source_to_reference": [
           [
             1.0,
@@ -462,8 +550,30 @@
         ]
       },
       "landmark_labels": {
-        "reason": "geometry_header_mismatch",
-        "status": "STOP",
+        "axis_signs_reference": [
+          1,
+          1,
+          -1
+        ],
+        "corner_mapping_pass": true,
+        "geometry_class": "EXACT_REORIENTABLE_GRID",
+        "integer_translation_pass": true,
+        "integer_translation_reference": [
+          0,
+          0,
+          13
+        ],
+        "lattice_mapping_pass": true,
+        "physical_coordinate_error_max": 1.52587890625e-05,
+        "reason": "exact_signed_axis_reorientation",
+        "shape_permutation_pass": true,
+        "signed_permutation_pass": true,
+        "source_axis_for_reference": [
+          0,
+          1,
+          2
+        ],
+        "status": "PASS",
         "voxel_transform_source_to_reference": [
           [
             1.0,
@@ -492,8 +602,30 @@
         ]
       },
       "outer_filled": {
-        "reason": "geometry_header_mismatch",
-        "status": "STOP",
+        "axis_signs_reference": [
+          1,
+          1,
+          -1
+        ],
+        "corner_mapping_pass": true,
+        "geometry_class": "EXACT_REORIENTABLE_GRID",
+        "integer_translation_pass": true,
+        "integer_translation_reference": [
+          0,
+          0,
+          13
+        ],
+        "lattice_mapping_pass": true,
+        "physical_coordinate_error_max": 1.52587890625e-05,
+        "reason": "exact_signed_axis_reorientation",
+        "shape_permutation_pass": true,
+        "signed_permutation_pass": true,
+        "source_axis_for_reference": [
+          0,
+          1,
+          2
+        ],
+        "status": "PASS",
         "voxel_transform_source_to_reference": [
           [
             1.0,
@@ -522,7 +654,7 @@
         ]
       }
     },
-    "integration_allowed": false,
+    "integration_allowed": true,
     "manual_masks": {
       "inner_filled": {
         "affine_ras": [
@@ -729,10 +861,10 @@
       "myocardium_full": "outer_filled AND NOT inner_filled",
       "outer_filled": "epicardium-enclosed filled area"
     },
-    "schema": "legacy_myocardium_mask_audit/v1",
+    "schema": "legacy_myocardium_mask_audit/v2",
     "source_coordinate_system": "NIfTI RAS affine",
     "source_directory": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/subjects/DYL/data/roi/20260821_corrected_sequence_v1",
-    "status": "STOP",
+    "status": "PASS",
     "subject_id": "DYL"
   },
   "DYZ": {
@@ -798,8 +930,30 @@
     },
     "geometry_relations_to_composite": {
       "inner_filled": {
-        "reason": "geometry_header_mismatch",
-        "status": "STOP",
+        "axis_signs_reference": [
+          1,
+          1,
+          -1
+        ],
+        "corner_mapping_pass": true,
+        "geometry_class": "EXACT_REORIENTABLE_GRID",
+        "integer_translation_pass": true,
+        "integer_translation_reference": [
+          0,
+          0,
+          11
+        ],
+        "lattice_mapping_pass": true,
+        "physical_coordinate_error_max": 2.6226043701171875e-06,
+        "reason": "exact_signed_axis_reorientation",
+        "shape_permutation_pass": true,
+        "signed_permutation_pass": true,
+        "source_axis_for_reference": [
+          0,
+          1,
+          2
+        ],
+        "status": "PASS",
         "voxel_transform_source_to_reference": [
           [
             1.0,
@@ -828,8 +982,30 @@
         ]
       },
       "landmark_labels": {
-        "reason": "geometry_header_mismatch",
-        "status": "STOP",
+        "axis_signs_reference": [
+          1,
+          1,
+          -1
+        ],
+        "corner_mapping_pass": true,
+        "geometry_class": "EXACT_REORIENTABLE_GRID",
+        "integer_translation_pass": true,
+        "integer_translation_reference": [
+          0,
+          0,
+          11
+        ],
+        "lattice_mapping_pass": true,
+        "physical_coordinate_error_max": 2.6226043701171875e-06,
+        "reason": "exact_signed_axis_reorientation",
+        "shape_permutation_pass": true,
+        "signed_permutation_pass": true,
+        "source_axis_for_reference": [
+          0,
+          1,
+          2
+        ],
+        "status": "PASS",
         "voxel_transform_source_to_reference": [
           [
             1.0,
@@ -858,8 +1034,30 @@
         ]
       },
       "outer_filled": {
-        "reason": "geometry_header_mismatch",
-        "status": "STOP",
+        "axis_signs_reference": [
+          1,
+          1,
+          -1
+        ],
+        "corner_mapping_pass": true,
+        "geometry_class": "EXACT_REORIENTABLE_GRID",
+        "integer_translation_pass": true,
+        "integer_translation_reference": [
+          0,
+          0,
+          11
+        ],
+        "lattice_mapping_pass": true,
+        "physical_coordinate_error_max": 2.6226043701171875e-06,
+        "reason": "exact_signed_axis_reorientation",
+        "shape_permutation_pass": true,
+        "signed_permutation_pass": true,
+        "source_axis_for_reference": [
+          0,
+          1,
+          2
+        ],
+        "status": "PASS",
         "voxel_transform_source_to_reference": [
           [
             1.0,
@@ -888,7 +1086,7 @@
         ]
       }
     },
-    "integration_allowed": false,
+    "integration_allowed": true,
     "manual_masks": {
       "inner_filled": {
         "affine_ras": [
@@ -1089,10 +1287,10 @@
       "myocardium_full": "outer_filled AND NOT inner_filled",
       "outer_filled": "epicardium-enclosed filled area"
     },
-    "schema": "legacy_myocardium_mask_audit/v1",
+    "schema": "legacy_myocardium_mask_audit/v2",
     "source_coordinate_system": "NIfTI RAS affine",
     "source_directory": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/subjects/DYZ/data/roi/20260823_v5_newdata_v1",
-    "status": "STOP",
+    "status": "PASS",
     "subject_id": "DYZ"
   },
   "HHZ": {
@@ -1158,7 +1356,29 @@
     },
     "geometry_relations_to_composite": {
       "inner_filled": {
+        "axis_signs_reference": [
+          1,
+          1,
+          1
+        ],
+        "corner_mapping_pass": true,
+        "geometry_class": "IDENTICAL_GRID",
+        "integer_translation_pass": true,
+        "integer_translation_reference": [
+          0,
+          0,
+          0
+        ],
+        "lattice_mapping_pass": true,
+        "physical_coordinate_error_max": 3.421306610107422e-05,
         "reason": "geometry_identical",
+        "shape_permutation_pass": true,
+        "signed_permutation_pass": true,
+        "source_axis_for_reference": [
+          0,
+          1,
+          2
+        ],
         "status": "PASS",
         "voxel_transform_source_to_reference": [
           [
@@ -1188,7 +1408,29 @@
         ]
       },
       "landmark_labels": {
+        "axis_signs_reference": [
+          1,
+          1,
+          1
+        ],
+        "corner_mapping_pass": true,
+        "geometry_class": "IDENTICAL_GRID",
+        "integer_translation_pass": true,
+        "integer_translation_reference": [
+          0,
+          0,
+          0
+        ],
+        "lattice_mapping_pass": true,
+        "physical_coordinate_error_max": 3.421306610107422e-05,
         "reason": "geometry_identical",
+        "shape_permutation_pass": true,
+        "signed_permutation_pass": true,
+        "source_axis_for_reference": [
+          0,
+          1,
+          2
+        ],
         "status": "PASS",
         "voxel_transform_source_to_reference": [
           [
@@ -1218,7 +1460,29 @@
         ]
       },
       "outer_filled": {
+        "axis_signs_reference": [
+          1,
+          1,
+          1
+        ],
+        "corner_mapping_pass": true,
+        "geometry_class": "IDENTICAL_GRID",
+        "integer_translation_pass": true,
+        "integer_translation_reference": [
+          0,
+          0,
+          0
+        ],
+        "lattice_mapping_pass": true,
+        "physical_coordinate_error_max": 3.421306610107422e-05,
         "reason": "geometry_identical",
+        "shape_permutation_pass": true,
+        "signed_permutation_pass": true,
+        "source_axis_for_reference": [
+          0,
+          1,
+          2
+        ],
         "status": "PASS",
         "voxel_transform_source_to_reference": [
           [
@@ -1449,7 +1713,7 @@
       "myocardium_full": "outer_filled AND NOT inner_filled",
       "outer_filled": "epicardium-enclosed filled area"
     },
-    "schema": "legacy_myocardium_mask_audit/v1",
+    "schema": "legacy_myocardium_mask_audit/v2",
     "source_coordinate_system": "NIfTI RAS affine",
     "source_directory": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/subjects/HHZ/data/roi/20260821_corrected_sequence_v1",
     "status": "PASS",
@@ -1518,8 +1782,30 @@
     },
     "geometry_relations_to_composite": {
       "inner_filled": {
-        "reason": "geometry_header_mismatch",
-        "status": "STOP",
+        "axis_signs_reference": [
+          1,
+          1,
+          -1
+        ],
+        "corner_mapping_pass": true,
+        "geometry_class": "EXACT_REORIENTABLE_GRID",
+        "integer_translation_pass": true,
+        "integer_translation_reference": [
+          0,
+          0,
+          11
+        ],
+        "lattice_mapping_pass": true,
+        "physical_coordinate_error_max": 4.291534423828125e-06,
+        "reason": "exact_signed_axis_reorientation",
+        "shape_permutation_pass": true,
+        "signed_permutation_pass": true,
+        "source_axis_for_reference": [
+          0,
+          1,
+          2
+        ],
+        "status": "PASS",
         "voxel_transform_source_to_reference": [
           [
             1.0,
@@ -1548,8 +1834,30 @@
         ]
       },
       "landmark_labels": {
-        "reason": "geometry_header_mismatch",
-        "status": "STOP",
+        "axis_signs_reference": [
+          1,
+          1,
+          -1
+        ],
+        "corner_mapping_pass": true,
+        "geometry_class": "EXACT_REORIENTABLE_GRID",
+        "integer_translation_pass": true,
+        "integer_translation_reference": [
+          0,
+          0,
+          11
+        ],
+        "lattice_mapping_pass": true,
+        "physical_coordinate_error_max": 4.291534423828125e-06,
+        "reason": "exact_signed_axis_reorientation",
+        "shape_permutation_pass": true,
+        "signed_permutation_pass": true,
+        "source_axis_for_reference": [
+          0,
+          1,
+          2
+        ],
+        "status": "PASS",
         "voxel_transform_source_to_reference": [
           [
             1.0,
@@ -1578,8 +1886,30 @@
         ]
       },
       "outer_filled": {
-        "reason": "geometry_header_mismatch",
-        "status": "STOP",
+        "axis_signs_reference": [
+          1,
+          1,
+          -1
+        ],
+        "corner_mapping_pass": true,
+        "geometry_class": "EXACT_REORIENTABLE_GRID",
+        "integer_translation_pass": true,
+        "integer_translation_reference": [
+          0,
+          0,
+          11
+        ],
+        "lattice_mapping_pass": true,
+        "physical_coordinate_error_max": 4.291534423828125e-06,
+        "reason": "exact_signed_axis_reorientation",
+        "shape_permutation_pass": true,
+        "signed_permutation_pass": true,
+        "source_axis_for_reference": [
+          0,
+          1,
+          2
+        ],
+        "status": "PASS",
         "voxel_transform_source_to_reference": [
           [
             1.0,
@@ -1608,7 +1938,7 @@
         ]
       }
     },
-    "integration_allowed": false,
+    "integration_allowed": true,
     "manual_masks": {
       "inner_filled": {
         "affine_ras": [
@@ -1809,10 +2139,10 @@
       "myocardium_full": "outer_filled AND NOT inner_filled",
       "outer_filled": "epicardium-enclosed filled area"
     },
-    "schema": "legacy_myocardium_mask_audit/v1",
+    "schema": "legacy_myocardium_mask_audit/v2",
     "source_coordinate_system": "NIfTI RAS affine",
     "source_directory": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/subjects/HJL/data/roi/20260821_corrected_sequence_v1",
-    "status": "STOP",
+    "status": "PASS",
     "subject_id": "HJL"
   }
 }

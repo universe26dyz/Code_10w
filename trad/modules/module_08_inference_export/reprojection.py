@@ -25,6 +25,8 @@ def export_native_plane_reprojections(
     output_dir: str | Path,
     *,
     output_psf: dict[str, Any] | None = None,
+    evaluation_seed: int | None = None,
+    export_parameter_maps: bool = True,
 ) -> dict[str, Path]:
     """Write all ten observed/predicted/residual planes and T1/T2 planes.
 
@@ -33,11 +35,18 @@ def export_native_plane_reprojections(
     """
 
     output = Path(output_dir)
+    output.mkdir(parents=True, exist_ok=True)
     device = next(model.parameters()).device
     output_psf = output_psf or {}
     n_samples = int(output_psf.get("n_samples", 1)) if bool(output_psf.get("enabled", False)) else 1
     paths: dict[str, Path] = {}
     offset = 0
+    cpu_rng_state = torch.random.get_rng_state() if evaluation_seed is not None else None
+    cuda_rng_state = torch.cuda.get_rng_state_all() if evaluation_seed is not None and torch.cuda.is_available() else None
+    if evaluation_seed is not None:
+        torch.manual_seed(int(evaluation_seed))
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(int(evaluation_seed))
     was_training = model.training; model.eval()
     for source_text in prepared_inputs:
         source = Path(source_text)
@@ -50,8 +59,8 @@ def export_native_plane_reprojections(
             spacing = np.asarray(data["pixel_spacing_rc_mm"], dtype=np.float32)
             copied = {key: np.asarray(data[key]) for key in ("group_idx", "weight_idx", "timing9_ms", "tr_ms", "vps", "masks")}
         prediction = np.full_like(images, np.nan, dtype=np.float32)
-        t1 = np.full_like(images, np.nan, dtype=np.float32)
-        t2 = np.full_like(images, np.nan, dtype=np.float32)
+        t1 = np.full_like(images, np.nan, dtype=np.float32) if export_parameter_maps else None
+        t2 = np.full_like(images, np.nan, dtype=np.float32) if export_parameter_maps else None
         for observation in range(images.shape[0]):
             group = offset + int(groups[observation])
             h, w = images.shape[1:]
@@ -62,19 +71,27 @@ def export_native_plane_reprojections(
             with torch.no_grad():
                 batch = {"xyz": space.local_to_train(local), "group_idx": group_idx, "weight_idx": weight_idx, "timing": timing_batch}
                 signal = (model(batch, n_samples) * model.intensity_scale).reshape(h, w)
-                world = model.rigid_psf.transform_local_to_ras(batch["xyz"], group_idx)
-                fields = model.inr(world)
+                if export_parameter_maps:
+                    world = model.rigid_psf.transform_local_to_ras(batch["xyz"], group_idx)
+                    fields = model.inr(world)
             keep = masks[observation]
             prediction[observation, keep] = signal.detach().cpu().numpy()[keep]
-            t1[observation, keep] = fields["t1_ms"].reshape(h, w).detach().cpu().numpy()[keep]
-            t2[observation, keep] = fields["t2_ms"].reshape(h, w).detach().cpu().numpy()[keep]
+            if export_parameter_maps:
+                assert t1 is not None and t2 is not None
+                t1[observation, keep] = fields["t1_ms"].reshape(h, w).detach().cpu().numpy()[keep]
+                t2[observation, keep] = fields["t2_ms"].reshape(h, w).detach().cpu().numpy()[keep]
         label = source.parent.name
         signal_path = output / f"signal_reprojection_{label}.npz"
         np.savez_compressed(signal_path, observed=images, predicted=prediction, residual=prediction - images, **copied)
-        parameter_path = output / f"t1_t2_native_plane_{label}.npz"
-        np.savez_compressed(parameter_path, t1_ms=t1, t2_ms=t2, **copied)
         paths[f"signal_{label}"] = signal_path
-        paths[f"t1_t2_{label}"] = parameter_path
+        if export_parameter_maps:
+            parameter_path = output / f"t1_t2_native_plane_{label}.npz"
+            np.savez_compressed(parameter_path, t1_ms=t1, t2_ms=t2, **copied)
+            paths[f"t1_t2_{label}"] = parameter_path
         offset += int(np.unique(groups).size)
     if was_training: model.train()
+    if cpu_rng_state is not None:
+        torch.random.set_rng_state(cpu_rng_state)
+    if cuda_rng_state is not None:
+        torch.cuda.set_rng_state_all(cuda_rng_state)
     return paths

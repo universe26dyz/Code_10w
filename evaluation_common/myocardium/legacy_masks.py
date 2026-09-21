@@ -1,9 +1,4 @@
-"""Read-only discovery and geometry audit for legacy manual myocardial masks.
-
-This module deliberately does not resample, repair, or derive any mask.  A
-manual label map may be integrated only after its affine header agrees with the
-explicit native reference that was segmented.
-"""
+"""Discovery and exact-lattice geometry audit for legacy myocardial masks."""
 
 from __future__ import annotations
 
@@ -23,12 +18,26 @@ _MASK_FILENAMES = {
 }
 
 
-def classify_affine_relation(source_affine: np.ndarray, reference_affine: np.ndarray, *, atol: float = 1e-5) -> dict[str, Any]:
-    """Return PASS only for identical physical voxel geometry.
+def _corners(shape: tuple[int, int, int]) -> np.ndarray:
+    return np.array(
+        [[x, y, z, 1.0] for x in (0, shape[0] - 1) for y in (0, shape[1] - 1) for z in (0, shape[2] - 1)],
+        dtype=float,
+    ).T
 
-    Same array shape is intentionally not a sufficient condition.  The returned
-    voxel transform documents why a non-identical header is a hard stop rather
-    than an invitation to guess a transpose/flip/translation.
+
+def classify_affine_relation(
+    source_affine: np.ndarray,
+    reference_affine: np.ndarray,
+    source_shape: tuple[int, int, int] | list[int] | None = None,
+    reference_shape: tuple[int, int, int] | list[int] | None = None,
+    *,
+    atol: float = 2e-4,
+) -> dict[str, Any]:
+    """Classify identical, exactly reorientable, and non-equivalent lattices.
+
+    An exact reorientation is restricted to an axis permutation and/or reversal
+    whose integer translation maps the complete source extent onto the complete
+    reference extent.  It therefore requires no interpolation.
     """
 
     source = np.asarray(source_affine, dtype=float)
@@ -38,12 +47,124 @@ def classify_affine_relation(source_affine: np.ndarray, reference_affine: np.nda
     if not np.isfinite(source).all() or not np.isfinite(reference).all():
         raise ValueError("NIfTI affine matrices must be finite.")
     transform = np.linalg.solve(reference, source)
-    status = "PASS" if np.allclose(transform, np.eye(4), atol=atol, rtol=0.0) else "STOP"
+    linear = transform[:3, :3]
+    rounded_linear = np.rint(linear).astype(int)
+    signed_permutation = bool(
+        np.allclose(linear, rounded_linear, atol=atol, rtol=0.0)
+        and np.all(np.isin(rounded_linear, (-1, 0, 1)))
+        and np.all(np.count_nonzero(rounded_linear, axis=0) == 1)
+        and np.all(np.count_nonzero(rounded_linear, axis=1) == 1)
+    )
+    translation = transform[:3, 3]
+    rounded_translation = np.rint(translation).astype(int)
+    integer_translation = bool(np.allclose(translation, rounded_translation, atol=atol, rtol=0.0))
+
+    shapes_available = source_shape is not None and reference_shape is not None
+    if shapes_available:
+        source_shape_tuple = tuple(int(value) for value in source_shape)
+        reference_shape_tuple = tuple(int(value) for value in reference_shape)
+        if len(source_shape_tuple) != 3 or len(reference_shape_tuple) != 3:
+            raise ValueError("Source and reference shapes must have three dimensions.")
+    else:
+        source_shape_tuple = reference_shape_tuple = None
+
+    source_axis_for_reference: list[int] = []
+    axis_signs_reference: list[int] = []
+    if signed_permutation:
+        source_axis_for_reference = np.argmax(np.abs(rounded_linear), axis=1).astype(int).tolist()
+        axis_signs_reference = [int(rounded_linear[i, j]) for i, j in enumerate(source_axis_for_reference)]
+
+    shape_permutation = False
+    corner_mapping = False
+    lattice_mapping = False
+    physical_error_max: float | None = None
+    if signed_permutation and integer_translation and shapes_available:
+        assert source_shape_tuple is not None and reference_shape_tuple is not None
+        shape_permutation = all(
+            reference_shape_tuple[i] == source_shape_tuple[source_axis_for_reference[i]] for i in range(3)
+        )
+        expected_translation = np.array(
+            [0 if sign > 0 else reference_shape_tuple[i] - 1 for i, sign in enumerate(axis_signs_reference)]
+        )
+        extent_translation = bool(np.array_equal(rounded_translation, expected_translation))
+        if shape_permutation and extent_translation:
+            mapped = transform @ _corners(source_shape_tuple)
+            expected = _corners(reference_shape_tuple)
+            mapped_set = {tuple(np.rint(mapped[:3, i]).astype(int)) for i in range(mapped.shape[1])}
+            expected_set = {tuple(expected[:3, i].astype(int)) for i in range(expected.shape[1])}
+            corner_mapping = bool(
+                np.allclose(mapped[:3], np.rint(mapped[:3]), atol=atol, rtol=0.0)
+                and mapped_set == expected_set
+            )
+            lattice_mapping = corner_mapping
+            source_world = source @ _corners(source_shape_tuple)
+            reference_world = reference @ np.vstack((np.rint(mapped[:3]), np.ones(mapped.shape[1])))
+            physical_error_max = float(np.max(np.abs(source_world - reference_world)))
+
+    identity = bool(
+        shapes_available
+        and source_shape_tuple == reference_shape_tuple
+        and np.allclose(transform, np.eye(4), atol=atol, rtol=0.0)
+    )
+    exact = bool(
+        signed_permutation
+        and integer_translation
+        and shape_permutation
+        and corner_mapping
+        and lattice_mapping
+        and physical_error_max is not None
+        and physical_error_max <= max(atol, 1e-3)
+    )
+    geometry_class = "IDENTICAL_GRID" if identity else "EXACT_REORIENTABLE_GRID" if exact else "NON_EQUIVALENT_GRID"
+    status = "PASS" if geometry_class != "NON_EQUIVALENT_GRID" else "STOP"
     return {
         "status": status,
-        "reason": "geometry_identical" if status == "PASS" else "geometry_header_mismatch",
+        "geometry_class": geometry_class,
+        "reason": {
+            "IDENTICAL_GRID": "geometry_identical",
+            "EXACT_REORIENTABLE_GRID": "exact_signed_axis_reorientation",
+            "NON_EQUIVALENT_GRID": "geometry_not_exactly_reorientable",
+        }[geometry_class],
         "voxel_transform_source_to_reference": np.round(transform, 8).tolist(),
+        "signed_permutation_pass": signed_permutation,
+        "integer_translation_pass": integer_translation,
+        "shape_permutation_pass": shape_permutation,
+        "corner_mapping_pass": corner_mapping,
+        "lattice_mapping_pass": lattice_mapping,
+        "physical_coordinate_error_max": physical_error_max,
+        "source_axis_for_reference": source_axis_for_reference,
+        "axis_signs_reference": axis_signs_reference,
+        "integer_translation_reference": rounded_translation.tolist() if integer_translation else None,
     }
+
+
+def reorient_labels_exact(
+    source_values: np.ndarray,
+    relation: dict[str, Any],
+    reference_shape: tuple[int, int, int] | list[int],
+) -> np.ndarray:
+    """Apply a verified permutation/reversal without interpolation."""
+
+    values = np.asarray(source_values)
+    target_shape = tuple(int(value) for value in reference_shape)
+    if relation.get("status") != "PASS" or relation.get("geometry_class") not in {
+        "IDENTICAL_GRID",
+        "EXACT_REORIENTABLE_GRID",
+    }:
+        raise ValueError("Refusing to reorient labels without a verified exact lattice relation.")
+    axes = tuple(int(value) for value in relation["source_axis_for_reference"])
+    signs = tuple(int(value) for value in relation["axis_signs_reference"])
+    if sorted(axes) != [0, 1, 2] or any(sign not in (-1, 1) for sign in signs):
+        raise ValueError("Invalid exact-reorientation axis metadata.")
+    result = np.transpose(values, axes=axes)
+    for axis, sign in enumerate(signs):
+        if sign < 0:
+            result = np.flip(result, axis=axis)
+    if result.shape != target_shape:
+        raise ValueError(f"Reoriented label shape {result.shape} does not match {target_shape}.")
+    if np.count_nonzero(result) != np.count_nonzero(values) or not np.array_equal(np.unique(result), np.unique(values)):
+        raise ValueError("Exact reorientation changed label values or voxel counts.")
+    return result
 
 
 def _sha256(path: Path) -> str:
@@ -101,7 +222,7 @@ def audit_legacy_subject(subject_id: str, subjects_root: str | Path) -> dict[str
     outer = sorted(roi_root.glob(f"*/{_MASK_FILENAMES['outer_filled']}"))
     if len(outer) != 1:
         return {
-            "schema": "legacy_myocardium_mask_audit/v1",
+            "schema": "legacy_myocardium_mask_audit/v2",
             "subject_id": subject_id,
             "status": "STOP",
             "reason": "missing_or_ambiguous_outer_segmentation",
@@ -112,7 +233,7 @@ def audit_legacy_subject(subject_id: str, subjects_root: str | Path) -> dict[str
     composite = source_dir / "sax_composite_reference.nii.gz"
     if missing or not composite.is_file():
         return {
-            "schema": "legacy_myocardium_mask_audit/v1",
+            "schema": "legacy_myocardium_mask_audit/v2",
             "subject_id": subject_id,
             "status": "STOP",
             "reason": "incomplete_manual_segmentation_bundle",
@@ -125,16 +246,15 @@ def audit_legacy_subject(subject_id: str, subjects_root: str | Path) -> dict[str
     for name, filename in _MASK_FILENAMES.items():
         record, affine = _nifti_record(source_dir / filename, is_label_map=True)
         masks[name] = record
-        relations[name] = classify_affine_relation(affine, reference_affine)
-        if record["shape_xyz"] != reference["shape_xyz"]:
-            relations[name] = {
-                **relations[name],
-                "status": "STOP",
-                "reason": "shape_and_or_geometry_mismatch",
-            }
+        relations[name] = classify_affine_relation(
+            affine,
+            reference_affine,
+            record["shape_xyz"],
+            reference["shape_xyz"],
+        )
     status = "PASS" if all(value["status"] == "PASS" for value in relations.values()) else "STOP"
     return {
-        "schema": "legacy_myocardium_mask_audit/v1",
+        "schema": "legacy_myocardium_mask_audit/v2",
         "subject_id": subject_id,
         "status": status,
         "source_coordinate_system": "NIfTI RAS affine",
