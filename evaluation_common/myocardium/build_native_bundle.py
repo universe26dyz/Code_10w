@@ -11,12 +11,38 @@ from typing import Any
 
 import nibabel as nib
 import numpy as np
-from scipy.ndimage import distance_transform_edt
+from scipy.ndimage import binary_erosion, distance_transform_edt
 
 from .legacy_masks import classify_affine_relation, reorient_labels_exact
 
 
 _LPS_TO_RAS = np.diag([-1.0, -1.0, 1.0, 1.0])
+
+
+def myocardium_core_legacy(full: np.ndarray, spacing_rc_mm: tuple[float, float]) -> np.ndarray:
+    """Reproduce the historical per-slice ``EDT > 1.0 mm`` definition exactly."""
+
+    values = np.asarray(full, dtype=bool)
+    if values.ndim != 3:
+        raise ValueError("myocardium_full must be [group,row,col].")
+    result = np.zeros_like(values)
+    for group in range(values.shape[0]):
+        if values[group].any():
+            result[group] = distance_transform_edt(values[group], sampling=spacing_rc_mm) > 1.0
+    return result
+
+
+def myocardium_core_1px(full: np.ndarray) -> np.ndarray:
+    """Erode each native SAX plane by exactly one in-plane pixel layer."""
+
+    values = np.asarray(full, dtype=bool)
+    if values.ndim != 3:
+        raise ValueError("myocardium_full must be [group,row,col].")
+    result = np.zeros_like(values)
+    structure = np.ones((3, 3), dtype=bool)
+    for group in range(values.shape[0]):
+        result[group] = binary_erosion(values[group], structure=structure, iterations=1, border_value=0)
+    return result
 
 
 def _sha256(path: Path) -> str:
@@ -64,7 +90,8 @@ def _write_qc(
     outer: np.ndarray,
     inner: np.ndarray,
     full: np.ndarray,
-    core: np.ndarray,
+    core_legacy: np.ndarray,
+    core_1px: np.ndarray,
     landmarks: np.ndarray,
 ) -> None:
     import matplotlib.pyplot as plt
@@ -84,14 +111,17 @@ def _write_qc(
             if inner[group].any():
                 axis.contour(inner[group], levels=[0.5], colors=["cyan"], linewidths=0.8)
             if full[group].any():
-                axis.contour(full[group], levels=[0.5], colors=["orange"], linewidths=0.6, linestyles="dashed")
-            if core[group].any():
-                axis.contour(core[group], levels=[0.5], colors=["red"], linewidths=0.8)
+                axis.contour(full[group], levels=[0.5], colors=["orange"], linewidths=1.0)
+            if core_legacy[group].any():
+                axis.contour(core_legacy[group], levels=[0.5], colors=["magenta"], linewidths=0.7, linestyles="dashed")
+            if core_1px[group].any():
+                axis.contour(core_1px[group], levels=[0.5], colors=["lime"], linewidths=1.2)
             points = np.argwhere(landmarks[group] > 0)
             if points.size:
                 axis.scatter(points[:, 1], points[:, 0], c="cyan", s=7)
             axis.set_title(f"{title} group {group:02d}")
             axis.axis("off")
+        figure.suptitle("outer=yellow, inner=cyan, full=orange, legacy EDT core=magenta dashed, 1px core=lime")
         figure.savefig(qc_root / f"sax_group_{group:02d}.png", dpi=150)
         plt.close(figure)
 
@@ -195,11 +225,9 @@ def build_bundle(
     inner_raw = cropped["inner_filled"] > 0
     blood = inner_raw & outer
     full_myo = outer & ~blood
-    core = np.zeros_like(full_myo)
     spacing_rc = tuple(float(value) for value in groups[0]["pixel_spacing_rc_mm"])
-    for group in range(core.shape[0]):
-        if full_myo[group].any():
-            core[group] = distance_transform_edt(full_myo[group], sampling=spacing_rc) > 1.0
+    core_legacy = myocardium_core_legacy(full_myo, spacing_rc)
+    core_1px = myocardium_core_1px(full_myo)
 
     reference_npz = np.load(native_reference / "sax.npz")
     t1 = np.asarray(reference_npz["t1_ms"])
@@ -219,7 +247,8 @@ def build_bundle(
         "inner_filled": inner_raw.astype(np.uint8),
         "blood_pool": blood.astype(np.uint8),
         "myocardium_full": full_myo.astype(np.uint8),
-        "myocardium_core": core.astype(np.uint8),
+        "myocardium_core_legacy": core_legacy.astype(np.uint8),
+        "myocardium_core_1px": core_1px.astype(np.uint8),
         "landmark_labels": cropped["landmark_labels"].astype(np.int16),
         "group_idx": np.arange(len(groups), dtype=np.int64),
     }
@@ -236,18 +265,22 @@ def build_bundle(
         outer,
         inner_raw,
         full_myo,
-        core,
+        core_legacy,
+        core_1px,
         cropped["landmark_labels"],
     )
 
     source_files = [composite_path] + [source_dir / filename for filename in legacy_names.values()]
     manifest = {
-        "schema": "exact_native_myocardium_bundle/v1",
+        "schema": "exact_native_myocardium_bundle/v2",
         "status": "PASS",
         "subject_id": subject_id,
         "repo_head": _git_head(repo),
         "method": "signed axis permutation/reversal plus integer crop; no interpolation",
-        "core_definition": "distance_transform_edt(myocardium_full, sampling=row/col spacing) > 1.0 mm",
+        "core_definitions": {
+            "myocardium_core_legacy": "distance_transform_edt(myocardium_full, sampling=row/col spacing) > 1.0 mm",
+            "myocardium_core_1px": "binary_erosion(myocardium_full, structure=ones((3,3)), iterations=1, border_value=0), independently per SAX slice",
+        },
         "shape_group_row_col": list(outer.shape),
         "group_idx": list(range(len(groups))),
         "crop_offset_full_rc": [row0, col0],
@@ -263,7 +296,21 @@ def build_bundle(
             "path": str((native_reference / "native_reference_manifest.json").resolve()),
             "sha256": _sha256(native_reference / "native_reference_manifest.json"),
         },
-        "counts": {name: [int(np.count_nonzero(values[group])) for group in range(len(groups))] for name, values in arrays.items() if name != "group_idx"},
+        "per_slice_counts": [
+            {
+                "group_idx": group,
+                "myocardium_full": int(full_myo[group].sum()),
+                "myocardium_core_legacy": int(core_legacy[group].sum()),
+                "myocardium_core_1px": int(core_1px[group].sum()),
+                "core_1px_full_fraction": float(core_1px[group].sum() / full_myo[group].sum()) if full_myo[group].any() else None,
+            }
+            for group in range(len(groups))
+        ],
+        "core_1px_summary": {
+            "annotated_slices": int(np.count_nonzero(np.any(full_myo, axis=(1, 2)))),
+            "nonempty_slices": int(np.count_nonzero(np.any(core_1px, axis=(1, 2)))),
+            "empty_slices": int(np.count_nonzero(np.any(full_myo, axis=(1, 2)) & ~np.any(core_1px, axis=(1, 2)))),
+        },
         "inner_outside_outer_voxels_trimmed": int(np.count_nonzero(inner_raw & ~outer)),
         "outputs": {},
     }

@@ -57,6 +57,24 @@ The legacy definitions are unchanged:
 
 At 1.25-mm in-plane sampling, the historical strict `>1.0 mm` rule retains every full-myocardium pixel, so CYJ full/core masks are identical. This is an observed consequence of the legacy definition, not a redefinition.
 
+## Legacy core ROI issue and v2 bundle
+
+The original 2D-fit-first source—not only the historical report—was re-read at `python/evaluation/roi/build_myocardium_masks.py`. Its filled-mask route computes, independently per slice:
+
+```text
+distance_transform_edt(myocardium_full, sampling=(spacing_xy[1], spacing_xy[0])) > erosion_mm
+```
+
+with the default `erosion_mm=1.0`. CYJ uses 1.25×1.25-mm pixels, so every foreground pixel has a distance of at least 1.25 mm and the legacy core equals full. The v2 bundle preserves this exact implementation as `myocardium_core_legacy`; it is never silently renamed or replaced.
+
+The new bundle at:
+
+```text
+/home/universe/SVR/data/Code_10w_v1/Code_10w_runs/trad_v2/CYJ_stackinit_TV_baseline/evaluation_scmr/myocardium_masks_v2
+```
+
+adds `myocardium_core_1px`, a separate per-slice `3×3` one-pixel binary erosion. It is intended as the new primary partial-volume-reduced ROI; full and legacy core remain secondary/backward-compatible ROIs. The 10 annotated slices all retain a non-empty corrected core; unannotated slices and any future thin slice that becomes empty remain `N=0`, without fallback.
+
 ## Tests
 
 Targeted tests cover identity, z reversal, x/y permutation, FOV-breaking integer shift, half-voxel shift, scale, shear, arbitrary rotation, exact label/count preservation, and inverse restoration. The signed-permutation plus exact-extents proof establishes the complete voxel lattice algebraically rather than enumerating every voxel.
