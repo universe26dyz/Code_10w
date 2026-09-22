@@ -117,7 +117,7 @@ class TradQuantitativeForward(nn.Module):
         flat_world = world_samples.reshape(-1, 3)
         with measure("inr_forward"):
             fields = self.quantitative_inr(flat_world)
-        with measure("signal_decoder_forward"):
+        with measure("forward_decoder"):
             fingerprint = self.signal_simulator(
                 fields["t1_ms"], fields["t2_ms"], fields["b1"],
                 timing9_ms[:, None, :].expand(-1, n_psf_samples, -1).reshape(-1, 9),

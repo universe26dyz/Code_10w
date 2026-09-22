@@ -16,14 +16,14 @@ import yaml
 FIELDS = ("stage", "section", "N", "mean_ms", "median_ms", "std_ms", "p10_ms", "p90_ms", "median_fraction_of_whole_iteration")
 
 
-def summarize_timing_profile(path: str | Path, *, stage_iterations: Mapping[str, int]) -> dict[str, Any]:
+def summarize_timing_profile(path: str | Path, *, stage_iterations: Mapping[str, int], decoder_type: str = "Bloch", run_level_ms: Mapping[str, float] | None = None) -> dict[str, Any]:
     """Write stable stage/section statistics next to a raw profiler CSV."""
 
     path = Path(path)
     with path.open(newline="", encoding="utf-8") as handle:
         raw = list(csv.DictReader(handle))
     required = {"iteration", "stage", "section", "milliseconds"}
-    if not raw or set(raw[0]) != required:
+    if raw and set(raw[0]) != required:
         raise ValueError("timing profile must contain iteration, stage, section, milliseconds.")
     grouped: dict[tuple[str, str], list[float]] = defaultdict(list)
     whole: dict[tuple[str, int], float] = {}
@@ -52,7 +52,12 @@ def summarize_timing_profile(path: str | Path, *, stage_iterations: Mapping[str,
             if stage not in stage_iterations:
                 raise ValueError(f"stage iteration count is missing for stage {stage!r}.")
             estimate_ms += row["median_ms"] * int(stage_iterations[stage])
-    result = {"schema": "trad_timing_profile_summary/v1", "source": str(path), "rows": rows, "stage_iterations": {key: int(value) for key, value in stage_iterations.items()}, "estimated_total_training_seconds": estimate_ms / 1000.0}
+    run_level = {key: float(value) for key, value in (run_level_ms or {}).items()}
+    required_run_level = ("checkpoint_load", "data_loading", "initialization", "optimization_total", "validation", "export", "total_runtime")
+    missing_run_level = [key for key in required_run_level if key not in run_level]
+    if missing_run_level:
+        run_level.update({key: 0.0 for key in missing_run_level})
+    result = {"schema": "reconstruction_timing_profile_summary/v2", "source": str(path), "decoder_type": decoder_type, "run_level_ms": run_level, "rows": rows, "stage_iterations": {key: int(value) for key, value in stage_iterations.items()}, "estimated_total_training_seconds": estimate_ms / 1000.0}
     csv_path, json_path = path.with_name("timing_profile_summary.csv"), path.with_name("timing_profile_summary.json")
     with csv_path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=FIELDS); writer.writeheader(); writer.writerows(rows)

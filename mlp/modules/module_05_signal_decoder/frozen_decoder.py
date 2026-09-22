@@ -28,6 +28,12 @@ class FrozenMLPSignalDecoder(nn.Module):
     def forward(self, t1_ms: torch.Tensor, t2_ms: torch.Tensor, b1: torch.Tensor, timing9_ms: torch.Tensor, protocol: TradProtocol | None = None, normalize: bool = True) -> torch.Tensor:
         if normalize is not True:
             raise ValueError("FrozenMLPSignalDecoder only provides L2-normalized HHZ fingerprints.")
-        if protocol is not None and self.protocol is not None and protocol != self.protocol:
+        if protocol is not None and self.protocol is not None and _protocol_signature(protocol) != _protocol_signature(self.protocol):
             raise ValueError("FrozenMLPSignalDecoder received a protocol different from its validated checkpoint protocol.")
         return self.mlp(make_input12(t1_ms, t2_ms, b1, timing9_ms))
+
+
+def _protocol_signature(protocol: TradProtocol) -> tuple[object, ...]:
+    """Compare protocol content across the shared-core and MLP package types."""
+
+    return (protocol.tr_ms, protocol.vps, tuple(protocol.fa_deg), tuple(protocol.ti_ms), tuple(protocol.t2prep_ms), protocol.n_ramp_up)

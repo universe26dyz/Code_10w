@@ -1,0 +1,9 @@
+# Controlled reconstruction template: supply an approved checkpoint at launch.
+base_config: ../../trad/configs/experiments_6k/B6.yaml
+experiment:
+  id: mlp_surrogate_v1_CYJ_B6
+  blocked: true
+  blocked_reason: "A FrozenMLP checkpoint with validation_status=approved_by_manual_review is required."
+decoder:
+  checkpoint: null
+  allow_functional_fixture_checkpoint: false
