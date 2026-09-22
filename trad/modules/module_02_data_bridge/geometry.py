@@ -7,7 +7,7 @@ from typing import Any
 import numpy as np
 import torch
 
-from third_party.nesvor.nesvor.transform import RigidTransform
+from trad.third_party.nesvor.nesvor.transform import RigidTransform
 
 
 def _vector(dataset: Any, field: str, length: int) -> np.ndarray:

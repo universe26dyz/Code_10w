@@ -9,8 +9,8 @@ from typing import Any
 import numpy as np
 import torch
 
-from modules.module_07_objective_training.training_space import TrainingSpace
-from third_party.nesvor.nesvor.transform import RigidTransform, ax_transform_points
+from trad.modules.module_07_objective_training.training_space import TrainingSpace
+from trad.third_party.nesvor.nesvor.transform import RigidTransform, ax_transform_points
 
 
 def _physical_grid(bbox_ras_mm: torch.Tensor, resolution_mm: float) -> tuple[torch.Tensor, tuple[int, int, int], np.ndarray]:

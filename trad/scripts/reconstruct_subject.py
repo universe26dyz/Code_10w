@@ -6,7 +6,7 @@ import argparse
 import json
 from pathlib import Path
 
-from scripts.run_training import run_reconstruction
+from trad.scripts.run_training import run_reconstruction
 
 
 def resolve_subject_observations(prepared_root: str | Path, subject_id: str) -> list[Path]:

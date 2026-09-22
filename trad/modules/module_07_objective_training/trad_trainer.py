@@ -16,11 +16,11 @@ from torch.optim import AdamW
 from torch.optim.lr_scheduler import MultiStepLR
 import yaml
 
-from modules.module_03_dataset_geometry.quantitative_point_dataset import QuantPointDataset, robust_trimmed_mean_intensity
-from modules.module_04_quantitative_inr.quantitative_inr import QuantitativeINR, QuantitativeINRConfig
-from modules.module_05_signal_decoder.trad_signal_simulator import TradProtocol, TradSignalSimulator
-from modules.module_06_rigid_psf.rigid_psf_forward import GroupRigidPSF, TradQuantitativeForward
-from modules.module_06_rigid_psf.hb1_stack_adapter import StackInitialization, initialize_group_poses_from_hb1
+from trad.modules.module_03_dataset_geometry.quantitative_point_dataset import QuantPointDataset, robust_trimmed_mean_intensity
+from trad.modules.module_04_quantitative_inr.quantitative_inr import QuantitativeINR, QuantitativeINRConfig
+from trad.modules.module_05_signal_decoder.trad_signal_simulator import TradProtocol, TradSignalSimulator
+from trad.modules.module_06_rigid_psf.rigid_psf_forward import GroupRigidPSF, TradQuantitativeForward
+from trad.modules.module_06_rigid_psf.hb1_stack_adapter import StackInitialization, initialize_group_poses_from_hb1
 from .training_space import TrainingSpace
 from .experiment_infrastructure import CachedBalancedSampler, FixedMonitorSet, IterationProfiler, git_provenance, normalize_step1_config, write_experiment_manifest
 

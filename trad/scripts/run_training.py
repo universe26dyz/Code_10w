@@ -10,11 +10,11 @@ from pathlib import Path
 import torch
 import yaml
 
-from modules.module_03_dataset_geometry.quantitative_point_dataset import QuantPointDataset
-from modules.module_07_objective_training.trad_trainer import train_trad
-from modules.module_08_inference_export.export_quantitative import export_quantitative_outputs
-from modules.module_08_inference_export.reprojection import export_native_plane_reprojections
-from modules.module_09_qc_benchmark.qc import validate_smoke_outputs
+from trad.modules.module_03_dataset_geometry.quantitative_point_dataset import QuantPointDataset
+from trad.modules.module_07_objective_training.trad_trainer import train_trad
+from trad.modules.module_08_inference_export.export_quantitative import export_quantitative_outputs
+from trad.modules.module_08_inference_export.reprojection import export_native_plane_reprojections
+from trad.modules.module_09_qc_benchmark.qc import validate_smoke_outputs
 
 
 def _deep_merge(base: dict, override: dict) -> dict:

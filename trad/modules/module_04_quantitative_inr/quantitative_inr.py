@@ -8,7 +8,7 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
-from third_party.nesvor.nesvor.inr import models as nesvor_models
+from trad.third_party.nesvor.nesvor.inr import models as nesvor_models
 
 
 @dataclass(frozen=True)
