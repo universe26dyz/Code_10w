@@ -132,7 +132,8 @@ Before approval, run a real VPS=87 timing/fidelity audit.  The checked-in full
 manifest contains `CYJ`, `DYZ`, `HHZ`, and `HJL` plus DYL; DYL is deliberately
 excluded here.  This command reads prepared observations only for timing-domain
 coverage and signal-fidelity audit: it never fits the MLP or alters the
-candidate.  It fails if a listed subject is not VPS=87.  Confirm the four
+candidate.  It fails if a group is not exactly the fixed protocol (VPS=87,
+TR=2.61 ms) or has inconsistent within-group TR/VPS.  Confirm the four
 prepared subject roots exist first; if one is unavailable, supply only verified
 VPS=87 subject IDs and record that limitation in human review.
 
@@ -147,10 +148,21 @@ conda run --no-capture-output -n "$CODE10W_ENV" \
 ```
 
 This creates the new `$REAL_TIMING_VALIDATION` and sibling
-`real_timing_validation_per_source.csv`. Human review must inspect both the
-synthetic held-out report and this real VPS=87 report. If it says
-`training_domain_coverage_status: OUTSIDE_TRAINING_DOMAIN` or
-`approval_recommendation: do_not_approve`, do not approve the candidate.
+`real_timing_validation_per_source.csv`. The formal gate is:
+
+```text
+synthetic held-out validation + real acquisition timing/fidelity validation
+                                  ↓ both pass
+                               human review
+                                  ↓ approval
+```
+
+The approval command programmatically requires the real report to be
+`rr_real_vps87_validation/v1`, `PASS`,
+`eligible_for_human_review`, and `awaiting_manual_review`, and requires its
+candidate SHA256 to match `$MLP_CANDIDATE`. It therefore rejects
+`OUTSIDE_TRAINING_DOMAIN` and `do_not_approve` reports rather than treating
+them as documentation-only advice.
 
 After an authorized human has reviewed both reports, create a separate approved
 checkpoint. The source candidate remains unchanged. Replace the review note
@@ -160,6 +172,7 @@ with the actual reviewer/date, not a placeholder.
 conda run --no-capture-output -n "$CODE10W_ENV" \
   python -m mlp.scripts.approve_formal_checkpoint \
   --checkpoint "$MLP_CANDIDATE" --validation-report "$MLP_VALIDATION" \
+  --real-timing-validation "$REAL_TIMING_VALIDATION" \
   --approved-output "$MLP_APPROVED" \
   --review-note "Reviewed on YYYY-MM-DD by NAME; validation accepted."
 ```

@@ -37,10 +37,10 @@ If the server uses a different name, change only that shell variable.
 
 Run held-out RR synthetic validation and the separate real VPS=87 timing/fidelity
 audit on the formal candidate, review both reports outside the code, then
-perform the existing explicit approval transition. The approval command remains
-bound cryptographically to the held-out report only; the real-timing report is
-a mandatory human-review condition and never participates in model fitting.
-Neither validation nor approval mutates the candidate checkpoint.
+perform the explicit approval transition. Approval is cryptographically bound to
+both reports and rejects a real-timing report outside the training domain,
+marked `do_not_approve`, or bound to another candidate. Neither validation nor
+approval mutates the candidate checkpoint.
 
 ```bash
 cd <CODE10W_ROOT>
@@ -58,6 +58,7 @@ conda run --no-capture-output -n "$CODE10W_ENV" \
   python -m mlp.scripts.approve_formal_checkpoint \
   --checkpoint <FORMAL_CANDIDATE_CHECKPOINT> \
   --validation-report <VALIDATION_REPORT_JSON> \
+  --real-timing-validation <REAL_TIMING_VALIDATION_JSON> \
   --approved-output <APPROVED_MLP_CHECKPOINT> \
   --review-note "<AUTHORSED_REVIEW_NOTE>"
 ```
