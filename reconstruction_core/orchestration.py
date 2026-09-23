@@ -338,6 +338,13 @@ def load_checkpoint(path: str | Path, model: TradTrainingModel, device: torch.de
     return checkpoint
 
 
+def finalize_timing_profile(profile_path: str | Path, *, stage_iterations: Mapping[str, int], decoder_type: str, run_level_ms: Mapping[str, float]) -> dict[str, Any]:
+    """Update run-level samples after CLI data loading, export, and validation."""
+
+    IterationProfiler.append_run_sections(profile_path, run_level_ms)
+    return summarize_timing_profile(profile_path, stage_iterations=stage_iterations, decoder_type=decoder_type, run_level_ms=run_level_ms)
+
+
 def train_reconstruction(dataset: QuantPointDataset, config: Mapping[str, Any], protocol_yaml: str | Path, output_dir: str | Path, *, decoder_factory: DecoderFactory = bloch_decoder_factory, route: str = "trad_bloch", prepared_inputs: list[str | Path] | None = None, subject_id: str | None = None, command: str = "") -> dict[str, Any]:
     """Run the sole staged reconstruction loop with an injected decoder."""
 
@@ -438,5 +445,6 @@ def train_reconstruction(dataset: QuantPointDataset, config: Mapping[str, Any], 
     profiler.write_csv(output / "timing_profile.csv")
     optimization_ms = (time.perf_counter() - optimization_started) * 1000.0
     decoder_type = decoder_metadata.get("decoder_type", "unknown")
-    summary = summarize_timing_profile(output / "timing_profile.csv", stage_iterations={"A": int(training["stage_a_iterations"]), "B": int(training["stage_b_iterations"])}, decoder_type=decoder_type, run_level_ms={"checkpoint_load": initialization_ms if decoder_type == "FrozenMLP" else 0.0, "data_loading": 0.0, "initialization": initialization_ms, "optimization_total": optimization_ms, "validation": 0.0, "export": 0.0, "total_runtime": (time.perf_counter() - run_started) * 1000.0})
-    return {"model": model, "training_space": space, "protocol": protocol, "decoder_metadata": decoder_metadata, "timing_profile_summary": summary, "stack_weights": stack_weights, "intensity_normalization": intensity_normalization, "output_dir": output, "stack_initialization": stack_initialization, "stage_a_axisangle_final": stage_a_axisangle_final if stage_a_axisangle_final is not None else model.rigid_psf.axisangle_init.detach().clone()}
+    run_level_ms = {"checkpoint_load": initialization_ms if decoder_type == "FrozenMLP" else 0.0, "data_loading": 0.0, "initialization": initialization_ms, "optimization_total": optimization_ms, "validation": 0.0, "export": 0.0, "total_runtime": (time.perf_counter() - run_started) * 1000.0}
+    summary = finalize_timing_profile(output / "timing_profile.csv", stage_iterations={"A": int(training["stage_a_iterations"]), "B": int(training["stage_b_iterations"])}, decoder_type=decoder_type, run_level_ms=run_level_ms)
+    return {"model": model, "training_space": space, "protocol": protocol, "decoder_metadata": decoder_metadata, "timing_profile_summary": summary, "run_level_ms": run_level_ms, "stack_weights": stack_weights, "intensity_normalization": intensity_normalization, "output_dir": output, "stack_initialization": stack_initialization, "stage_a_axisangle_final": stage_a_axisangle_final if stage_a_axisangle_final is not None else model.rigid_psf.axisangle_init.detach().clone()}

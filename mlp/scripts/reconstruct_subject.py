@@ -6,7 +6,7 @@ import argparse
 import json
 from pathlib import Path
 
-from scripts.run_training import run_reconstruction
+from mlp.scripts.run_training import run_reconstruction
 
 
 def reconstruct_subject(prepared_root: str | Path, subject_id: str, config: str | Path, output: str | Path, mlp_checkpoint: str | Path) -> dict[str, object]:

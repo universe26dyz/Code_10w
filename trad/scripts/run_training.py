@@ -5,11 +5,13 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+import time
 from pathlib import Path
 
 import torch
 import yaml
 
+from reconstruction_core.orchestration import finalize_timing_profile
 from trad.modules.module_03_dataset_geometry.quantitative_point_dataset import QuantPointDataset
 from trad.modules.module_07_objective_training.trad_trainer import train_trad
 from trad.modules.module_08_inference_export.export_quantitative import export_quantitative_outputs
@@ -49,6 +51,7 @@ def reject_blocked_experiment(config: dict) -> None:
 
 
 def run_reconstruction(config_path: str | Path, protocol_path: str | Path, observations: list[str | Path], output_dir: str | Path, subject_id: str | None = None) -> dict[str, object]:
+    run_started = time.perf_counter()
     config = load_training_config(config_path)
     if not isinstance(config, dict) or not isinstance(config.get("training"), dict):
         raise ValueError("--config must be a mapping containing training.")
@@ -58,16 +61,24 @@ def run_reconstruction(config_path: str | Path, protocol_path: str | Path, obser
     # The CLI is the reconstruction pipeline: HB1 registration is on unless a
     # caller explicitly disables it for a controlled tiny/unit invocation.
     config.setdefault("stack_initialization", {}).setdefault("enabled", True)
+    data_started = time.perf_counter()
     dataset = QuantPointDataset(observations, device=torch.device(config["training"]["device"]))
+    data_loading_ms = (time.perf_counter() - data_started) * 1000.0
     result = train_trad(dataset, config, protocol_path, output_dir, prepared_inputs=observations, subject_id=subject_id or Path(observations[0]).parents[1].name, command=" ".join(__import__("sys").argv))
     export_cfg = config.get("export")
     if not isinstance(export_cfg, dict) or "output_resolution_mm" not in export_cfg or "output_batch_size" not in export_cfg:
         raise ValueError("export.output_resolution_mm and export.output_batch_size must be explicit.")
     export_settings = {"bbox": config.get("bbox", {}), **export_cfg}
+    export_started = time.perf_counter()
     paths = export_quantitative_outputs(result["model"], result["training_space"], result["output_dir"], float(export_cfg["output_resolution_mm"]), int(export_cfg["output_batch_size"]), dataset=dataset, export_config=export_settings)
     paths.update(export_native_plane_reprojections(result["model"], result["training_space"], observations, result["output_dir"], output_psf=config.get("psf", {}).get("export", {})))
+    export_ms = (time.perf_counter() - export_started) * 1000.0
+    validation_started = time.perf_counter()
     qc = validate_smoke_outputs(result["output_dir"])
-    return {"outputs": {key: str(value) for key, value in paths.items()}, "qc": qc}
+    run_level_ms = dict(result["run_level_ms"])
+    run_level_ms.update({"data_loading": data_loading_ms, "export": export_ms, "validation": (time.perf_counter() - validation_started) * 1000.0, "total_runtime": (time.perf_counter() - run_started) * 1000.0})
+    summary = finalize_timing_profile(result["output_dir"] / "timing_profile.csv", stage_iterations={"A": int(config["training"]["stage_a_iterations"]), "B": int(config["training"]["stage_b_iterations"])}, decoder_type=str(result["decoder_metadata"]["decoder_type"]), run_level_ms=run_level_ms)
+    return {"outputs": {key: str(value) for key, value in paths.items()}, "qc": qc, "timing_profile_summary": summary}
 
 
 def main() -> None:

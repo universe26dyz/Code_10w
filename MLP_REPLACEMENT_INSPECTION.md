@@ -1,8 +1,9 @@
 # MLP surrogate replacement inspection
 
-Inspection date: 2026-09-22  
+Inspection date: 2026-09-23
 Repository inspected: `/home/universe/SVR/multimap_postprogramming/Code_10w`  
-Commit: `9700bc82c7e8be49e833b405ab63aac181ca97cd`
+Baseline commit inspected before the controlled-route integration:
+`9700bc82c7e8be49e833b405ab63aac181ca97cd`
 
 The requested server code path `/data/dengyz/code/Code_10w` is absent in the
 current environment.  This report therefore records the available working
@@ -12,19 +13,19 @@ clone and does not claim that it inspected a different server checkout.
 
 - Trad: `trad/scripts/reconstruct_subject.py` resolves `sax`, `2ch`, and
   `4ch` prepared observations, then calls `trad/scripts/run_training.py`.
-- Trad training model: `trad/modules/module_07_objective_training/trad_trainer.py`.
-- MLP reconstruction: `mlp/scripts/reconstruct_subject.py` calls
-  `mlp/scripts/run_training.py`, then
-  `mlp/modules/module_07_objective_training/mlp_trainer.py`.
+- Trad and MLP facades both call the single
+  `reconstruction_core/orchestration.py:train_reconstruction` engine.
+- Trad selects `bloch_decoder_factory`; MLP selects
+  `frozen_mlp_decoder_factory` after strict checkpoint validation.
 
-The current MLP path already reuses the same quantitative INR, group-rigid
-PSF forward (`TradQuantitativeForward`), staged optimizer, exports, and native
-reprojection code.  Its intended sole model difference is the frozen decoder.
+The current MLP route reuses the same quantitative INR, group-rigid PSF forward
+(`TradQuantitativeForward`), staged optimizer, exports, and native reprojection
+code.  Its sole model difference is the frozen decoder factory.
 
 ## Bloch decoder call chain
 
-`TradTrainingModel` creates `TradSignalSimulator` in
-`trad_trainer.py`, injects it into `TradQuantitativeForward`, and calls it from
+`bloch_decoder_factory` creates `TradSignalSimulator`, injects it into the
+shared `ReconstructionTrainingModel`, and calls it from
 `rigid_psf_forward.py` after local PSF sampling, final group-rigid RAS
 transformation, and INR evaluation.  The simulator implementation is
 `trad/modules/module_05_signal_decoder/trad_signal_simulator.py`; it returns a
@@ -33,7 +34,7 @@ weight `0..9`, applies amplitude, and averages PSF samples.
 
 ## MLP interface and replacement point
 
-`mlp_trainer.py` loads `FrozenMLPSignalDecoder` through
+`frozen_mlp_decoder_factory` loads `FrozenMLPSignalDecoder` through
 `mlp/modules/module_05_signal_decoder/checkpoint_loader.py` and supplies it to
 the same `TradQuantitativeForward` constructor.  The replacement boundary is
 therefore the `signal_simulator` argument only.
@@ -60,14 +61,13 @@ specific normalization.
 
 ## Timing instrumentation
 
-Both trainers use `IterationProfiler` from their respective
-`modules/module_07_objective_training/experiment_infrastructure.py`.  The
-common sections are `batch_sampling`, `coordinate_conversion`,
-`psf_and_rigid`, `inr_forward`, `signal_decoder_forward`, `data_loss`,
-`spatial_regularization`, `backward`, `optimizer_step`, and `whole_iteration`.
-They write `timing_profile.csv`.  Summary generation is
-`trad/evaluation/profiling/summarize_timing_profile.py`, which writes
-`timing_profile_summary.csv` and `timing_profile_summary.json`.
+The shared engine uses `IterationProfiler` and writes the same CSV fields for
+both routes: `iteration,stage,section,milliseconds`.  Iteration-level sections
+include `forward_decoder`, `loss`, `backward`, and `optimizer_step`, alongside
+the retained detailed sections.  A `run` stage records `checkpoint_load`,
+`data_loading`, `initialization`, `optimization_total`, `validation`, `export`,
+and `total_runtime`.  Summary generation writes
+`timing_profile_summary.json` with `decoder_type: Bloch|FrozenMLP`.
 
 ## CYJ_B6 checkpoint
 

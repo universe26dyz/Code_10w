@@ -56,6 +56,17 @@ def test_profiler_writes_raw_named_samples(tmp_path):
     assert {row["section"] for row in rows} == {"batch_sampling", "whole_iteration"}
 
 
+def test_profiler_appends_common_run_level_sections_to_the_same_csv(tmp_path):
+    profiler = IterationProfiler(torch.device("cpu"), every=0, warmup_samples=0)
+    profile = tmp_path / "timing_profile.csv"
+    profiler.write_csv(profile)
+    profiler.append_run_sections(profile, {"checkpoint_load": 1.0, "data_loading": 2.0, "initialization": 3.0, "optimization_total": 4.0, "validation": 5.0, "export": 6.0, "total_runtime": 7.0})
+    with profile.open(newline="", encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle))
+    assert {row["section"] for row in rows} == {"checkpoint_load", "data_loading", "initialization", "optimization_total", "validation", "export", "total_runtime"}
+    assert {row["stage"] for row in rows} == {"run"}
+
+
 def test_manifest_records_clean_and_dirty_git_provenance(tmp_path):
     repo = tmp_path / "repo"; repo.mkdir()
     for command in (("git", "init"), ("git", "config", "user.email", "test@example.com"), ("git", "config", "user.name", "Test")):

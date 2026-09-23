@@ -22,8 +22,9 @@ import torch
 
 PROFILE_SECTIONS = (
     "batch_sampling", "coordinate_conversion", "psf_and_rigid", "inr_forward",
-    "signal_decoder_forward", "data_loss", "spatial_regularization", "backward",
-    "optimizer_step", "whole_iteration",
+    "forward_decoder", "loss", "spatial_regularization", "backward",
+    "optimizer_step", "whole_iteration", "checkpoint_load", "data_loading",
+    "initialization", "optimization_total", "validation", "export", "total_runtime",
 )
 
 
@@ -260,6 +261,27 @@ class IterationProfiler:
                     continue
                 milliseconds = start.elapsed_time(end) if self.device.type == "cuda" else (end - start) * 1000.0
                 writer.writerow({"iteration": iteration, "stage": stage, "section": section, "milliseconds": milliseconds})
+
+    @staticmethod
+    def append_run_sections(path: str | Path, milliseconds: Mapping[str, float]) -> None:
+        """Replace common non-iterative records without changing CSV fields."""
+
+        required = ("checkpoint_load", "data_loading", "initialization", "optimization_total", "validation", "export", "total_runtime")
+        missing = set(required).difference(milliseconds)
+        if missing:
+            raise ValueError(f"Run timing lacks required sections: {sorted(missing)}")
+        profile = Path(path)
+        with profile.open(newline="", encoding="utf-8") as handle:
+            existing = [row for row in csv.DictReader(handle) if row["stage"] != "run"]
+        with profile.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(handle, fieldnames=("iteration", "stage", "section", "milliseconds"))
+            writer.writeheader()
+            writer.writerows(existing)
+            for section in required:
+                value = float(milliseconds[section])
+                if not np.isfinite(value) or value < 0:
+                    raise ValueError(f"Run timing {section} must be finite and non-negative.")
+                writer.writerow({"iteration": 0, "stage": "run", "section": section, "milliseconds": value})
 
 
 def write_experiment_manifest(output_dir: str | Path, *, route: str, subject_id: str | None, repo_root: str | Path, config_resolved: str | Path, prepared_inputs: list[str | Path], protocol: Mapping[str, Any], stack_group_counts: Mapping[str, int], seed: int, command: str, method_root: str | Path | None = None) -> dict[str, Any]:
