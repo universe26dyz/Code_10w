@@ -30,10 +30,10 @@ def _import_check(module_name: str) -> tuple[bool, object | None]:
         return False, None
 
 
-def _project_import_check(method_root: Path, module_name: str) -> bool:
+def _project_import_check(module_name: str) -> bool:
     original_path = list(sys.path)
     try:
-        sys.path.insert(0, str(method_root))
+        sys.path.insert(0, str(CODE_ROOT))
         importlib.import_module(module_name)
         return True
     except ImportError:
@@ -62,9 +62,9 @@ def check_server_environment(mode: str) -> dict[str, object]:
     }
     if mode == "reconstruction":
         checks["tinycudann"] = _import_check("tinycudann")[0]
-        checks["vendored_nesvor_import"] = _project_import_check(CODE_ROOT / "trad" / "third_party" / "nesvor", "nesvor")
-        checks["project_quantitative_inr_import"] = _project_import_check(CODE_ROOT / "trad", "modules.module_04_quantitative_inr.quantitative_inr")
-        checks["project_rigid_psf_import"] = _project_import_check(CODE_ROOT / "trad", "modules.module_06_rigid_psf.rigid_psf_forward")
+        checks["vendored_nesvor_import"] = _project_import_check("trad.third_party.nesvor.nesvor")
+        checks["project_quantitative_inr_import"] = _project_import_check("trad.modules.module_04_quantitative_inr.quantitative_inr")
+        checks["project_rigid_psf_import"] = _project_import_check("trad.modules.module_06_rigid_psf.rigid_psf_forward")
     ready = all(checks.values())
     result: dict[str, object] = {"mode": mode, "checks": checks, "environment": environment, "ready": ready}
     if not ready:

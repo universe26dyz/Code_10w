@@ -40,8 +40,7 @@ cd <CODE10W_ROOT>
 conda run --no-capture-output -n knesvr_torch \
   python -m mlp.modules.module_05_signal_decoder.validate_formal_mlp \
   --checkpoint <FORMAL_CANDIDATE_CHECKPOINT> \
-  --dataset-dir <VALIDATION_DATASET_DIR> \
-  --timing-pool <TIMING_POOL_JSON> \
+  --dataset-dir <RR_SYNTHETIC_DATASET_DIR> \
   --protocol mlp/configs/protocol_hhz_v1.yaml \
   --output <VALIDATION_REPORT_JSON> \
   --device cuda:0 --batch-size <BATCH_SIZE> --gradient-samples <N_GRADIENT_SAMPLES>

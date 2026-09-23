@@ -3,8 +3,8 @@ from types import SimpleNamespace
 import torch
 import pytest
 
-from modules.module_05_signal_decoder.checkpoint_loader import load_frozen_mlp_decoder
-from modules.module_05_signal_decoder.mlp_model import MdmSignalMLP
+from mlp.modules.module_05_signal_decoder.checkpoint_loader import load_frozen_mlp_decoder
+from mlp.modules.module_05_signal_decoder.mlp_model import MdmSignalMLP
 
 
 def _checkpoint(path):

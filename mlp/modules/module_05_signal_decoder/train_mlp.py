@@ -18,8 +18,7 @@ from torch.utils.data import DataLoader, Dataset, TensorDataset
 import yaml
 
 from .mlp_model import MdmSignalMLP
-from .provenance import sha256_file
-from .synthetic_dataset import _protocol, load_timing_pool, protocol_from_record
+from .synthetic_dataset import protocol_from_record
 from .test_mlp import fidelity_metrics
 
 
@@ -122,7 +121,7 @@ def mlp_training_loss(model: MdmSignalMLP, input12: torch.Tensor, target_signal1
     return total, {"signal_mse": signal_mse, "jacobian_mse": jacobian_mse, "cosine": cosine}
 
 
-def validate_dataset_provenance(dataset_dir: str | Path, timing_pool_path: str | Path | None, protocol_path: str | Path) -> tuple[dict[str, Any], dict[str, np.ndarray] | None, Any]:
+def validate_dataset_provenance(dataset_dir: str | Path, protocol_path: str | Path) -> tuple[dict[str, Any], Any]:
     dataset_dir = Path(dataset_dir)
     metadata_path = dataset_dir / "dataset_metadata.json"
     if not metadata_path.is_file():
@@ -131,37 +130,23 @@ def validate_dataset_provenance(dataset_dir: str | Path, timing_pool_path: str |
         metadata = json.load(handle)
     if not isinstance(metadata, dict):
         raise ValueError("dataset_metadata.json must be a JSON object.")
-    required = {"functional_fixture", "timing9_min_ms", "timing9_max_ms", "train_timing9_min_ms", "train_timing9_max_ms", "pool_timing9_min_ms", "pool_timing9_max_ms", "train_subject_ids", "valid_subject_ids", "test_subject_ids", "protocol", "sizes"}
+    required = {"schema", "split_mode", "rhythm_split_ids", "timing9_min_ms", "timing9_max_ms", "train_timing9_min_ms", "train_timing9_max_ms", "protocol", "sizes"}
     missing = required.difference(metadata)
     if missing:
         raise ValueError(f"dataset_metadata.json lacks: {sorted(missing)}")
-    if metadata.get("schema") == "mlp_rr_synthetic/v1":
-        if metadata.get("split_mode") != "rhythm":
-            raise ValueError("RR synthetic metadata must use split_mode=rhythm.")
-        protocol = protocol_from_record(metadata["protocol"], protocol_path)
-        for split in ("train", "valid", "test"):
-            with h5py.File(dataset_dir / f"{split}.h5", "r") as handle:
-                if "rhythm_id" not in handle or "timing_id" in handle:
-                    raise ValueError("RR synthetic HDF5 must contain rhythm_id and no legacy timing_id.")
-        return metadata, None, protocol
-    if timing_pool_path is None:
-        raise ValueError("Legacy timing-pool MLP datasets require --timing-pool.")
-    pool = load_timing_pool(timing_pool_path)
-    protocol = _protocol(pool, protocol_path)
-    record = _protocol_record(protocol)
-    if metadata["protocol"] != record:
-        raise ValueError("Synthetic dataset metadata protocol does not match the current timing pool/protocol YAML.")
-    if metadata.get("split_mode") != "rhythm":
-        if metadata.get("timing_pool_sha256") != sha256_file(timing_pool_path):
-            raise ValueError("Synthetic dataset timing-pool SHA256 does not match the current --timing-pool.")
-    if bool(metadata["functional_fixture"]) != bool(pool["functional_fixture"]):
-        raise ValueError("Synthetic dataset functional_fixture flag does not match timing pool provenance.")
+    if metadata.get("schema") != "mlp_rr_synthetic/v1" or metadata.get("split_mode") != "rhythm":
+        raise ValueError("Only the active mlp_rr_synthetic/v1 rhythm-disjoint dataset is supported; subject/timing-pool datasets are archived.")
+    protocol = protocol_from_record(metadata["protocol"], protocol_path)
     if len(metadata["timing9_min_ms"]) != 9 or len(metadata["timing9_max_ms"]) != 9:
         raise ValueError("Synthetic dataset timing range metadata must have exactly nine dimensions.")
     for split in ("train", "valid", "test"):
         if split not in metadata["sizes"] or int(metadata["sizes"][split]) < 1 or not (dataset_dir / f"{split}.h5").is_file():
             raise ValueError(f"Synthetic dataset lacks a valid declared {split} split.")
-    return metadata, pool, protocol
+    for split in ("train", "valid", "test"):
+        with h5py.File(dataset_dir / f"{split}.h5", "r") as handle:
+            if "rhythm_id" not in handle or "timing_id" in handle:
+                raise ValueError("RR synthetic HDF5 must contain rhythm_id and no legacy timing_id.")
+    return metadata, protocol
 
 
 def _check_loaded_split_sizes(metadata: Mapping[str, Any], splits: Mapping[str, Dataset]) -> None:
@@ -170,7 +155,7 @@ def _check_loaded_split_sizes(metadata: Mapping[str, Any], splits: Mapping[str, 
             raise ValueError(f"{name}.h5 size does not match dataset_metadata.json.")
 
 
-def train_mlp(dataset_dir: str | Path, timing_pool_path: str | Path | None, config: Mapping[str, Any], protocol_path: str | Path, output_dir: str | Path) -> dict[str, Any]:
+def train_mlp(dataset_dir: str | Path, config: Mapping[str, Any], protocol_path: str | Path, output_dir: str | Path) -> dict[str, Any]:
     train_cfg = _require(config, "training")
     required = ("device", "seed", "epochs", "batch_size", "learning_rate", "scheduler_step_size", "scheduler_gamma", "gradient_samples")
     missing = [key for key in required if key not in train_cfg]
@@ -185,10 +170,9 @@ def train_mlp(dataset_dir: str | Path, timing_pool_path: str | Path | None, conf
     seed = int(train_cfg["seed"]); torch.manual_seed(seed); np.random.seed(seed); random.seed(seed)
     dataset_dir, output = Path(dataset_dir), Path(output_dir)
     loss_settings = _mlp_loss_settings(config.get("mlp_loss"))
-    metadata, pool, teacher_protocol = validate_dataset_provenance(dataset_dir, timing_pool_path, protocol_path)
+    metadata, teacher_protocol = validate_dataset_provenance(dataset_dir, protocol_path)
     include_jacobian = loss_settings["jacobian_weight"] > 0 or loss_settings["cosine_weight"] > 0
-    loader = LazyRRSplit if metadata.get("schema") == "mlp_rr_synthetic/v1" else load_h5_split
-    splits = {name: loader(dataset_dir / f"{name}.h5", name, include_jacobian=include_jacobian) for name in ("train", "valid", "test")}
+    splits = {name: LazyRRSplit(dataset_dir / f"{name}.h5", name, include_jacobian=include_jacobian) for name in ("train", "valid", "test")}
     _check_loaded_split_sizes(metadata, splits)
     if len(splits["train"]) < batch_size:
         raise ValueError("Training split is smaller than batch_size; refusing a BatchNorm singleton/fallback batch.")
@@ -229,22 +213,21 @@ def train_mlp(dataset_dir: str | Path, timing_pool_path: str | Path | None, conf
                 "state_dict": model.state_dict(), "architecture": "12-200-200-200-10",
                 "input_normalization": "T1/1000,T2/1000,B1,timing9/1000",
                 "output_normalization": "raw_l2_normalized", "protocol_hhz_v1": _protocol_record(teacher_protocol),
-                "timing_pool_provenance": str(timing_pool_path) if timing_pool_path is not None else None, "timing_pool_sha256": metadata.get("timing_pool_sha256"),
+                "dataset_schema": metadata["schema"], "dataset_split_mode": metadata["split_mode"],
                 "timing9_min_ms": metadata["timing9_min_ms"], "timing9_max_ms": metadata["timing9_max_ms"],
-                "train_timing9_min_ms": metadata["train_timing9_min_ms"], "train_timing9_max_ms": metadata["train_timing9_max_ms"], "pool_timing9_min_ms": metadata["pool_timing9_min_ms"], "pool_timing9_max_ms": metadata["pool_timing9_max_ms"],
-                "train_subject_ids": metadata["train_subject_ids"], "valid_subject_ids": metadata["valid_subject_ids"], "test_subject_ids": metadata["test_subject_ids"],
-                "functional_fixture": bool(metadata["functional_fixture"]), "formal_candidate": not bool(metadata["functional_fixture"]), "validation_status": "functional_smoke" if bool(metadata["functional_fixture"]) else "unvalidated",
+                "train_timing9_min_ms": metadata["train_timing9_min_ms"], "train_timing9_max_ms": metadata["train_timing9_max_ms"],
+                "functional_fixture": False, "formal_candidate": True, "validation_status": "unvalidated",
                 "parameter_ranges": {"t1_ms": [20, 2500], "t2_ms": [5, 200], "b1": [0.1, 1.2], "constraint": "T1>T2"}, "mlp_loss": loss_settings, "jacobian_target_units": metadata.get("jacobian_target_units"), "seed": seed,
             }, output / "signal_simulator_best.pth")
     with (output / "train_history.csv").open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=["epoch", "train_mse", "valid_mse", "lr"]); writer.writeheader(); writer.writerows(history)
     checkpoint = torch.load(output / "signal_simulator_best.pth", map_location=device, weights_only=False)
     model.load_state_dict(checkpoint["state_dict"]); model.eval()
-    metrics = fidelity_metrics(model, splits["test"], pool, str(protocol_path), batch_size, int(train_cfg["gradient_samples"]), protocol=teacher_protocol)
+    metrics = fidelity_metrics(model, splits["test"], batch_size, int(train_cfg["gradient_samples"]), protocol=teacher_protocol)
     with (output / "test_metrics.json").open("w", encoding="utf-8") as handle:
         json.dump(metrics, handle, indent=2)
     resolved = dict(config)
-    resolved.update({"resolved_protocol": _protocol_record(teacher_protocol), "timing_pool_sha256": metadata.get("timing_pool_sha256"), "functional_fixture": bool(metadata["functional_fixture"]), "dataset_metadata": metadata, "best_epoch": best_epoch, "best_valid_mse": best})
+    resolved.update({"resolved_protocol": _protocol_record(teacher_protocol), "dataset_metadata": metadata, "best_epoch": best_epoch, "best_valid_mse": best})
     with (output / "mlp_config_resolved.yaml").open("w", encoding="utf-8") as handle:
         yaml.safe_dump(resolved, handle, sort_keys=False)
     return {"model": model, "metrics": metrics, "best_checkpoint": output / "signal_simulator_best.pth"}
@@ -252,13 +235,13 @@ def train_mlp(dataset_dir: str | Path, timing_pool_path: str | Path | None, conf
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", required=True); parser.add_argument("--dataset-dir", required=True); parser.add_argument("--timing-pool"); parser.add_argument("--protocol", required=True); parser.add_argument("--output-dir", required=True)
+    parser.add_argument("--config", required=True); parser.add_argument("--dataset-dir", required=True); parser.add_argument("--protocol", required=True); parser.add_argument("--output-dir", required=True)
     args = parser.parse_args()
     with Path(args.config).open(encoding="utf-8") as handle:
         config = yaml.safe_load(handle)
     if not isinstance(config, dict):
         raise ValueError("MLP config must be a YAML mapping.")
-    result = train_mlp(args.dataset_dir, args.timing_pool, config, args.protocol, args.output_dir)
+    result = train_mlp(args.dataset_dir, config, args.protocol, args.output_dir)
     print(json.dumps({"best_checkpoint": str(result["best_checkpoint"]), "metrics": result["metrics"]}, sort_keys=True))
 
 

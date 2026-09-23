@@ -62,7 +62,14 @@ def _write_reference_comparison(
     metrics: dict[str, object] = {"global_common_support": {}, "sax_myocardium": {}}
     masks = None
     if mask_bundle:
-        with np.load(Path(mask_bundle) / "sax_myocardium_masks.npz", allow_pickle=False) as data:
+        bundle = Path(mask_bundle)
+        manifest_path = bundle / "manifest.json"
+        if not manifest_path.is_file():
+            raise FileNotFoundError(f"Myocardium bundle manifest is missing: {manifest_path}")
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if manifest.get("schema") != "exact_native_myocardium_bundle/v2" or manifest.get("status") != "PASS":
+            raise ValueError("Map-domain myocardium metrics require a PASS exact_native_myocardium_bundle/v2 bundle.")
+        with np.load(bundle / "sax_myocardium_masks.npz", allow_pickle=False) as data:
             masks = {key: np.asarray(data[key], dtype=bool) for key in ("myocardium_core_1px", "myocardium_full", "myocardium_core_legacy")}
     for parameter in ("T1", "T2"):
         field = "t1_ms" if parameter == "T1" else "t2_ms"

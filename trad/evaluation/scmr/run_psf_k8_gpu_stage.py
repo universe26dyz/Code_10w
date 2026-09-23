@@ -6,7 +6,6 @@ import argparse
 import hashlib
 import json
 import subprocess
-import sys
 from pathlib import Path
 from typing import Any
 
@@ -15,14 +14,12 @@ import torch
 import yaml
 
 _TRAD_ROOT = Path(__file__).resolve().parents[2]
-if str(_TRAD_ROOT) not in sys.path:
-    sys.path.insert(0, str(_TRAD_ROOT))
 
-from modules.module_03_dataset_geometry.quantitative_point_dataset import QuantPointDataset
-from modules.module_07_objective_training.trad_trainer import build_training_model, load_checkpoint
-from modules.module_07_objective_training.training_space import TrainingSpace
-from modules.module_08_inference_export.reprojection import export_native_plane_reprojections
-from third_party.nesvor.nesvor.inr import models as nesvor_models
+from trad.modules.module_03_dataset_geometry.quantitative_point_dataset import QuantPointDataset
+from trad.modules.module_07_objective_training.trad_trainer import build_training_model, load_checkpoint
+from trad.modules.module_07_objective_training.training_space import TrainingSpace
+from trad.modules.module_08_inference_export.reprojection import export_native_plane_reprojections
+from trad.third_party.nesvor.nesvor.inr import models as nesvor_models
 
 STACKS = ("sax", "2ch", "4ch")
 
@@ -44,8 +41,6 @@ def _git_head() -> str:
 
 
 def _json_pose_difference(checkpoint: dict[str, Any], final_poses: Path) -> float:
-    from modules.module_07_objective_training.training_space import TrainingSpace
-
     report = json.loads(final_poses.read_text(encoding="utf-8"))
     space = TrainingSpace.from_state_dict(checkpoint["training_space"])
     physical = space.axisangle_train_to_physical(checkpoint["trained_axisangle_train"]).detach().cpu().numpy()

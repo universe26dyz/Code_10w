@@ -3,8 +3,8 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from modules.module_03_dataset_geometry.quantitative_point_dataset import QuantPointDataset
-from modules.module_05_signal_decoder.mlp_model import MdmSignalMLP
+from trad.modules.module_03_dataset_geometry.quantitative_point_dataset import QuantPointDataset
+from mlp.modules.module_05_signal_decoder.mlp_model import MdmSignalMLP
 
 
 def write_observations(path: Path) -> QuantPointDataset:

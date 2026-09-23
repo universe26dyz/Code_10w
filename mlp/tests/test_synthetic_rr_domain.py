@@ -1,8 +1,8 @@
 import numpy as np
 import h5py
 
-from modules.module_05_signal_decoder.synthetic_rr_domain import RRDomainConfig, generate_rhythm_timing9, split_rhythm_ids
-from modules.module_05_signal_decoder.synthetic_dataset import generate_rr_synthetic_dataset
+from mlp.modules.module_05_signal_decoder.synthetic_rr_domain import RRDomainConfig, generate_rhythm_timing9, split_rhythm_ids
+from mlp.modules.module_05_signal_decoder.synthetic_dataset import generate_rr_synthetic_dataset
 
 
 def test_rr_domain_is_reproducible_and_uses_canonical_timing_contract():

@@ -1,8 +1,8 @@
 import torch
 from torch import nn
 
-from modules.module_05_signal_decoder.frozen_decoder import FrozenMLPSignalDecoder
-from modules.module_05_signal_decoder.mlp_model import MdmSignalMLP
+from mlp.modules.module_05_signal_decoder.frozen_decoder import FrozenMLPSignalDecoder
+from mlp.modules.module_05_signal_decoder.mlp_model import MdmSignalMLP
 
 
 def test_frozen_decoder_keeps_batchnorm_eval_under_outer_train_and_is_batch_invariant():

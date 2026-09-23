@@ -1,6 +1,6 @@
 import torch
 
-from modules.module_05_signal_decoder.mlp_model import MdmSignalMLP
+from mlp.modules.module_05_signal_decoder.mlp_model import MdmSignalMLP
 
 
 def test_mdm_mlp_has_exact_12_200_200_200_10_normalized_contract():

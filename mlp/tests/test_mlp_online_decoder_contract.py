@@ -1,9 +1,9 @@
 import pytest
 import torch
 
-from modules.module_05_signal_decoder.frozen_decoder import FrozenMLPSignalDecoder
-from modules.module_05_signal_decoder.mlp_model import MdmSignalMLP
-from modules.module_05_signal_decoder.trad_teacher.trad_signal_simulator import TradProtocol
+from mlp.modules.module_05_signal_decoder.frozen_decoder import FrozenMLPSignalDecoder
+from mlp.modules.module_05_signal_decoder.mlp_model import MdmSignalMLP
+from mlp.modules.module_05_signal_decoder.trad_teacher.trad_signal_simulator import TradProtocol
 
 
 def test_frozen_decoder_accepts_trad_forward_signature_and_keeps_tissue_gradient():

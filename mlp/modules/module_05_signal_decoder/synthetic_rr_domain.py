@@ -7,7 +7,7 @@ from typing import Mapping
 
 import numpy as np
 
-from modules.module_02_data_bridge.timing import compute_duration_before_acq
+from trad.modules.module_02_data_bridge.timing import compute_duration_before_acq
 
 
 @dataclass(frozen=True)

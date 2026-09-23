@@ -31,7 +31,7 @@ def validate_real_timings(checkpoint_path, prepared_root, subjects, rr_dataset_d
     for row in rows:
         n=int(samples_per_timing); t2=rng.uniform(5,200,n).astype("f4"); t1=rng.uniform(np.maximum(20,t2+1e-6),2500,n).astype("f4"); b1=rng.uniform(.1,1.2,n).astype("f4"); timing=np.repeat(row["timing9_ms"][None],n,0)
         x=torch.from_numpy(np.column_stack((t1/1000,t2/1000,b1,timing/1000)).astype("f4")); target=TradSignalSimulator()(torch.from_numpy(t1),torch.from_numpy(t2),torch.from_numpy(b1),torch.from_numpy(timing),protocol,normalize=True)
-        metric=fidelity_metrics(model,TensorDataset(x,target),None,str(protocol_path),n,n,protocol=protocol); reports.append({k:v for k,v in row.items() if k!="timing9_ms"}|{"timing9_ms":row["timing9_ms"].tolist(),**metric})
+        metric=fidelity_metrics(model, TensorDataset(x, target), n, n, protocol=protocol); reports.append({k:v for k,v in row.items() if k!="timing9_ms"}|{"timing9_ms":row["timing9_ms"].tolist(),**metric})
     real=np.stack([r["timing9_ms"] for r in rows]); lo=np.asarray(meta["train_timing9_min_ms"]); hi=np.asarray(meta["train_timing9_max_ms"]); outside=(real<lo)|(real>hi)
     result={"schema":"rr_real_vps87_validation/v1","sources":len(reports),"real_timing_min_ms":real.min(0).tolist(),"real_timing_max_ms":real.max(0).tolist(),"synthetic_train_timing_min_ms":lo.tolist(),"synthetic_train_timing_max_ms":hi.tolist(),"outside_per_dimension":outside.sum(0).astype(int).tolist(),"outside_fraction":float(outside.any(1).mean()),"per_source":reports,"validation_status":"awaiting_manual_review"}
     output=Path(output_path); output.parent.mkdir(parents=True,exist_ok=True); output.write_text(json.dumps(result,indent=2));

@@ -8,18 +8,15 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-TRAD_ROOT = Path(__file__).resolve().parents[1]
-# The deployment manifest belongs to Code_10w/scripts, while Module 02 is a
-# top-level package below Code_10w/trad.  Keep the repo root first so its
-# ``scripts.deployment_manifest`` is not shadowed by trad/scripts.
-for path in (REPO_ROOT, TRAD_ROOT):
-    while str(path) in sys.path:
-        sys.path.remove(str(path))
-sys.path.insert(0, str(TRAD_ROOT))
+# This file remains executable directly for deployment compatibility.  Place
+# the repository root ahead of ``trad/scripts`` so the explicit root package
+# ``scripts.deployment_manifest`` cannot be shadowed by the sibling package.
+while str(REPO_ROOT) in sys.path:
+    sys.path.remove(str(REPO_ROOT))
 sys.path.insert(0, str(REPO_ROOT))
 
 from scripts.deployment_manifest import load_deployment_manifest
-from modules.module_02_data_bridge.prepare_observations import prepare_observations
+from trad.modules.module_02_data_bridge.prepare_observations import prepare_observations
 
 
 def prepare_all_observations(manifest_path: str | Path, preprocessed_root: str | Path, prepared_root: str | Path) -> dict[str, object]:
