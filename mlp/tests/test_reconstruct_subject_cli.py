@@ -20,3 +20,8 @@ def test_trad_and_mlp_reconstruct_wrappers_use_only_output_flag():
 
 def test_mlp_reconstruct_wrapper_requires_an_explicit_checkpoint():
     assert "--mlp-checkpoint MLP_CHECKPOINT" in _help("mlp")
+
+
+def test_mlp_checkpoint_approval_script_has_a_package_qualified_entrypoint():
+    result = subprocess.run([sys.executable, "-m", "mlp.scripts.approve_formal_checkpoint", "--help"], cwd=CODE_ROOT, check=True, capture_output=True, text=True)
+    assert "--validation-report VALIDATION_REPORT" in result.stdout

@@ -29,6 +29,37 @@ the CYJ_B6 template sets it to `false`.
    `Code_10w_runs/mlp_surrogate_v1/CYJ_B6`; do not write into `trad_v3` or
    `mlp_rr_v3`.
 
+## Existing validation and approval workflow
+
+Run held-out validation on the formal candidate, review the report outside the
+code, then perform the existing explicit approval transition.  Both commands
+create new outputs; neither mutates the candidate checkpoint.
+
+```bash
+cd <CODE10W_ROOT>
+conda run --no-capture-output -n knesvr_torch \
+  python -m mlp.modules.module_05_signal_decoder.validate_formal_mlp \
+  --checkpoint <FORMAL_CANDIDATE_CHECKPOINT> \
+  --dataset-dir <VALIDATION_DATASET_DIR> \
+  --timing-pool <TIMING_POOL_JSON> \
+  --protocol mlp/configs/protocol_hhz_v1.yaml \
+  --output <VALIDATION_REPORT_JSON> \
+  --device cuda:0 --batch-size <BATCH_SIZE> --gradient-samples <N_GRADIENT_SAMPLES>
+
+# Only after an authorised human review of the report:
+conda run --no-capture-output -n knesvr_torch \
+  python -m mlp.scripts.approve_formal_checkpoint \
+  --checkpoint <FORMAL_CANDIDATE_CHECKPOINT> \
+  --validation-report <VALIDATION_REPORT_JSON> \
+  --approved-output <APPROVED_MLP_CHECKPOINT> \
+  --review-note "<AUTHORSED_REVIEW_NOTE>"
+```
+
+The approval command accepts only an `unvalidated` non-functional formal
+candidate and a matching `awaiting_manual_review` report, then writes a new
+approved file with `approved_by_manual_review`.  It does not modify the source
+checkpoint or existing validation metadata.
+
 ## Gate-only dry check
 
 This command is safe before a formal run: it proves the package entry and

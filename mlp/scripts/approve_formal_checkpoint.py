@@ -9,7 +9,7 @@ from pathlib import Path
 
 import torch
 
-from modules.module_05_signal_decoder.provenance import sha256_file
+from mlp.modules.module_05_signal_decoder.provenance import sha256_file
 
 
 def approve_formal_checkpoint(checkpoint_path: str | Path, validation_report: str | Path, approved_output: str | Path, review_note: str) -> dict[str, object]:
