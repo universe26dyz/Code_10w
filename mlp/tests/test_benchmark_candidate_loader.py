@@ -9,7 +9,7 @@ def test_benchmark_loader_accepts_unvalidated_nonfunctional_formal_candidate(tmp
     checkpoint = tmp_path / "candidate.pth"
     write_functional_checkpoint(checkpoint)
     payload = torch.load(checkpoint, weights_only=False)
-    payload.update({"functional_fixture": False, "scientific_checkpoint": True, "formal_candidate": True, "validation_status": "unvalidated"})
+    payload.update({"functional_fixture": False, "scientific_checkpoint": True, "formal_candidate": True, "validation_status": "unvalidated", "dataset_schema": "mlp_rr_synthetic/v1", "dataset_split_mode": "rhythm"})
     torch.save(payload, checkpoint)
     decoder = load_frozen_mlp_decoder_for_benchmark(checkpoint, dataset, "mlp/configs/protocol_hhz_v1.yaml", device=torch.device("cpu"))
     assert decoder.training is False

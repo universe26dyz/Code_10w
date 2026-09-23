@@ -37,7 +37,7 @@ def _record(protocol: TradProtocol) -> dict[str, Any]:
 
 
 def _validate_checkpoint(checkpoint: dict[str, Any], protocol: TradProtocol, dataset: Any, allow_functional_fixture: bool, *, purpose: str) -> None:
-    required = {"state_dict", "architecture", "input_normalization", "output_normalization", "protocol_hhz_v1", "parameter_ranges", "functional_fixture", "formal_candidate", "validation_status", "timing9_min_ms", "timing9_max_ms"}
+    required = {"state_dict", "architecture", "input_normalization", "output_normalization", "protocol_hhz_v1", "parameter_ranges", "functional_fixture", "formal_candidate", "validation_status", "timing9_min_ms", "timing9_max_ms", "train_timing9_min_ms", "train_timing9_max_ms"}
     missing = required.difference(checkpoint)
     if missing:
         raise ValueError(f"MLP checkpoint lacks required compatibility metadata: {sorted(missing)}")
@@ -52,22 +52,26 @@ def _validate_checkpoint(checkpoint: dict[str, Any], protocol: TradProtocol, dat
     else:
         if not bool(checkpoint["formal_candidate"]):
             raise ValueError("Non-functional MLP checkpoint must be labelled formal_candidate=true.")
+        if checkpoint.get("dataset_schema") != "mlp_rr_synthetic/v1":
+            raise ValueError("Non-functional MLP checkpoint must declare dataset_schema='mlp_rr_synthetic/v1'; legacy subject/timing-pool checkpoints are rejected.")
+        if checkpoint.get("dataset_split_mode") != "rhythm":
+            raise ValueError("Non-functional MLP checkpoint must declare dataset_split_mode='rhythm'; legacy subject/timing-pool checkpoints are rejected.")
         status = checkpoint["validation_status"]
         if purpose == "online" and status != "approved_by_manual_review":
             raise ValueError(f"formal candidate validation_status={status!r}; awaiting_manual_review approval is required before online reconstruction.")
         if purpose == "benchmark" and status not in {"unvalidated", "awaiting_manual_review", "approved_by_manual_review"}:
             raise ValueError(f"Benchmark formal candidate has unsupported validation_status={status!r}.")
-    lower, upper = np.asarray(checkpoint["timing9_min_ms"], dtype=np.float64), np.asarray(checkpoint["timing9_max_ms"], dtype=np.float64)
+    lower, upper = np.asarray(checkpoint["train_timing9_min_ms"], dtype=np.float64), np.asarray(checkpoint["train_timing9_max_ms"], dtype=np.float64)
     if lower.shape != (9,) or upper.shape != (9,):
-        raise ValueError("MLP checkpoint timing range must have exactly nine dimensions.")
+        raise ValueError("MLP checkpoint training timing domain must have exactly nine dimensions.")
     timing = dataset.timing.detach().cpu().numpy().astype(np.float64)
     bad = np.logical_or(timing < lower - TIMING_STORAGE_TOLERANCE_MS, timing > upper + TIMING_STORAGE_TOLERANCE_MS)
     if bad.any():
         details = []
         for dimension in np.flatnonzero(bad.any(axis=0)):
             values = np.unique(timing[bad[:, dimension], dimension]).tolist()
-            details.append(f"timing{dimension + 2}: observed={values}, training=[{lower[dimension]}, {upper[dimension]}]")
-        raise ValueError("Online timing is outside the MLP training range; no extrapolation is allowed: " + "; ".join(details))
+            details.append(f"timing{dimension + 2}: observed={values}, training_domain=[{lower[dimension]}, {upper[dimension]}]")
+        raise ValueError("Online timing is outside the MLP training timing domain; no extrapolation is allowed: " + "; ".join(details))
 
 
 def _load_decoder(checkpoint_path: str | Path, dataset: Any, protocol_yaml: str | Path, *, allow_functional_fixture: bool, device: torch.device, purpose: str) -> FrozenMLPSignalDecoder:

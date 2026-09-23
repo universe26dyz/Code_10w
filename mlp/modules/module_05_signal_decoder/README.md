@@ -17,6 +17,8 @@ normalized for training and online use.  `FrozenMLPSignalDecoder` freezes
 parameters and keeps BatchNorm in evaluation mode while preserving gradients
 through T1/T2/B1; it never uses `torch.no_grad()` in `forward`.
 
-Dataset metadata and the checkpoint record the RR protocol, rhythm split, and
-timing domain.  Subject/timing-pool workflow sources are retained under
+Dataset metadata and the checkpoint record the RR protocol, rhythm split, the
+overall synthetic timing range, and the stricter training-rhythm timing domain.
+Formal online loading rejects timing outside that training domain and rejects
+non-RR/legacy checkpoint metadata. Subject/timing-pool workflow sources are retained under
 `archive/legacy_subject_timing_mlp/`, but are not active import or CLI paths.

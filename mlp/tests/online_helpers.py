@@ -16,7 +16,7 @@ def write_observations(path: Path) -> QuantPointDataset:
 
 def write_functional_checkpoint(path: Path, timing_min=60.0, timing_max=80.0) -> None:
     model = MdmSignalMLP()
-    torch.save({"state_dict": model.state_dict(), "architecture": "12-200-200-200-10", "input_normalization": "T1/1000,T2/1000,B1,timing9/1000", "output_normalization": "raw_l2_normalized", "protocol_hhz_v1": {"tr_ms": 3.2, "vps": 32, "fa_deg": [45.0, 45.0, 45.0], "ti_ms": [50.0, 150.0], "t2prep_ms": [35.0, 45.0, 55.0], "n_ramp_up": 10}, "parameter_ranges": {"t1_ms": [20, 2500], "t2_ms": [5, 200], "b1": [0.1, 1.2], "constraint": "T1>T2"}, "functional_fixture": True, "formal_candidate": False, "validation_status": "functional_smoke", "scientific_checkpoint": False, "timing9_min_ms": [timing_min] * 9, "timing9_max_ms": [timing_max] * 9}, path)
+    torch.save({"state_dict": model.state_dict(), "architecture": "12-200-200-200-10", "input_normalization": "T1/1000,T2/1000,B1,timing9/1000", "output_normalization": "raw_l2_normalized", "protocol_hhz_v1": {"tr_ms": 3.2, "vps": 32, "fa_deg": [45.0, 45.0, 45.0], "ti_ms": [50.0, 150.0], "t2prep_ms": [35.0, 45.0, 55.0], "n_ramp_up": 10}, "parameter_ranges": {"t1_ms": [20, 2500], "t2_ms": [5, 200], "b1": [0.1, 1.2], "constraint": "T1>T2"}, "functional_fixture": True, "formal_candidate": False, "validation_status": "functional_smoke", "scientific_checkpoint": False, "timing9_min_ms": [timing_min] * 9, "timing9_max_ms": [timing_max] * 9, "train_timing9_min_ms": [timing_min] * 9, "train_timing9_max_ms": [timing_max] * 9}, path)
 
 
 def recon_config(checkpoint: Path) -> dict:

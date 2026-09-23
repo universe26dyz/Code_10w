@@ -7,7 +7,7 @@ from evaluation.scmr.map_domain_psf import (
     reproject_trad_exported_maps,
     reproject_volume_to_native_map_psf,
 )
-from evaluation.scmr.run_map_domain_psf_comparison import run
+from evaluation.scmr.run_map_domain_psf_comparison import _reprojection_provenance, run
 
 
 def _grid(*, translation=(12.0, 12.0, 12.0), rotation=None):
@@ -110,3 +110,8 @@ def test_2dfit_cli_writes_nonoverwriting_machine_outputs_and_manifest(tmp_path):
     assert manifest["domain"] == "map" and not manifest["bloch_used"] and not manifest["dictionary_used"]
     assert manifest["n_samples"] == 32
     assert (output / "T1_native_map_domain_psf_000.npz").is_file()
+
+
+def test_shared_svr_provenance_names_geometry_and_decoder_independently():
+    provenance = _reprojection_provenance("shared_svr", "FrozenMLP", "frozen_mlp_B6")
+    assert provenance == {"reconstruction_method": "shared_svr", "geometry_reprojection_path": "shared_svr_prepared_geometry_final_poses", "decoder_type": "FrozenMLP", "run_label": "frozen_mlp_B6"}

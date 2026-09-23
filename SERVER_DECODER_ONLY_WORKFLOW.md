@@ -20,6 +20,7 @@ currently configured dataset layout.
 ```bash
 set -euo pipefail
 export CODE10W_ROOT=/data/dengyz/code/Code_10w
+export CODE10W_ENV=cr_dreme
 export DATA_ROOT=/data/dengyz/dataset/Code_10w_v1
 export PREPROCESSED_ROOT="$DATA_ROOT/Code_10w_preprocessed"
 export PREPARED_ROOT="$DATA_ROOT/Code_10w_prepared"
@@ -33,15 +34,19 @@ test -f config/reference_paths.yaml
 test -f "$NATIVE_REFERENCE_ROOT/native_reference_manifest.json"
 test -f "$MYOCARDIUM_MASK_ROOT/manifest.json"
 test -f "$MYOCARDIUM_MASK_ROOT/sax_myocardium_masks.npz"
-conda run --no-capture-output -n knesvr_torch \
+conda run --no-capture-output -n "$CODE10W_ENV" \
   python -m scripts.check_server_environment --mode formal-mlp \
   --output "$RUNS_ROOT/preflight/formal_mlp_environment.json"
-conda run --no-capture-output -n knesvr_torch python -c \
+conda run --no-capture-output -n "$CODE10W_ENV" python -c \
   "from trad.evaluation.scmr.reference_paths import load_reference_paths; p=load_reference_paths('config/reference_paths.yaml'); assert not p.skip_metrics, p.warnings; print(p)"
 ```
 
 `CODE10W_ROOT` is the existing server checkout.  `PREPROCESSED_ROOT` is the
 existing directory containing `<subject>/<stack>/preprocessed.mat`.
+`CODE10W_ENV=cr_dreme` is the current repository-configured server Conda
+environment (`configs/deployment_paths.example.yaml`).  If the server uses a
+different environment name, change only this variable; do not change any
+scientific YAML.
 `PREPARED_ROOT` is the existing or new prepared-observation root.
 `RUNS_ROOT` is a new experiment root: each child output below must be absent or
 empty.  `SUBJECT_ID=CYJ` is required for the supplied CYJ reference bundles;
@@ -52,7 +57,7 @@ VPS=87 checkpoint.
 Before GPU reconstruction, also run:
 
 ```bash
-conda run --no-capture-output -n knesvr_torch \
+conda run --no-capture-output -n "$CODE10W_ENV" \
   python -m scripts.check_server_environment --mode reconstruction \
   --output "$RUNS_ROOT/preflight/reconstruction_environment.json"
 ```
@@ -73,7 +78,7 @@ done
 Otherwise create a new/empty `$PREPARED_ROOT` with the checked-in CYJ manifest:
 
 ```bash
-conda run --no-capture-output -n knesvr_torch \
+conda run --no-capture-output -n "$CODE10W_ENV" \
   python -m trad.scripts.prepare_all_observations \
   --manifest configs/subject_stack_manifest_CYJ_done.json \
   --preprocessed-root "$PREPROCESSED_ROOT" \
@@ -99,19 +104,19 @@ export MLP_CANDIDATE="$MLP_CANDIDATE_DIR/signal_simulator_best.pth"
 export MLP_VALIDATION="$MLP_CANDIDATE_DIR/formal_validation.json"
 export MLP_APPROVED="$RUNS_ROOT/mlp_offline/approved/signal_simulator_approved.pth"
 
-conda run --no-capture-output -n knesvr_torch \
+conda run --no-capture-output -n "$CODE10W_ENV" \
   python -m mlp.modules.module_05_signal_decoder.generate_rr_mlp_dataset \
   --config mlp/configs/rr_synthetic/formal_signalonly.yaml \
   --output-dir "$RR_DATASET_DIR"
 
-conda run --no-capture-output -n knesvr_torch \
+conda run --no-capture-output -n "$CODE10W_ENV" \
   python -m mlp.modules.module_05_signal_decoder.train_mlp \
   --config mlp/configs/rr_synthetic/formal_signalonly.yaml \
   --dataset-dir "$RR_DATASET_DIR" \
   --protocol mlp/configs/protocol_hhz_v1.yaml \
   --output-dir "$MLP_CANDIDATE_DIR"
 
-conda run --no-capture-output -n knesvr_torch \
+conda run --no-capture-output -n "$CODE10W_ENV" \
   python -m mlp.modules.module_05_signal_decoder.validate_formal_mlp \
   --checkpoint "$MLP_CANDIDATE" --dataset-dir "$RR_DATASET_DIR" \
   --protocol mlp/configs/protocol_hhz_v1.yaml --output "$MLP_VALIDATION" \
@@ -123,12 +128,36 @@ training output.  `MLP_CANDIDATE` is an existing file only after training.
 `MLP_VALIDATION` is a new validation-report file.  The validation command does
 not approve a checkpoint.
 
-After an authorized human has reviewed `$MLP_VALIDATION`, create a separate
-approved checkpoint.  The source candidate remains unchanged.  Replace the
-review note with the actual reviewer/date, not a placeholder.
+Before approval, run a real VPS=87 timing/fidelity audit.  The checked-in full
+manifest contains `CYJ`, `DYZ`, `HHZ`, and `HJL` plus DYL; DYL is deliberately
+excluded here.  This command reads prepared observations only for timing-domain
+coverage and signal-fidelity audit: it never fits the MLP or alters the
+candidate.  It fails if a listed subject is not VPS=87.  Confirm the four
+prepared subject roots exist first; if one is unavailable, supply only verified
+VPS=87 subject IDs and record that limitation in human review.
 
 ```bash
-conda run --no-capture-output -n knesvr_torch \
+export REAL_TIMING_VALIDATION="$MLP_CANDIDATE_DIR/real_timing_validation.json"
+conda run --no-capture-output -n "$CODE10W_ENV" \
+  python -m mlp.modules.module_05_signal_decoder.validate_real_timings \
+  --checkpoint "$MLP_CANDIDATE" --prepared-root "$PREPARED_ROOT" \
+  --subjects CYJ DYZ HHZ HJL --rr-dataset-dir "$RR_DATASET_DIR" \
+  --protocol mlp/configs/protocol_hhz_v1.yaml --output "$REAL_TIMING_VALIDATION" \
+  --device cuda:0 --samples-per-timing 16
+```
+
+This creates the new `$REAL_TIMING_VALIDATION` and sibling
+`real_timing_validation_per_source.csv`. Human review must inspect both the
+synthetic held-out report and this real VPS=87 report. If it says
+`training_domain_coverage_status: OUTSIDE_TRAINING_DOMAIN` or
+`approval_recommendation: do_not_approve`, do not approve the candidate.
+
+After an authorized human has reviewed both reports, create a separate approved
+checkpoint. The source candidate remains unchanged. Replace the review note
+with the actual reviewer/date, not a placeholder.
+
+```bash
+conda run --no-capture-output -n "$CODE10W_ENV" \
   python -m mlp.scripts.approve_formal_checkpoint \
   --checkpoint "$MLP_CANDIDATE" --validation-report "$MLP_VALIDATION" \
   --approved-output "$MLP_APPROVED" \
@@ -137,8 +166,9 @@ conda run --no-capture-output -n knesvr_torch \
 
 `MLP_APPROVED` is a new output file.  Use it, not the candidate, for online
 reconstruction.  Its `validation_status` must be `approved_by_manual_review`;
-the FrozenMLP loader verifies that state, the HHZ/VPS=87 protocol, architecture,
-normalization, parameter ranges and timing domain before optimization starts.
+the FrozenMLP loader verifies that state, active RR dataset schema/split,
+HHZ/VPS=87 protocol, architecture, normalization, parameter ranges and the
+strict training timing domain before optimization starts.
 
 ## 4. Decoder-only reconstructions and timing profiles
 
@@ -150,12 +180,12 @@ adds only the approved decoder checkpoint.
 export TRAD_RUN="$RUNS_ROOT/$SUBJECT_ID/trad_B6"
 export MLP_RUN="$RUNS_ROOT/$SUBJECT_ID/frozen_mlp_B6"
 
-conda run --no-capture-output -n knesvr_torch \
+conda run --no-capture-output -n "$CODE10W_ENV" \
   python -m trad.scripts.reconstruct_subject \
   --prepared-root "$PREPARED_ROOT" --subject-id "$SUBJECT_ID" \
   --config trad/configs/experiments_6k/B6.yaml --output "$TRAD_RUN"
 
-conda run --no-capture-output -n knesvr_torch \
+conda run --no-capture-output -n "$CODE10W_ENV" \
   python -m mlp.scripts.reconstruct_subject \
   --prepared-root "$PREPARED_ROOT" --subject-id "$SUBJECT_ID" \
   --config mlp_surrogate_v1/CYJ_B6/reconstruction.yaml --output "$MLP_RUN" \
@@ -184,23 +214,23 @@ export TRAD_EVAL="$TRAD_RUN/evaluation_map_domain_psf"
 export MLP_EVAL="$MLP_RUN/evaluation_map_domain_psf"
 export COMPARISON="$RUNS_ROOT/$SUBJECT_ID/trad_vs_frozen_mlp_comparison.json"
 
-conda run --no-capture-output -n knesvr_torch \
+conda run --no-capture-output -n "$CODE10W_ENV" \
   python -m trad.evaluation.scmr.run_map_domain_psf_comparison \
-  --method trad --subject-id "$SUBJECT_ID" \
+  --method shared_svr --decoder-type Bloch --run-label trad_B6 --subject-id "$SUBJECT_ID" \
   --t1-volume "$TRAD_RUN/T1_3D.nii.gz" --t2-volume "$TRAD_RUN/T2_3D.nii.gz" \
   --prepared-root "$PREPARED_ROOT" --final-poses "$TRAD_RUN/final_rigid_poses.json" \
   --native-reference "$NATIVE_REFERENCE_ROOT" --preprocessed-root "$PREPROCESSED_ROOT" \
   --mask-bundle "$MYOCARDIUM_MASK_ROOT" --n-samples 32 --seed 20260921 --output "$TRAD_EVAL"
 
-conda run --no-capture-output -n knesvr_torch \
+conda run --no-capture-output -n "$CODE10W_ENV" \
   python -m trad.evaluation.scmr.run_map_domain_psf_comparison \
-  --method trad --subject-id "$SUBJECT_ID" \
+  --method shared_svr --decoder-type FrozenMLP --run-label frozen_mlp_B6 --subject-id "$SUBJECT_ID" \
   --t1-volume "$MLP_RUN/T1_3D.nii.gz" --t2-volume "$MLP_RUN/T2_3D.nii.gz" \
   --prepared-root "$PREPARED_ROOT" --final-poses "$MLP_RUN/final_rigid_poses.json" \
   --native-reference "$NATIVE_REFERENCE_ROOT" --preprocessed-root "$PREPROCESSED_ROOT" \
   --mask-bundle "$MYOCARDIUM_MASK_ROOT" --n-samples 32 --seed 20260921 --output "$MLP_EVAL"
 
-conda run --no-capture-output -n knesvr_torch \
+conda run --no-capture-output -n "$CODE10W_ENV" \
   python -m trad.evaluation.scmr.compare_decoder_runs \
   --trad-map-metrics "$TRAD_EVAL/map_domain_psf_metrics.json" \
   --mlp-map-metrics "$MLP_EVAL/map_domain_psf_metrics.json" \
@@ -221,7 +251,7 @@ reconstruction result.  `BENCHMARK_OUTPUT` is a new JSON file and
 
 ```bash
 export BENCHMARK_OUTPUT="$RUNS_ROOT/mlp_offline/decoder_benchmark.json"
-conda run --no-capture-output -n knesvr_torch \
+conda run --no-capture-output -n "$CODE10W_ENV" \
   python -m mlp.modules.module_09_qc_benchmark.benchmark_signal_decoder \
   --checkpoint "$MLP_APPROVED" --rr-dataset-dir "$RR_DATASET_DIR" \
   --protocol mlp/configs/protocol_hhz_v1.yaml --output "$BENCHMARK_OUTPUT" \

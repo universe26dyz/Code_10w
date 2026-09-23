@@ -24,7 +24,7 @@ def test_approval_copies_only_review_metadata_after_sha_match(tmp_path):
     module = _load_script()
     source = tmp_path / "candidate.pth"; write_functional_checkpoint(source)
     payload = torch.load(source, weights_only=False)
-    payload.update({"functional_fixture": False, "scientific_checkpoint": True, "formal_candidate": True, "validation_status": "unvalidated"})
+    payload.update({"functional_fixture": False, "scientific_checkpoint": True, "formal_candidate": True, "validation_status": "unvalidated", "dataset_schema": "mlp_rr_synthetic/v1", "dataset_split_mode": "rhythm"})
     torch.save(payload, source)
     report = tmp_path / "validation.json"
     report.write_text(json.dumps({"checkpoint_sha256": sha256_file(source), "validation_status": "awaiting_manual_review"}), encoding="utf-8")

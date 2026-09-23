@@ -39,6 +39,16 @@ def _discover_prepared(root: Path, subject_id: str) -> list[Path]:
     return paths
 
 
+def _reprojection_provenance(method: str, decoder_type: str | None, run_label: str | None) -> dict[str, str | None]:
+    """Name geometry separately from the reconstruction signal decoder."""
+
+    if method in {"trad", "shared_svr"}:
+        if decoder_type not in {"Bloch", "FrozenMLP"}:
+            raise ValueError("shared_svr map-domain evaluation requires decoder_type=Bloch or FrozenMLP.")
+        return {"reconstruction_method": "shared_svr", "geometry_reprojection_path": "shared_svr_prepared_geometry_final_poses", "decoder_type": decoder_type, "run_label": run_label}
+    return {"reconstruction_method": "2dfit", "geometry_reprojection_path": "registered_slices", "decoder_type": None, "run_label": run_label}
+
+
 def _write_outputs(output: Path, results: dict[str, list]) -> dict[str, str]:
     hashes: dict[str, str] = {}
     for parameter, entries in results.items():
@@ -108,7 +118,7 @@ def run(args: argparse.Namespace) -> Path:
         raise FileExistsError(f"Refusing to overwrite non-empty output directory: {output}")
     output.mkdir(parents=True, exist_ok=True)
     volumes = {"T1": load_nifti_map(args.t1_volume), "T2": load_nifti_map(args.t2_volume)}
-    if args.method == "trad":
+    if args.method in {"trad", "shared_svr"}:
         grids = grids_from_trad_prepared(_discover_prepared(Path(args.prepared_root), args.subject_id), args.final_poses)
         results = reproject_trad_exported_maps(volumes, grids, n_samples=args.n_samples, seed=args.seed)
         geometry_source = str(Path(args.prepared_root).resolve())
@@ -131,10 +141,15 @@ def run(args: argparse.Namespace) -> Path:
             preprocessed_root=Path(args.preprocessed_root).resolve(), mask_bundle=args.mask_bundle,
             subject_id=args.subject_id,
         ))
+    provenance = _reprojection_provenance(args.method, getattr(args, "decoder_type", None), getattr(args, "run_label", None))
     manifest = {
         "schema": "map_domain_psf_reprojection/v1",
         "subject_id": args.subject_id,
+        # ``method=trad`` remains a CLI compatibility alias.  Scientific
+        # provenance below records the neutral shared-SVR geometry path and
+        # the actual decoder independently.
         "method": args.method,
+        **provenance,
         "domain": "map",
         "bloch_used": False,
         "dictionary_used": False,
@@ -158,7 +173,7 @@ def run(args: argparse.Namespace) -> Path:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--method", choices=("trad", "2dfit"), required=True)
+    parser.add_argument("--method", choices=("shared_svr", "trad", "2dfit"), required=True)
     parser.add_argument("--subject-id", required=True)
     parser.add_argument("--t1-volume", required=True)
     parser.add_argument("--t2-volume", required=True)
@@ -172,11 +187,15 @@ def main() -> None:
     parser.add_argument("--final-poses")
     parser.add_argument("--t1-registered-slices")
     parser.add_argument("--t2-registered-slices")
+    parser.add_argument("--decoder-type", choices=("Bloch", "FrozenMLP"))
+    parser.add_argument("--run-label", help="Optional human-readable run label; does not affect metric calculation.")
     args = parser.parse_args()
-    if args.method == "trad" and (not args.prepared_root or not args.final_poses):
-        parser.error("--method trad requires --prepared-root and --final-poses")
+    if args.method in {"trad", "shared_svr"} and (not args.prepared_root or not args.final_poses):
+        parser.error("--method shared_svr requires --prepared-root and --final-poses")
     if args.method == "2dfit" and (not args.t1_registered_slices or not args.t2_registered_slices):
         parser.error("--method 2dfit requires --t1-registered-slices and --t2-registered-slices")
+    if args.method in {"trad", "shared_svr"} and args.decoder_type is None:
+        parser.error("--method shared_svr requires --decoder-type Bloch or FrozenMLP")
     if args.native_reference and not args.preprocessed_root:
         parser.error("--native-reference requires --preprocessed-root")
     print(run(args))

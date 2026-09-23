@@ -138,7 +138,10 @@ def generate_rr_synthetic_dataset(output_dir: str | Path, settings: Mapping[str,
         for offset, (name, ids) in enumerate(splits.items())
     }
     np.savez_compressed(output / "rhythms.npz", **rhythms)
-    timing_min, timing_max = rhythms["timing9_ms"].min(0).tolist(), rhythms["timing9_ms"].max(0).tolist()
+    all_timing = np.asarray(rhythms["timing9_ms"], dtype=np.float64)
+    train_timing = all_timing[np.asarray(splits["train"], dtype=np.int64)]
+    timing_min, timing_max = all_timing.min(0).tolist(), all_timing.max(0).tolist()
+    train_timing_min, train_timing_max = train_timing.min(0).tolist(), train_timing.max(0).tolist()
     metadata = {
         "schema": "mlp_rr_synthetic/v1", "split_mode": "rhythm", "store_jacobian": bool(settings["store_jacobian"]),
         "rhythm_split_ids": {name: ids.tolist() for name, ids in splits.items()}, "sizes": sizes,
@@ -146,7 +149,7 @@ def generate_rr_synthetic_dataset(output_dir: str | Path, settings: Mapping[str,
         "rr_domain": {"hr_mean_bpm": [20.0, 120.0], "rr_cv": [0.0, 0.50], "generator": "mDM-inspired coherent normal RR histories; not byte-for-byte upstream mDM"},
         "parameter_ranges": {"t1_ms": [20, 2500], "t2_ms": [5, 200], "b1": [0.1, 1.2], "constraint": "T1>T2"},
         "timing9_min_ms": timing_min, "timing9_max_ms": timing_max,
-        "train_timing9_min_ms": timing_min, "train_timing9_max_ms": timing_max,
+        "train_timing9_min_ms": train_timing_min, "train_timing9_max_ms": train_timing_max,
         "seed": config.seed, "teacher_device": str(device),
     }
     (output / "dataset_metadata.json").write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")

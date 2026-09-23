@@ -1,11 +1,11 @@
 # Native reference and myocardium-mask migration guide
 
-The current server dataset search found no verified CYJ native-reference bundle
-or `myocardium_masks_v2` bundle under `/data/dengyz/dataset`.  Do not create
-substitutes.  The following existing local bundles are the only identified
-copy sources for this environment.
+The verified CYJ native-reference and `myocardium_masks_v2` bundles have now
+been copied to the configured server destinations. Do not create substitutes
+or replace the copied bundle contents. The following local paths remain the
+recorded source provenance.
 
-## Copy list
+## Recorded copy provenance
 
 | Local source | Server destination | Purpose | Used by |
 |---|---|---|---|
@@ -17,14 +17,13 @@ copy sources for this environment.
 | `myocardium_masks_v2/manifest.json` | same relative destination | Bundle schema and PASS status | PSF-K8 stage-2 validation |
 | `myocardium_masks_v2/sax_myocardium_masks.npz` | same relative destination | `myocardium_core_1px`, `myocardium_full`, and `myocardium_core_legacy` arrays | Myocardium metrics |
 
-Copy each directory recursively while preserving file names.  Do not replace the
-prepared source MAT files: the native-reference manifest intentionally checks
-their hashes under the server preprocessed root.
+The bundles were copied recursively with file names preserved. Do not replace
+the prepared source MAT files: the native-reference manifest intentionally
+checks their hashes under the server preprocessed root.
 
 ## Configure the server
 
-After transfer, edit `config/reference_paths.yaml` in the active Code_10w
-checkout:
+The active `config/reference_paths.yaml` is now configured as:
 
 ```yaml
 reference_data:
@@ -32,8 +31,12 @@ reference_data:
   myocardium_mask_root: /data/dengyz/dataset/Code_10w_v1/reference_data/CYJ/myocardium_masks_v2
 ```
 
-`trad.evaluation.scmr.reference_paths.load_reference_paths` validates only the
-real required files.  The PSF-K8 stage-2 command accepts explicit
+Before any formal evaluation, run the runtime/preflight checks in
+`SERVER_DECODER_ONLY_WORKFLOW.md`; they must confirm required files, native
+reference provenance, and myocardium manifest schema/PASS status. This update
+does not claim that a formal evaluation has been run. The
+`trad.evaluation.scmr.reference_paths.load_reference_paths` helper validates
+the configured required files. The PSF-K8 stage-2 command accepts explicit
 `--native-reference` and `--mask-bundle` overrides; otherwise it uses this
 configuration.  If either bundle is absent, it emits a clear warning, writes a
 `PARTIAL_EVALUATION_SKIPPED` manifest, and does not fabricate myocardium or

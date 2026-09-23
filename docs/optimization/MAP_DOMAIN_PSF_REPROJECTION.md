@@ -30,7 +30,7 @@ grids derive separately from its final T1 and T2 registered-slice NIfTIs.
 Example calls:
 
 ```bash
-python -m trad.evaluation.scmr.run_map_domain_psf_comparison --method trad \
+python -m trad.evaluation.scmr.run_map_domain_psf_comparison --method shared_svr --decoder-type Bloch \
   --subject-id SUBJECT --t1-volume T1_3D.nii.gz --t2-volume T2_3D.nii.gz \
   --prepared-root PREPARED --final-poses final_rigid_poses.json \
   --n-samples 32 --seed 20260921 --output OUTPUT
