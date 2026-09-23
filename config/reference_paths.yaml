@@ -1,5 +1,5 @@
 # Optional server-side evaluation data.  Set these after copying the verified
 # CYJ bundles described in REFERENCE_DATA_MIGRATION_GUIDE.md.
 reference_data:
-  native_reference_root: null
-  myocardium_mask_root: null
+  native_reference_root: /data/dengyz/dataset/Code_10w_v1/reference_data/CYJ/native_reference_2d
+  myocardium_mask_root: /data/dengyz/dataset/Code_10w_v1/reference_data/CYJ/myocardium_masks_v2
