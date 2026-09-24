@@ -232,6 +232,8 @@ def write_range_audit(
     loaded: Mapping[str, Mapping[str, np.ndarray]],
     run_root: str | Path,
     output: str | Path,
+    *,
+    method_label: str = "Trad",
 ) -> dict[str, Any]:
     """Audit physical map values without altering or reprojecting any model field."""
 
@@ -255,7 +257,8 @@ def write_range_audit(
     physical_bounds = {"T1_ms": [5.0, 2500.0], "T2_ms": [5.0, 200.0], "B1": [0.1, 1.2]}
     bounds_pass = bool(np.all((t1 >= 5.0) & (t1 <= 2500.0)) and np.all((t2 >= 5.0) & (t2 <= 200.0)))
     summary: dict[str, Any] = {
-        "scope": "read-only existing Trad outputs and verified native reference; no reconstruction/preprocessing rerun",
+        "scope": f"read-only existing {method_label} outputs and verified native reference; no reconstruction/preprocessing rerun",
+        "method_label": method_label,
         "quantiles": ["min", "p1", "p5", "p25", "p50", "p75", "p95", "p99", "max"],
         "exported_3d_fields": fields,
         "native_reference_global_range": {parameter: _summary(np.concatenate(values)) for parameter, values in native_values.items()},
@@ -283,7 +286,7 @@ def write_range_audit(
         "",
         "## Unit chain",
         "",
-        "T1/T2/B1 are produced by the INR as physical fields (ms/ms/unitless). Only observed signal intensity is normalized for training; amplitude is multiplied by the recorded subject scale on export and signal reprojection. T1/T2 are not multiplied by this scale at export or native-plane reprojection.",
+        f"T1/T2/B1 are produced by the {method_label} INR as physical fields (ms/ms/unitless). Only observed signal intensity is normalized for training; amplitude is multiplied by the recorded subject scale on export and signal reprojection. T1/T2 are not multiplied by this scale at export or native-plane reprojection.",
         "",
         "## Result",
         "",

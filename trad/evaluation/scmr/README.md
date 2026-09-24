@@ -37,6 +37,34 @@ conda run --no-capture-output -n knesvr_torch python -m trad.evaluation.scmr.run
 
 Figure 3/AHA is intentionally not implemented (`SKIPPED / ROI_PENDING`).
 
+## Formal decoder-pair PSF postprocessing
+
+`run_decoder_pair_evaluation` is a read-only second-stage evaluator. It reads
+two already-complete map-domain PSF evaluation directories (Bloch and
+FrozenMLP), their existing 3-D run exports, the same verified native-reference
+bundle, and the SAX myocardium bundle. It does not rerun reconstruction or
+PSF reprojection, and refuses to write into a non-empty output directory.
+
+```bash
+python -m trad.evaluation.scmr.run_decoder_pair_evaluation \
+  --subject-id CYJ \
+  --trad-eval /runs/CYJ/trad/map_domain_psf \
+  --mlp-eval /runs/CYJ/frozen_mlp/map_domain_psf \
+  --trad-run /runs/CYJ/trad \
+  --mlp-run /runs/CYJ/frozen_mlp \
+  --native-reference /references/CYJ/native_reference \
+  --preprocessed-root /prepared/preprocessed \
+  --mask-bundle /references/CYJ/myocardium_mask \
+  --legacy-source /path/to/2D_fit_first \
+  --output /runs/CYJ/evaluation/decoder_pair_full_evaluation
+```
+
+It rejects mismatched decoder identities, shared-SVR map-domain PSF contracts,
+native-reference manifest hashes, or reference arrays. Final pose values are
+not compared because each reconstruction independently optimizes them. Figure
+1 is through-plane 3-D continuity QC; Figure 2 and all-slice panels are
+PSF-matched native-plane comparisons on paired common support.
+
 Legacy-component mapping:
 
 - `make_figure1_throughplane_svr.py` and candidate montage code → modified
