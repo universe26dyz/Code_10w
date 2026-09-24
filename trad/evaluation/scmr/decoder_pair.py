@@ -82,8 +82,16 @@ def _require_shared_contract(trad: EvaluationArtifact, mlp: EvaluationArtifact) 
         "geometry_reprojection_path",
         "geometry_source",
         "psf_implementation",
+        "psf_source",
         "physical_resolution_thickness_source",
     )
+    for label, artifact in (("Trad", trad), ("MLP", mlp)):
+        missing = [field for field in fields if artifact.manifest.get(field) is None or artifact.manifest.get(field) == ""]
+        native_reference_sha = (artifact.manifest.get("native_reference") or {}).get("manifest_sha256")
+        if native_reference_sha is None or native_reference_sha == "":
+            missing.append("native_reference.manifest_sha256")
+        if missing:
+            raise ValueError(f"{label} PSF manifest lacks required formal contract fields: {missing}.")
     for field in fields:
         if trad.manifest.get(field) != mlp.manifest.get(field):
             raise ValueError(f"Trad/MLP PSF manifest mismatch for {field}: {trad.manifest.get(field)!r} != {mlp.manifest.get(field)!r}.")
@@ -478,7 +486,10 @@ def render_paired_figure1(reference: Any, trad_run: str | Path, mlp_run: str | P
         native_plane = _sample_plane_shaped(native_volume, np.linalg.inv(native[key].affine), world, plane_shape, order=0)
         mask = np.isfinite(native_plane) & (native_plane > 0)
         source = native_volume[:, :, reference_group].T
-        rendered = [(source, "Native SAX + cut line", "source")]
+        rendered = [
+            (source, "Native SAX + cut line", "source"),
+            (native_plane, "Native through-plane (nearest)", "plane"),
+        ]
         for method, run in runs.items():
             path = run / f"{parameter}_3D.nii.gz"
             if not path.is_file():
@@ -500,6 +511,23 @@ def render_paired_figure1(reference: Any, trad_run: str | Path, mlp_run: str | P
     figure.savefig(target, dpi=320, bbox_inches="tight")
     figure.savefig(target.with_suffix(".pdf"), bbox_inches="tight")
     plt.close(figure)
-    metadata = {"purpose": "through-plane continuity QC; not PSF-matched native-plane quantitative comparison", "plane_axis": axis_name, "plane_index": index, "reference_sax_group": reference_group, "same_world_plane_check": "PASS", "native_interpolation": "nearest-neighbor", "reconstruction_interpolation": "linear", "png": str(target), "pdf": str(target.with_suffix(".pdf"))}
+    metadata = {
+        "purpose": "through-plane continuity QC; not PSF-matched native-plane quantitative comparison",
+        "scientific_panels": ["Native SAX + cut line", "Native through-plane (nearest)", "Bloch 3-D through-plane (linear)", "FrozenMLP 3-D through-plane (linear)"],
+        "plane_axis": axis_name,
+        "plane_index": index,
+        "reference_sax_group": reference_group,
+        "world_plane_affine_source": str(reference.figure1_stacks["t1"]),
+        "world_point_count": int(world.shape[0]),
+        "plane_shape": list(plane_shape),
+        "physical_extent_mm": list(extent),
+        "same_world_plane_check": "PASS",
+        "native_interpolation": "nearest-neighbor",
+        "reconstruction_interpolation": "linear",
+        "display_ranges_ms": {parameter: list(DISPLAY_RANGES_MS[parameter]) for parameter in PARAMETERS},
+        "colorbars": colorbars.metadata,
+        "png": str(target),
+        "pdf": str(target.with_suffix(".pdf")),
+    }
     (root / "figure1_metadata.json").write_text(json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return metadata

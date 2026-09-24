@@ -13,6 +13,9 @@ def _write_pair_eval(root, *, decoder_type, seed=7, native_offset=0.0, final_pos
         "reconstruction_method": "shared_svr",
         "geometry_reprojection_path": "shared_svr_prepared_geometry_final_poses",
         "geometry_source": "/prepared/CYJ",
+        "psf_implementation": "map_domain_psf.reproject_volume_to_native_map_psf",
+        "psf_source": "nesvor.svr.reconstruction.simulate_slices",
+        "physical_resolution_thickness_source": "prepared observations",
         "pose_source": final_pose_source or "/runs/final_rigid_poses.json",
         "domain": "map",
         "n_samples": 32,
@@ -83,6 +86,36 @@ def test_load_decoder_pair_rejects_native_reference_value_mismatch(tmp_path):
     mlp = _write_pair_eval(tmp_path / "mlp", decoder_type="FrozenMLP", native_offset=1.0)
 
     with pytest.raises(ValueError, match="native-reference value mismatch for T1/sax"):
+        load_decoder_pair("CYJ", trad, mlp)
+
+
+@pytest.mark.parametrize("field", ("psf_implementation", "psf_source"))
+def test_load_decoder_pair_rejects_missing_required_psf_contract_field(tmp_path, field):
+    from trad.evaluation.scmr.decoder_pair import load_decoder_pair
+
+    trad = _write_pair_eval(tmp_path / "trad", decoder_type="Bloch")
+    mlp = _write_pair_eval(tmp_path / "mlp", decoder_type="FrozenMLP")
+    for root in (trad, mlp):
+        manifest_path = root / "map_domain_psf_manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        manifest.pop(field)
+        manifest_path.write_text(json.dumps(manifest))
+
+    with pytest.raises(ValueError, match=field):
+        load_decoder_pair("CYJ", trad, mlp)
+
+
+def test_load_decoder_pair_rejects_different_psf_source(tmp_path):
+    from trad.evaluation.scmr.decoder_pair import load_decoder_pair
+
+    trad = _write_pair_eval(tmp_path / "trad", decoder_type="Bloch")
+    mlp = _write_pair_eval(tmp_path / "mlp", decoder_type="FrozenMLP")
+    manifest_path = mlp / "map_domain_psf_manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["psf_source"] = "other.psf.source"
+    manifest_path.write_text(json.dumps(manifest))
+
+    with pytest.raises(ValueError, match="psf_source"):
         load_decoder_pair("CYJ", trad, mlp)
 
 
@@ -170,3 +203,7 @@ def test_decoder_pair_entry_writes_read_only_metrics_and_paired_visualizations(t
     assert summary["read_only_scope"].startswith("existing reconstruction volumes")
     assert summary["selected_representative_groups"] == {"sax": 0, "2ch": 0, "4ch": 0}
     assert summary["timing_summary_sources"]["optimization_speedup_bloch_over_frozen_mlp"] == 2.0
+    figure1 = summary["figure1"]
+    assert figure1["scientific_panels"] == ["Native SAX + cut line", "Native through-plane (nearest)", "Bloch 3-D through-plane (linear)", "FrozenMLP 3-D through-plane (linear)"]
+    for field in ("world_plane_affine_source", "world_point_count", "plane_shape", "physical_extent_mm", "native_interpolation", "reconstruction_interpolation", "same_world_plane_check", "display_ranges_ms", "colorbars"):
+        assert field in figure1
