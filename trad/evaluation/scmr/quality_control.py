@@ -16,6 +16,7 @@ from .reference_2d import NativeReference, STACKS
 DISPLAY_RANGES_MS = {"T1": (0.0, 2500.0), "T2": (0.0, 200.0)}
 RESIDUAL_RANGES_MS = {"T1": (0.0, 300.0), "T2": (0.0, 30.0)}
 _LEGACY_ASSET_RELATIVE = Path("python/visualization/assets/colormaps")
+_VENDORED_ASSET_ROOT = Path(__file__).resolve().parent / "assets" / "colormaps"
 _LEGACY_FILES = {
     "T1": ("Lipari", "lipari.txt"),
     "T2": ("Navia", "navia.txt"),
@@ -37,14 +38,20 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def load_legacy_scmr_colorbars(legacy_root: str | Path) -> SCMRColorbars:
-    """Load the exact Lipari/Navia LUT text assets used by old SCMR figures."""
+def load_legacy_scmr_colorbars(legacy_root: str | Path | None = None) -> SCMRColorbars:
+    """Load exact legacy LUTs from an explicit override or vendored assets."""
 
     from matplotlib import colors
     from matplotlib import pyplot as plt
 
-    root = Path(legacy_root).expanduser().resolve()
-    asset_root = root / _LEGACY_ASSET_RELATIVE
+    if legacy_root is None:
+        asset_root = _VENDORED_ASSET_ROOT
+        source_type = "vendored_exact_legacy_asset"
+        source_root = None
+    else:
+        source_root = Path(legacy_root).expanduser().resolve()
+        asset_root = source_root / _LEGACY_ASSET_RELATIVE
+        source_type = "external_legacy_override"
     mapping: dict[str, Any] = {}
     source_assets: dict[str, dict[str, str]] = {}
     for parameter, (name, filename) in _LEGACY_FILES.items():
@@ -61,14 +68,17 @@ def load_legacy_scmr_colorbars(legacy_root: str | Path) -> SCMRColorbars:
         cmap.set_bad("black")
         cmap.set_under("black")
         mapping[parameter] = cmap
-        source_assets[parameter] = {"name": name, "path": str(path), "sha256": _sha256(path), "zero_and_invalid": "black"}
+        source_assets[parameter] = {"name": name, "path": str(path), "sha256": _sha256(path), "source_type": source_type, "zero_and_invalid": "black"}
     return SCMRColorbars(
         mapping=mapping,
         residual=plt.get_cmap("magma"),
         metadata={
-            "legacy_colormap_source": str(root),
-            "legacy_colormap_source_file": "python/visualization/colormaps.py",
-            "legacy_plotting_source_file": "python/visualization/plotting.py",
+            "asset_source_type": source_type,
+            "asset_root": str(asset_root),
+            "external_legacy_source": str(source_root) if source_root is not None else None,
+            "asset_provenance_file": str(_VENDORED_ASSET_ROOT / "PROVENANCE.json") if legacy_root is None else None,
+            "legacy_colormap_source_file": "python/visualization/colormaps.py" if source_root is not None else None,
+            "legacy_plotting_source_file": "python/visualization/plotting.py" if source_root is not None else None,
             "mapping_colormaps": source_assets,
             "residual_colormap_name": "magma",
             "t1_display_range_ms": list(DISPLAY_RANGES_MS["T1"]),

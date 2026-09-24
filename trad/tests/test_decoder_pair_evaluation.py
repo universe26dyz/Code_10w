@@ -192,7 +192,7 @@ def test_decoder_pair_entry_writes_read_only_metrics_and_paired_visualizations(t
 
     subject, trad_eval, mlp_eval, trad_run, mlp_run, reference_root, preprocessed_root, mask_bundle = _write_full_pair_fixture(tmp_path)
     output = tmp_path / "decoder_pair"
-    result = run(Namespace(subject_id=subject, trad_eval=trad_eval, mlp_eval=mlp_eval, trad_run=trad_run, mlp_run=mlp_run, native_reference=reference_root, preprocessed_root=preprocessed_root, mask_bundle=mask_bundle, legacy_source="/home/universe/SVR/multimap_postprogramming/MultiMapCode/method_repositories/2D_fit_first", output=output, plane_axis="x", plane_index=4, figure1_reference_group=0))
+    result = run(Namespace(subject_id=subject, trad_eval=trad_eval, mlp_eval=mlp_eval, trad_run=trad_run, mlp_run=mlp_run, native_reference=reference_root, preprocessed_root=preprocessed_root, mask_bundle=mask_bundle, legacy_source=None, output=output, plane_axis="x", plane_index=4, figure1_reference_group=0))
 
     assert result == output
     assert (output / "figure2" / "Figure2_T1_native_bloch_mlp_psf.png").is_file()
@@ -204,6 +204,7 @@ def test_decoder_pair_entry_writes_read_only_metrics_and_paired_visualizations(t
     assert summary["selected_representative_groups"] == {"sax": 0, "2ch": 0, "4ch": 0}
     assert summary["timing_summary_sources"]["optimization_speedup_bloch_over_frozen_mlp"] == 2.0
     figure1 = summary["figure1"]
+    assert figure1["colorbars"]["asset_source_type"] == "vendored_exact_legacy_asset"
     assert figure1["scientific_panels"] == ["Native SAX + cut line", "Native through-plane (nearest)", "Bloch 3-D through-plane (linear)", "FrozenMLP 3-D through-plane (linear)"]
     for field in ("world_plane_affine_source", "world_point_count", "plane_shape", "physical_extent_mm", "native_interpolation", "reconstruction_interpolation", "same_world_plane_check", "display_ranges_ms", "colorbars"):
         assert field in figure1

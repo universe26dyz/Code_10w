@@ -1,0 +1,32 @@
+{
+  "schema": "scmr_vendored_exact_legacy_colormaps/v1",
+  "provenance_statement": "These are the exact files historically used by the local legacy 2D-fit-first SCMR visualization; they were not downloaded or regenerated for Code_10w.",
+  "source_project": "2D_fit_first local legacy source",
+  "source_project_root": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/method_repositories/2D_fit_first",
+  "legacy_readme": "python/visualization/assets/colormaps/README.md",
+  "upstream_name": "Fabio Crameri Scientific Colour Maps via the cmcrameri Matplotlib wrapper",
+  "upstream_version": "8.0",
+  "cmcrameri_wrapper_license": "MIT (as recorded by the local legacy asset README)",
+  "assets": [
+    {
+      "asset_name": "Lipari",
+      "parameter": "T1",
+      "source_path": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/method_repositories/2D_fit_first/python/visualization/assets/colormaps/lipari.txt",
+      "source_sha256": "59a26ca79c66da1674f21e4ef83dd6a428c7f1e768327fc4b09e3242b7b81829",
+      "vendored_path": "trad/evaluation/scmr/assets/colormaps/lipari.txt",
+      "vendored_sha256": "59a26ca79c66da1674f21e4ef83dd6a428c7f1e768327fc4b09e3242b7b81829",
+      "number_of_rows": 256,
+      "number_of_columns": 3
+    },
+    {
+      "asset_name": "Navia",
+      "parameter": "T2",
+      "source_path": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/method_repositories/2D_fit_first/python/visualization/assets/colormaps/navia.txt",
+      "source_sha256": "79c6235b421a120e24694dfac67bbbcbc21a3faed0a8a7c72ad8d3c7c41acbfb",
+      "vendored_path": "trad/evaluation/scmr/assets/colormaps/navia.txt",
+      "vendored_sha256": "79c6235b421a120e24694dfac67bbbcbc21a3faed0a8a7c72ad8d3c7c41acbfb",
+      "number_of_rows": 256,
+      "number_of_columns": 3
+    }
+  ]
+}

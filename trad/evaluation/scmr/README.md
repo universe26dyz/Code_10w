@@ -44,6 +44,8 @@ two already-complete map-domain PSF evaluation directories (Bloch and
 FrozenMLP), their existing 3-D run exports, the same verified native-reference
 bundle, and the SAX myocardium bundle. It does not rerun reconstruction or
 PSF reprojection, and refuses to write into a non-empty output directory.
+It uses the repository-vendored byte-identical legacy Lipari/Navia assets by
+default; `--legacy-source` remains an optional external override.
 
 ```bash
 python -m trad.evaluation.scmr.run_decoder_pair_evaluation \
@@ -55,7 +57,6 @@ python -m trad.evaluation.scmr.run_decoder_pair_evaluation \
   --native-reference /references/CYJ/native_reference \
   --preprocessed-root /prepared/preprocessed \
   --mask-bundle /references/CYJ/myocardium_mask \
-  --legacy-source /path/to/2D_fit_first \
   --output /runs/CYJ/evaluation/decoder_pair_full_evaluation
 ```
 

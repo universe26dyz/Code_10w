@@ -169,7 +169,7 @@ def main() -> None:
     parser.add_argument("--native-reference", required=True)
     parser.add_argument("--preprocessed-root", required=True)
     parser.add_argument("--mask-bundle", required=True)
-    parser.add_argument("--legacy-source", required=True)
+    parser.add_argument("--legacy-source", help="Optional external legacy asset override; defaults to vendored exact legacy LUTs.")
     parser.add_argument("--output", required=True)
     parser.add_argument("--plane-axis", choices=("x", "y"), default="x")
     parser.add_argument("--plane-index", type=int)
