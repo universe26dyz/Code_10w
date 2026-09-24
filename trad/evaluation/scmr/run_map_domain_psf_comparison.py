@@ -83,27 +83,44 @@ def _write_reference_comparison(
             masks = {key: np.asarray(data[key], dtype=bool) for key in ("myocardium_core_1px", "myocardium_full", "myocardium_core_legacy")}
     for parameter in ("T1", "T2"):
         field = "t1_ms" if parameter == "T1" else "t2_ms"
-        predicted = [entry.values for entry in results[parameter]]
-        support = [entry.support for entry in results[parameter]]
-        expected = [getattr(reference.stacks[stack], field) for stack in STACKS]
-        valid_reference = [reference.stacks[stack].valid_mask for stack in STACKS]
-        if len(predicted) != sum(values.shape[0] for values in expected):
-            raise ValueError("Reprojected slice count does not match verified native reference group count.")
-        if any(predicted[index].shape != item.shape for index, item in enumerate(np.concatenate(expected, axis=0))):
-            raise ValueError("Reprojected slice shape does not match verified native reference.")
-        prediction = np.stack(predicted)
-        supported = np.stack(support)
-        native = np.concatenate(expected, axis=0)
-        common = supported & np.concatenate(valid_reference, axis=0) & np.isfinite(prediction) & np.isfinite(native)
-        residual = np.where(common, prediction - native, np.nan).astype(np.float32)
+        total_groups = sum(getattr(reference.stacks[stack], field).shape[0] for stack in STACKS)
+        if len(results[parameter]) != total_groups:
+            raise ValueError(f"{parameter} reprojected group count={len(results[parameter])}, expected {total_groups} from verified native reference stacks.")
+        offset, stack_data, pooled = 0, {}, []
+        for stack in STACKS:
+            native = getattr(reference.stacks[stack], field)
+            valid = reference.stacks[stack].valid_mask
+            count = native.shape[0]
+            entries = results[parameter][offset:offset + count]
+            offset += count
+            predicted, support = [], []
+            for group, entry in enumerate(entries):
+                prediction = np.asarray(entry.values, dtype=np.float32)
+                supported = np.asarray(entry.support, dtype=bool)
+                if prediction.shape != native[group].shape:
+                    raise ValueError(f"{parameter}/{stack}/group={group} predicted_shape={prediction.shape}, reference_shape={native[group].shape}.")
+                if supported.shape != native[group].shape:
+                    raise ValueError(f"{parameter}/{stack}/group={group} support_shape={supported.shape}, reference_shape={native[group].shape}.")
+                predicted.append(prediction); support.append(supported)
+            prediction, supported = np.stack(predicted), np.stack(support)
+            common = supported & valid & np.isfinite(prediction) & np.isfinite(native)
+            residual = np.where(common, prediction - native, np.nan).astype(np.float32)
+            stack_data[stack] = {"prediction": prediction, "native": native, "common": common, "residual": residual}
+            pooled.append((native, prediction, common))
         target = output / f"{parameter}_native_map_domain_psf_comparison.npz"
-        np.savez_compressed(target, predicted_ms=prediction, native_reference_ms=native, residual_ms=residual, common_support=common)
+        arrays: dict[str, np.ndarray] = {"schema": np.asarray("map_domain_psf_comparison_stackwise/v1"), "stack_names": np.asarray(STACKS)}
+        for stack, values in stack_data.items():
+            arrays.update({f"{stack}_predicted_ms": values["prediction"], f"{stack}_native_reference_ms": values["native"], f"{stack}_residual_ms": values["residual"], f"{stack}_common_support": values["common"]})
+        np.savez_compressed(target, **arrays)
         hashes[target.name] = sha256(target)
-        metrics["global_common_support"][parameter] = agreement_metrics(native, prediction, common)
+        flattened = [(value[0].ravel(), value[1].ravel(), value[2].ravel()) for value in pooled]
+        metrics["global_common_support"][parameter] = agreement_metrics(np.concatenate([value[0] for value in flattened]), np.concatenate([value[1] for value in flattened]), np.concatenate([value[2] for value in flattened]))
         if masks is not None:
-            sax_count = reference.stacks["sax"].t1_ms.shape[0]
+            sax = stack_data["sax"]
+            if any(roi.shape != sax["common"].shape for roi in masks.values()):
+                raise ValueError("SAX myocardium ROI shape does not match SAX native PSF comparison shape.")
             metrics["sax_myocardium"][parameter] = {
-                key: agreement_metrics(native[:sax_count], prediction[:sax_count], common[:sax_count] & roi)
+                key: agreement_metrics(sax["native"], sax["prediction"], sax["common"] & roi)
                 for key, roi in masks.items()
             }
     metrics_path = output / "map_domain_psf_metrics.json"
