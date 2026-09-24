@@ -1,13 +1,16 @@
 import numpy as np
+import pytest
 
 from evaluation.scmr.map_domain_psf import (
     NativeGrid,
+    ReprojectionResult,
     grids_from_trad_prepared,
     reproject_2dfit_exported_maps,
     reproject_trad_exported_maps,
     reproject_volume_to_native_map_psf,
 )
-from evaluation.scmr.run_map_domain_psf_comparison import _reprojection_provenance, run
+from evaluation.scmr.metrics import agreement_metrics
+from evaluation.scmr.run_map_domain_psf_comparison import _reprojection_provenance, _write_reference_comparison, run
 
 
 def _grid(*, translation=(12.0, 12.0, 12.0), rotation=None):
@@ -115,3 +118,53 @@ def test_2dfit_cli_writes_nonoverwriting_machine_outputs_and_manifest(tmp_path):
 def test_shared_svr_provenance_names_geometry_and_decoder_independently():
     provenance = _reprojection_provenance("shared_svr", "FrozenMLP", "frozen_mlp_B6")
     assert provenance == {"reconstruction_method": "shared_svr", "geometry_reprojection_path": "shared_svr_prepared_geometry_final_poses", "decoder_type": "FrozenMLP", "run_label": "frozen_mlp_B6"}
+
+
+def _heterogeneous_reference_and_results():
+    from types import SimpleNamespace
+
+    shapes = {"sax": (2, 9, 9), "2ch": (1, 7, 11), "4ch": (1, 5, 8)}
+    stacks, results = {}, {"T1": [], "T2": []}
+    for stack_index, (stack, shape) in enumerate(shapes.items()):
+        base = np.arange(np.prod(shape), dtype=np.float32).reshape(shape) + 1000.0 + 100.0 * stack_index
+        stacks[stack] = SimpleNamespace(t1_ms=base, t2_ms=base / 20.0, valid_mask=np.ones(shape, dtype=bool))
+        for parameter, reference in (("T1", base), ("T2", base / 20.0)):
+            for group in range(shape[0]):
+                results[parameter].append(ReprojectionResult(reference[group] + stack_index + 1.0, np.ones(shape[1:], dtype=bool)))
+    return SimpleNamespace(stacks=stacks), results
+
+
+def test_reference_comparison_pools_heterogeneous_native_stacks_without_resampling(monkeypatch, tmp_path):
+    import evaluation.scmr.reference_2d as reference_2d
+
+    reference, results = _heterogeneous_reference_and_results()
+    monkeypatch.setattr(reference_2d, "load_verified_reference", lambda *_args: reference)
+    bundle = tmp_path / "masks"; bundle.mkdir()
+    (bundle / "manifest.json").write_text('{"schema":"exact_native_myocardium_bundle/v2","status":"PASS"}')
+    np.savez_compressed(bundle / "sax_myocardium_masks.npz", **{name: np.ones((2, 9, 9), dtype=bool) for name in ("myocardium_core_1px", "myocardium_full", "myocardium_core_legacy")})
+
+    _write_reference_comparison(tmp_path, results, reference_root=tmp_path, preprocessed_root=tmp_path, mask_bundle=str(bundle), subject_id="CYJ")
+
+    with np.load(tmp_path / "T1_native_map_domain_psf_comparison.npz", allow_pickle=False) as data:
+        assert data["sax_predicted_ms"].shape == (2, 9, 9)
+        assert data["2ch_predicted_ms"].shape == (1, 7, 11)
+        assert data["4ch_predicted_ms"].shape == (1, 5, 8)
+        assert data["sax_common_support"].shape == (2, 9, 9)
+    metrics = __import__("json").loads((tmp_path / "map_domain_psf_metrics.json").read_text())
+    pooled_reference = np.concatenate([reference.stacks[stack].t1_ms.ravel() for stack in ("sax", "2ch", "4ch")])
+    pooled_prediction = np.concatenate([np.stack([entry.values for entry in results["T1"][:2]]).ravel(), results["T1"][2].values.ravel(), results["T1"][3].values.ravel()])
+    expected = agreement_metrics(pooled_reference, pooled_prediction, np.ones(pooled_reference.shape, dtype=bool))
+    assert metrics["global_common_support"]["T1"]["N"] == 279
+    for key in ("bias_ms", "MAE_ms", "RMSE_ms"):
+        assert np.isclose(metrics["global_common_support"]["T1"][key], expected[key])
+    assert metrics["sax_myocardium"]["T1"]["myocardium_full"]["N"] == 162
+
+
+def test_reference_comparison_rejects_real_group_shape_mismatch(monkeypatch, tmp_path):
+    import evaluation.scmr.reference_2d as reference_2d
+
+    reference, results = _heterogeneous_reference_and_results()
+    monkeypatch.setattr(reference_2d, "load_verified_reference", lambda *_args: reference)
+    results["T2"][2] = ReprojectionResult(np.zeros((7, 10), dtype=np.float32), np.ones((7, 10), dtype=bool))
+    with pytest.raises(ValueError, match=r"T2/2ch/group=0.*predicted_shape=\(7, 10\).*reference_shape=\(7, 11\)"):
+        _write_reference_comparison(tmp_path, results, reference_root=tmp_path, preprocessed_root=tmp_path, mask_bundle=None, subject_id="CYJ")
