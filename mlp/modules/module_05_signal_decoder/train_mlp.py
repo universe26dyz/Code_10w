@@ -5,7 +5,9 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
 import random
+import tempfile
 import time
 from pathlib import Path
 from typing import Any, Mapping
@@ -164,7 +166,16 @@ def _check_loaded_split_sizes(metadata: Mapping[str, Any], splits: Mapping[str, 
             raise ValueError(f"{name}.h5 size does not match dataset_metadata.json.")
 
 
-def _checkpoint_metadata(metadata: Mapping[str, Any], protocol: Any, dataset_metadata_sha256: str, loss_settings: Mapping[str, float], seed: int) -> dict[str, Any]:
+def _training_contract(train_cfg: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "batch_size": int(train_cfg["batch_size"]), "learning_rate": float(train_cfg["learning_rate"]),
+        "optimizer": "Adam", "scheduler": "StepLR",
+        "scheduler_step_size": int(train_cfg["scheduler_step_size"]),
+        "scheduler_gamma": float(train_cfg["scheduler_gamma"]),
+    }
+
+
+def _checkpoint_metadata(metadata: Mapping[str, Any], protocol: Any, dataset_metadata_sha256: str, loss_settings: Mapping[str, float], seed: int, training_contract: Mapping[str, Any]) -> dict[str, Any]:
     return {
         "architecture": _ARCHITECTURE, "input_normalization": _INPUT_NORMALIZATION,
         "output_normalization": _OUTPUT_NORMALIZATION, "protocol_hhz_v1": _protocol_record(protocol),
@@ -175,6 +186,7 @@ def _checkpoint_metadata(metadata: Mapping[str, Any], protocol: Any, dataset_met
         "functional_fixture": False, "formal_candidate": True, "validation_status": "unvalidated",
         "parameter_ranges": _PARAMETER_RANGES, "mlp_loss": dict(loss_settings),
         "jacobian_target_units": metadata.get("jacobian_target_units"), "seed": seed,
+        "training_contract": dict(training_contract),
     }
 
 
@@ -195,6 +207,14 @@ def _restore_rng_state(checkpoint: Mapping[str, Any]) -> None:
         torch.cuda.set_rng_state_all(cuda_states)
 
 
+def _rewrite_history(path: Path, rows: list[dict[str, str]]) -> None:
+    with tempfile.NamedTemporaryFile("w", newline="", encoding="utf-8", dir=path.parent, prefix=f".{path.name}.", delete=False) as handle:
+        writer = csv.DictWriter(handle, fieldnames=_HISTORY_FIELDS)
+        writer.writeheader(); writer.writerows(rows); handle.flush(); os.fsync(handle.fileno())
+        temporary_path = Path(handle.name)
+    temporary_path.replace(path)
+
+
 def _history_rows(path: Path, expected_epoch: int) -> None:
     if not path.is_file():
         raise ValueError("Resume requires train_history.csv matching the checkpoint epoch.")
@@ -207,18 +227,22 @@ def _history_rows(path: Path, expected_epoch: int) -> None:
         epochs = [int(row["epoch"]) for row in rows]
     except (KeyError, ValueError) as error:
         raise ValueError("Resume history has invalid epochs.") from error
-    if epochs != list(range(1, expected_epoch + 1)):
-        raise ValueError("Resume history does not match the checkpoint epoch.")
+    if epochs == list(range(1, expected_epoch + 1)):
+        return
+    if epochs == list(range(1, expected_epoch + 2)):
+        _rewrite_history(path, rows[:-1])
+        return
+    raise ValueError("Resume history does not match the checkpoint epoch.")
 
 
-def _validate_resume(checkpoint: Mapping[str, Any], *, metadata: Mapping[str, Any], protocol: Any, dataset_metadata_sha256: str, loss_settings: Mapping[str, float], seed: int, configured_epochs: int) -> tuple[int, int, float]:
+def _validate_resume(checkpoint: Mapping[str, Any], *, metadata: Mapping[str, Any], protocol: Any, dataset_metadata_sha256: str, loss_settings: Mapping[str, float], seed: int, training_contract: Mapping[str, Any], configured_epochs: int) -> tuple[int, int, float]:
     expected = {
         "architecture": _ARCHITECTURE, "input_normalization": _INPUT_NORMALIZATION,
         "output_normalization": _OUTPUT_NORMALIZATION, "dataset_schema": "mlp_rr_synthetic/v1",
         "dataset_split_mode": "rhythm", "protocol_hhz_v1": _protocol_record(protocol),
         "parameter_ranges": _PARAMETER_RANGES, "mlp_loss": dict(loss_settings), "seed": seed,
         "dataset_metadata_sha256": dataset_metadata_sha256, "functional_fixture": False,
-        "formal_candidate": True, "validation_status": "unvalidated",
+        "formal_candidate": True, "validation_status": "unvalidated", "training_contract": dict(training_contract),
     }
     for key, value in expected.items():
         if checkpoint.get(key) != value:
@@ -247,6 +271,7 @@ def train_mlp(dataset_dir: str | Path, config: Mapping[str, Any], protocol_path:
     if batch_size < 2:
         raise ValueError("MLP BatchNorm training requires training.batch_size >= 2.")
     seed = int(train_cfg["seed"]); torch.manual_seed(seed); np.random.seed(seed); random.seed(seed)
+    training_contract = _training_contract(train_cfg)
     dataset_dir, output = Path(dataset_dir), Path(output_dir)
     loss_settings = _mlp_loss_settings(config.get("mlp_loss"))
     metadata_path = dataset_dir / "dataset_metadata.json"
@@ -282,7 +307,7 @@ def train_mlp(dataset_dir: str | Path, config: Mapping[str, Any], protocol_path:
         checkpoint = torch.load(resume_path, map_location=device, weights_only=False)
         if not isinstance(checkpoint, dict):
             raise ValueError("Resume checkpoint must be a mapping.")
-        last_epoch, best_epoch, best = _validate_resume(checkpoint, metadata=metadata, protocol=teacher_protocol, dataset_metadata_sha256=dataset_metadata_sha256, loss_settings=loss_settings, seed=seed, configured_epochs=configured_epochs)
+        last_epoch, best_epoch, best = _validate_resume(checkpoint, metadata=metadata, protocol=teacher_protocol, dataset_metadata_sha256=dataset_metadata_sha256, loss_settings=loss_settings, seed=seed, training_contract=training_contract, configured_epochs=configured_epochs)
         _history_rows(history_path, last_epoch)
         model.load_state_dict(checkpoint["state_dict"])
         optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
@@ -316,17 +341,17 @@ def train_mlp(dataset_dir: str | Path, config: Mapping[str, Any], protocol_path:
             is_best = valid_loss < best
             if is_best:
                 best, best_epoch = valid_loss, epoch
-                torch.save({"state_dict": model.state_dict(), "epoch": epoch, "best_epoch": best_epoch, "best_valid_mse": best, **_checkpoint_metadata(metadata, teacher_protocol, dataset_metadata_sha256, loss_settings, seed)}, output / "signal_simulator_best.pth")
+                torch.save({"state_dict": model.state_dict(), "epoch": epoch, "best_epoch": best_epoch, "best_valid_mse": best, **_checkpoint_metadata(metadata, teacher_protocol, dataset_metadata_sha256, loss_settings, seed, training_contract)}, output / "signal_simulator_best.pth")
             writer.writerow({"epoch": epoch, "train_mse": train_loss, "valid_mse": valid_loss, "lr": optimizer.param_groups[0]["lr"], "epoch_seconds": time.perf_counter() - epoch_start, "best_valid_mse": best, "best_epoch": best_epoch, "is_best": is_best})
             history_handle.flush()
-            torch.save({"state_dict": model.state_dict(), "optimizer_state_dict": optimizer.state_dict(), "scheduler_state_dict": scheduler.state_dict(), "epoch": epoch, "best_epoch": best_epoch, "best_valid_mse": best, **_checkpoint_metadata(metadata, teacher_protocol, dataset_metadata_sha256, loss_settings, seed), **_rng_state()}, output / "signal_simulator_last.pth")
+            torch.save({"state_dict": model.state_dict(), "optimizer_state_dict": optimizer.state_dict(), "scheduler_state_dict": scheduler.state_dict(), "epoch": epoch, "best_epoch": best_epoch, "best_valid_mse": best, **_checkpoint_metadata(metadata, teacher_protocol, dataset_metadata_sha256, loss_settings, seed, training_contract), **_rng_state()}, output / "signal_simulator_last.pth")
     checkpoint = torch.load(output / "signal_simulator_best.pth", map_location=device, weights_only=False)
     model.load_state_dict(checkpoint["state_dict"]); model.eval()
     metrics = fidelity_metrics(model, splits["test"], batch_size, int(train_cfg["gradient_samples"]), protocol=teacher_protocol)
     with (output / "test_metrics.json").open("w", encoding="utf-8") as handle:
         json.dump(metrics, handle, indent=2)
     resolved = dict(config)
-    resolved.update({"resolved_protocol": _protocol_record(teacher_protocol), "dataset_metadata": metadata, "dataset_metadata_sha256": dataset_metadata_sha256, "best_epoch": best_epoch, "best_valid_mse": best, "completed_epochs": configured_epochs, "resumed_from_epoch": resumed_from_epoch})
+    resolved.update({"resolved_protocol": _protocol_record(teacher_protocol), "dataset_metadata": metadata, "dataset_metadata_sha256": dataset_metadata_sha256, "training_contract": training_contract, "best_epoch": best_epoch, "best_valid_mse": best, "completed_epochs": configured_epochs, "resumed_from_epoch": resumed_from_epoch})
     with (output / "mlp_config_resolved.yaml").open("w", encoding="utf-8") as handle:
         yaml.safe_dump(resolved, handle, sort_keys=False)
     return {"model": model, "metrics": metrics, "best_checkpoint": output / "signal_simulator_best.pth"}
