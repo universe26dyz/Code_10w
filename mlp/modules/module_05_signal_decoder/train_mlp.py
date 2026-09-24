@@ -6,6 +6,7 @@ import argparse
 import csv
 import json
 import random
+import time
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -18,6 +19,7 @@ from torch.utils.data import DataLoader, Dataset, TensorDataset
 import yaml
 
 from .mlp_model import MdmSignalMLP
+from .provenance import sha256_file
 from .synthetic_dataset import protocol_from_record
 from .test_mlp import fidelity_metrics
 
@@ -34,6 +36,13 @@ def _protocol_record(protocol: Any) -> dict[str, Any]:
         "fa_deg": list(protocol.fa_deg), "ti_ms": list(protocol.ti_ms),
         "t2prep_ms": list(protocol.t2prep_ms), "n_ramp_up": int(protocol.n_ramp_up),
     }
+
+
+_ARCHITECTURE = "12-200-200-200-10"
+_INPUT_NORMALIZATION = "T1/1000,T2/1000,B1,timing9/1000"
+_OUTPUT_NORMALIZATION = "raw_l2_normalized"
+_PARAMETER_RANGES = {"t1_ms": [20, 2500], "t2_ms": [5, 200], "b1": [0.1, 1.2], "constraint": "T1>T2"}
+_HISTORY_FIELDS = ["epoch", "train_mse", "valid_mse", "lr", "epoch_seconds", "best_valid_mse", "best_epoch", "is_best"]
 
 
 def load_h5_split(path: str | Path, split: str, *, include_jacobian: bool = False) -> TensorDataset:
@@ -155,7 +164,77 @@ def _check_loaded_split_sizes(metadata: Mapping[str, Any], splits: Mapping[str, 
             raise ValueError(f"{name}.h5 size does not match dataset_metadata.json.")
 
 
-def train_mlp(dataset_dir: str | Path, config: Mapping[str, Any], protocol_path: str | Path, output_dir: str | Path) -> dict[str, Any]:
+def _checkpoint_metadata(metadata: Mapping[str, Any], protocol: Any, dataset_metadata_sha256: str, loss_settings: Mapping[str, float], seed: int) -> dict[str, Any]:
+    return {
+        "architecture": _ARCHITECTURE, "input_normalization": _INPUT_NORMALIZATION,
+        "output_normalization": _OUTPUT_NORMALIZATION, "protocol_hhz_v1": _protocol_record(protocol),
+        "dataset_schema": metadata["schema"], "dataset_split_mode": metadata["split_mode"],
+        "dataset_metadata_sha256": dataset_metadata_sha256,
+        "timing9_min_ms": metadata["timing9_min_ms"], "timing9_max_ms": metadata["timing9_max_ms"],
+        "train_timing9_min_ms": metadata["train_timing9_min_ms"], "train_timing9_max_ms": metadata["train_timing9_max_ms"],
+        "functional_fixture": False, "formal_candidate": True, "validation_status": "unvalidated",
+        "parameter_ranges": _PARAMETER_RANGES, "mlp_loss": dict(loss_settings),
+        "jacobian_target_units": metadata.get("jacobian_target_units"), "seed": seed,
+    }
+
+
+def _rng_state() -> dict[str, Any]:
+    return {
+        "python_random_state": random.getstate(), "numpy_random_state": np.random.get_state(),
+        "torch_rng_state": torch.get_rng_state(),
+        "torch_cuda_rng_state_all": torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None,
+    }
+
+
+def _restore_rng_state(checkpoint: Mapping[str, Any]) -> None:
+    random.setstate(checkpoint["python_random_state"])
+    np.random.set_state(checkpoint["numpy_random_state"])
+    torch.set_rng_state(checkpoint["torch_rng_state"])
+    cuda_states = checkpoint.get("torch_cuda_rng_state_all")
+    if torch.cuda.is_available() and cuda_states is not None:
+        torch.cuda.set_rng_state_all(cuda_states)
+
+
+def _history_rows(path: Path, expected_epoch: int) -> None:
+    if not path.is_file():
+        raise ValueError("Resume requires train_history.csv matching the checkpoint epoch.")
+    with path.open(newline="", encoding="utf-8") as handle:
+        reader = csv.DictReader(handle)
+        if reader.fieldnames != _HISTORY_FIELDS:
+            raise ValueError("Resume history fields do not match the current training contract.")
+        rows = list(reader)
+    try:
+        epochs = [int(row["epoch"]) for row in rows]
+    except (KeyError, ValueError) as error:
+        raise ValueError("Resume history has invalid epochs.") from error
+    if epochs != list(range(1, expected_epoch + 1)):
+        raise ValueError("Resume history does not match the checkpoint epoch.")
+
+
+def _validate_resume(checkpoint: Mapping[str, Any], *, metadata: Mapping[str, Any], protocol: Any, dataset_metadata_sha256: str, loss_settings: Mapping[str, float], seed: int, configured_epochs: int) -> tuple[int, int, float]:
+    expected = {
+        "architecture": _ARCHITECTURE, "input_normalization": _INPUT_NORMALIZATION,
+        "output_normalization": _OUTPUT_NORMALIZATION, "dataset_schema": "mlp_rr_synthetic/v1",
+        "dataset_split_mode": "rhythm", "protocol_hhz_v1": _protocol_record(protocol),
+        "parameter_ranges": _PARAMETER_RANGES, "mlp_loss": dict(loss_settings), "seed": seed,
+        "dataset_metadata_sha256": dataset_metadata_sha256, "functional_fixture": False,
+        "formal_candidate": True, "validation_status": "unvalidated",
+    }
+    for key, value in expected.items():
+        if checkpoint.get(key) != value:
+            raise ValueError(f"Resume checkpoint {key} does not match the current training contract.")
+    epoch, best_epoch, best = checkpoint.get("epoch"), checkpoint.get("best_epoch"), checkpoint.get("best_valid_mse")
+    if not isinstance(epoch, int) or not isinstance(best_epoch, int) or not isinstance(best, (int, float)):
+        raise ValueError("Resume checkpoint lacks valid epoch/best state.")
+    if epoch >= configured_epochs:
+        raise ValueError("Resume checkpoint has already reached the configured total epochs.")
+    required = {"state_dict", "optimizer_state_dict", "scheduler_state_dict", "python_random_state", "numpy_random_state", "torch_rng_state", "torch_cuda_rng_state_all"}
+    if required.difference(checkpoint):
+        raise ValueError("Resume checkpoint lacks required optimizer, scheduler, or RNG state.")
+    return epoch, best_epoch, float(best)
+
+
+def train_mlp(dataset_dir: str | Path, config: Mapping[str, Any], protocol_path: str | Path, output_dir: str | Path, *, resume: str | Path | None = None) -> dict[str, Any]:
     train_cfg = _require(config, "training")
     required = ("device", "seed", "epochs", "batch_size", "learning_rate", "scheduler_step_size", "scheduler_gamma", "gradient_samples")
     missing = [key for key in required if key not in train_cfg]
@@ -170,15 +249,24 @@ def train_mlp(dataset_dir: str | Path, config: Mapping[str, Any], protocol_path:
     seed = int(train_cfg["seed"]); torch.manual_seed(seed); np.random.seed(seed); random.seed(seed)
     dataset_dir, output = Path(dataset_dir), Path(output_dir)
     loss_settings = _mlp_loss_settings(config.get("mlp_loss"))
+    metadata_path = dataset_dir / "dataset_metadata.json"
     metadata, teacher_protocol = validate_dataset_provenance(dataset_dir, protocol_path)
+    dataset_metadata_sha256 = sha256_file(metadata_path)
     include_jacobian = loss_settings["jacobian_weight"] > 0 or loss_settings["cosine_weight"] > 0
-    splits = {name: LazyRRSplit(dataset_dir / f"{name}.h5", name, include_jacobian=include_jacobian) for name in ("train", "valid", "test")}
+    splits = {name: load_h5_split(dataset_dir / f"{name}.h5", name, include_jacobian=include_jacobian) for name in ("train", "valid", "test")}
     _check_loaded_split_sizes(metadata, splits)
     if len(splits["train"]) < batch_size:
         raise ValueError("Training split is smaller than batch_size; refusing a BatchNorm singleton/fallback batch.")
-    if output.exists() and any(output.iterdir()):
-        raise FileExistsError(f"MLP output must be absent or empty: {output}")
-    output.mkdir(parents=True, exist_ok=True)
+    resume_path = Path(resume) if resume is not None else None
+    history_path = output / "train_history.csv"
+    if resume_path is None:
+        if output.exists() and any(output.iterdir()):
+            raise FileExistsError(f"MLP output must be absent or empty: {output}")
+        output.mkdir(parents=True, exist_ok=True)
+    else:
+        expected_resume = output / "signal_simulator_last.pth"
+        if not output.is_dir() or resume_path.resolve() != expected_resume.resolve() or not resume_path.is_file():
+            raise ValueError("Resume checkpoint must be this run's signal_simulator_last.pth.")
     loaders = {
         "train": DataLoader(splits["train"], batch_size=batch_size, shuffle=True, drop_last=True, num_workers=0),
         "valid": DataLoader(splits["valid"], batch_size=batch_size, shuffle=False, num_workers=0),
@@ -186,48 +274,59 @@ def train_mlp(dataset_dir: str | Path, config: Mapping[str, Any], protocol_path:
     model = MdmSignalMLP().to(device)
     optimizer = Adam(model.parameters(), lr=float(train_cfg["learning_rate"]))
     scheduler = StepLR(optimizer, step_size=int(train_cfg["scheduler_step_size"]), gamma=float(train_cfg["scheduler_gamma"]))
-    best, best_epoch = float("inf"), None
-    history: list[dict[str, Any]] = []
-    for epoch in range(1, int(train_cfg["epochs"]) + 1):
-        model.train(); train_total, train_count = 0.0, 0
-        for batch in loaders["train"]:
-            x, y = batch[0].to(device), batch[1].to(device)
-            jacobian = batch[2].to(device) if include_jacobian else None
-            loss, _ = mlp_training_loss(model, x, y, jacobian, loss_settings)
-            if not torch.isfinite(loss):
-                raise FloatingPointError(f"Non-finite MLP train loss at epoch {epoch}.")
-            optimizer.zero_grad(set_to_none=True); loss.backward(); optimizer.step()
-            train_total += float(loss.detach()) * x.shape[0]; train_count += x.shape[0]
-        if train_count == 0:
-            raise RuntimeError("No complete BatchNorm training batch was produced.")
-        model.eval(); valid_total = 0.0
-        with torch.no_grad():
-            for batch in loaders["valid"]:
-                x, y = batch[0], batch[1]
-                valid_total += float((model(x.to(device)) - y.to(device)).pow(2).mean()) * x.shape[0]
-        train_loss, valid_loss = train_total / train_count, valid_total / len(splits["valid"])
-        scheduler.step(); history.append({"epoch": epoch, "train_mse": train_loss, "valid_mse": valid_loss, "lr": optimizer.param_groups[0]["lr"]})
-        if valid_loss < best:
-            best, best_epoch = valid_loss, epoch
-            torch.save({
-                "state_dict": model.state_dict(), "architecture": "12-200-200-200-10",
-                "input_normalization": "T1/1000,T2/1000,B1,timing9/1000",
-                "output_normalization": "raw_l2_normalized", "protocol_hhz_v1": _protocol_record(teacher_protocol),
-                "dataset_schema": metadata["schema"], "dataset_split_mode": metadata["split_mode"],
-                "timing9_min_ms": metadata["timing9_min_ms"], "timing9_max_ms": metadata["timing9_max_ms"],
-                "train_timing9_min_ms": metadata["train_timing9_min_ms"], "train_timing9_max_ms": metadata["train_timing9_max_ms"],
-                "functional_fixture": False, "formal_candidate": True, "validation_status": "unvalidated",
-                "parameter_ranges": {"t1_ms": [20, 2500], "t2_ms": [5, 200], "b1": [0.1, 1.2], "constraint": "T1>T2"}, "mlp_loss": loss_settings, "jacobian_target_units": metadata.get("jacobian_target_units"), "seed": seed,
-            }, output / "signal_simulator_best.pth")
-    with (output / "train_history.csv").open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=["epoch", "train_mse", "valid_mse", "lr"]); writer.writeheader(); writer.writerows(history)
+    configured_epochs = int(train_cfg["epochs"])
+    if resume_path is None:
+        best, best_epoch, start_epoch, resumed_from_epoch = float("inf"), 0, 1, None
+        history_mode = "w"
+    else:
+        checkpoint = torch.load(resume_path, map_location=device, weights_only=False)
+        if not isinstance(checkpoint, dict):
+            raise ValueError("Resume checkpoint must be a mapping.")
+        last_epoch, best_epoch, best = _validate_resume(checkpoint, metadata=metadata, protocol=teacher_protocol, dataset_metadata_sha256=dataset_metadata_sha256, loss_settings=loss_settings, seed=seed, configured_epochs=configured_epochs)
+        _history_rows(history_path, last_epoch)
+        model.load_state_dict(checkpoint["state_dict"])
+        optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+        scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
+        _restore_rng_state(checkpoint)
+        start_epoch, resumed_from_epoch, history_mode = last_epoch + 1, last_epoch, "a"
+    with history_path.open(history_mode, newline="", encoding="utf-8") as history_handle:
+        writer = csv.DictWriter(history_handle, fieldnames=_HISTORY_FIELDS)
+        if history_mode == "w":
+            writer.writeheader(); history_handle.flush()
+        for epoch in range(start_epoch, configured_epochs + 1):
+            epoch_start = time.perf_counter()
+            model.train(); train_total, train_count = 0.0, 0
+            for batch in loaders["train"]:
+                x, y = batch[0].to(device), batch[1].to(device)
+                jacobian = batch[2].to(device) if include_jacobian else None
+                loss, _ = mlp_training_loss(model, x, y, jacobian, loss_settings)
+                if not torch.isfinite(loss):
+                    raise FloatingPointError(f"Non-finite MLP train loss at epoch {epoch}.")
+                optimizer.zero_grad(set_to_none=True); loss.backward(); optimizer.step()
+                train_total += float(loss.detach()) * x.shape[0]; train_count += x.shape[0]
+            if train_count == 0:
+                raise RuntimeError("No complete BatchNorm training batch was produced.")
+            model.eval(); valid_total = 0.0
+            with torch.no_grad():
+                for batch in loaders["valid"]:
+                    x, y = batch[0], batch[1]
+                    valid_total += float((model(x.to(device)) - y.to(device)).pow(2).mean()) * x.shape[0]
+            train_loss, valid_loss = train_total / train_count, valid_total / len(splits["valid"])
+            scheduler.step()
+            is_best = valid_loss < best
+            if is_best:
+                best, best_epoch = valid_loss, epoch
+                torch.save({"state_dict": model.state_dict(), "epoch": epoch, "best_epoch": best_epoch, "best_valid_mse": best, **_checkpoint_metadata(metadata, teacher_protocol, dataset_metadata_sha256, loss_settings, seed)}, output / "signal_simulator_best.pth")
+            writer.writerow({"epoch": epoch, "train_mse": train_loss, "valid_mse": valid_loss, "lr": optimizer.param_groups[0]["lr"], "epoch_seconds": time.perf_counter() - epoch_start, "best_valid_mse": best, "best_epoch": best_epoch, "is_best": is_best})
+            history_handle.flush()
+            torch.save({"state_dict": model.state_dict(), "optimizer_state_dict": optimizer.state_dict(), "scheduler_state_dict": scheduler.state_dict(), "epoch": epoch, "best_epoch": best_epoch, "best_valid_mse": best, **_checkpoint_metadata(metadata, teacher_protocol, dataset_metadata_sha256, loss_settings, seed), **_rng_state()}, output / "signal_simulator_last.pth")
     checkpoint = torch.load(output / "signal_simulator_best.pth", map_location=device, weights_only=False)
     model.load_state_dict(checkpoint["state_dict"]); model.eval()
     metrics = fidelity_metrics(model, splits["test"], batch_size, int(train_cfg["gradient_samples"]), protocol=teacher_protocol)
     with (output / "test_metrics.json").open("w", encoding="utf-8") as handle:
         json.dump(metrics, handle, indent=2)
     resolved = dict(config)
-    resolved.update({"resolved_protocol": _protocol_record(teacher_protocol), "dataset_metadata": metadata, "best_epoch": best_epoch, "best_valid_mse": best})
+    resolved.update({"resolved_protocol": _protocol_record(teacher_protocol), "dataset_metadata": metadata, "dataset_metadata_sha256": dataset_metadata_sha256, "best_epoch": best_epoch, "best_valid_mse": best, "completed_epochs": configured_epochs, "resumed_from_epoch": resumed_from_epoch})
     with (output / "mlp_config_resolved.yaml").open("w", encoding="utf-8") as handle:
         yaml.safe_dump(resolved, handle, sort_keys=False)
     return {"model": model, "metrics": metrics, "best_checkpoint": output / "signal_simulator_best.pth"}
@@ -235,13 +334,13 @@ def train_mlp(dataset_dir: str | Path, config: Mapping[str, Any], protocol_path:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", required=True); parser.add_argument("--dataset-dir", required=True); parser.add_argument("--protocol", required=True); parser.add_argument("--output-dir", required=True)
+    parser.add_argument("--config", required=True); parser.add_argument("--dataset-dir", required=True); parser.add_argument("--protocol", required=True); parser.add_argument("--output-dir", required=True); parser.add_argument("--resume")
     args = parser.parse_args()
     with Path(args.config).open(encoding="utf-8") as handle:
         config = yaml.safe_load(handle)
     if not isinstance(config, dict):
         raise ValueError("MLP config must be a YAML mapping.")
-    result = train_mlp(args.dataset_dir, config, args.protocol, args.output_dir)
+    result = train_mlp(args.dataset_dir, config, args.protocol, args.output_dir, resume=args.resume)
     print(json.dumps({"best_checkpoint": str(result["best_checkpoint"]), "metrics": result["metrics"]}, sort_keys=True))
 
 

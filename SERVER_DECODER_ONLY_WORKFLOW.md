@@ -128,6 +128,27 @@ training output.  `MLP_CANDIDATE` is an existing file only after training.
 `MLP_VALIDATION` is a new validation-report file.  The validation command does
 not approve a checkpoint.
 
+Formal RR training intentionally loads the `input12` and `target_signal10`
+tensors into CPU RAM (about 1.1 GB across the formal train/valid/test splits).
+This follows the upstream mDM-style training pattern and avoids random
+row-wise HDF5 I/O.  It writes `train_history.csv` and
+`signal_simulator_last.pth` after every completed epoch.  To resume an
+interrupted run, keep the same dataset, config, and output directory, then run:
+
+```bash
+conda run --no-capture-output -n "$CODE10W_ENV" \
+  python -m mlp.modules.module_05_signal_decoder.train_mlp \
+  --config mlp/configs/rr_synthetic/formal_signalonly.yaml \
+  --dataset-dir "$RR_DATASET_DIR" \
+  --protocol mlp/configs/protocol_hhz_v1.yaml \
+  --output-dir "$MLP_CANDIDATE_DIR" \
+  --resume "$MLP_CANDIDATE_DIR/signal_simulator_last.pth"
+```
+
+Resume verifies the run's history, scientific contract, and
+`dataset_metadata.json` SHA256 before restoring model, optimizer, scheduler,
+and RNG state. It appends only subsequent epochs to the existing history.
+
 Before approval, run a real VPS=87 timing/fidelity audit.  The checked-in full
 manifest contains `CYJ`, `DYZ`, `HHZ`, and `HJL` plus DYL; DYL is deliberately
 excluded here.  This command reads prepared observations only for timing-domain
