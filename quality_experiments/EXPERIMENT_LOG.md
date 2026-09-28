@@ -59,6 +59,7 @@
 - Fix: strict paired support now has explicit per-stack, per-weight, per-stack-weight, and global outputs. Primary figures and `RESULT_SUMMARY.md` use strict paired rows; method-specific metrics remain preserved as clearly labeled secondary diagnostics.
 - Regression validation: synthetic three-stack/ten-weight downstream integration test writes paired metrics and all figure paths, covering the former runtime failure without `/data` or a formal checkpoint.
 - Formal results: FORMAL K=8 RESULT NOT RUN. D3 remains PLANNED. Next action is D2 server run and review, then a signal-domain fidelity decision before any later conditional evaluation.
+- Local hotfix implementation commit: `c9ece24` (`Fix D2 paired-weight evaluation path`). PUSH PERFORMED: NO.
 
 ## D3_BASELINE_SIGNAL_DICTIONARY_V1
 
