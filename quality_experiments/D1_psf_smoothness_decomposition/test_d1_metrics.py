@@ -12,6 +12,21 @@ from quality_experiments.D1_psf_smoothness_decomposition.metrics import (
 )
 
 
+def _observation_level_archive(tmp_path, *, groups: int = 2, shape: tuple[int, int] = (3, 4)):
+    """Create the real exporter schema: one row per (spatial group, weight)."""
+
+    group_idx = np.repeat(np.arange(groups, dtype=np.int64), 10)
+    weight_idx = np.tile(np.arange(10, dtype=np.int64), groups)
+    t1 = np.stack([np.full(shape, 100.0 * group + weight, dtype=np.float32) for group, weight in zip(group_idx, weight_idx)])
+    t2 = t1 + 1000.0
+    masks = np.ones_like(t1, dtype=bool)
+    masks[weight_idx == 7, 0, 0] = False
+    order = np.array([12, 1, 19, 5, 10, 8, 2, 17, 0, 15, 4, 11, 7, 14, 3, 18, 6, 13, 9, 16])[: group_idx.size]
+    path = tmp_path / "t1_t2_native_plane_sax.npz"
+    np.savez_compressed(path, t1_ms=t1[order], t2_ms=t2[order], masks=masks[order], group_idx=group_idx[order], weight_idx=weight_idx[order])
+    return path
+
+
 def test_identical_maps_have_perfect_agreement_and_detail_metrics() -> None:
     """A regression that changes a perfect-map metric must fail this test."""
 
@@ -130,3 +145,64 @@ def test_output_layout_records_a_command_and_required_result_directories(tmp_pat
     assert (output / "logs" / "run.log").is_file()
     for relative in ("metrics", "figures/representative", "figures/all_slices", "figures/myocardium", "artifacts"):
         assert (output / relative).is_dir()
+
+
+@pytest.mark.parametrize(("parameter", "offset"), [("T1", 0.0), ("T2", 1000.0)])
+def test_observation_level_central_loader_selects_shuffled_unique_weight_zero_and_ands_all_masks(tmp_path, parameter, offset) -> None:
+    """Treating the ten observation rows as one group row must fail this test."""
+
+    from quality_experiments.D1_psf_smoothness_decomposition.io import _load_central_plane
+
+    _observation_level_archive(tmp_path)
+    plane = _load_central_plane(tmp_path, "sax", parameter, np.zeros((2, 3, 4), dtype=np.float32))
+
+    assert np.array_equal(plane.values[:, 1, 1], np.array([0.0, 100.0]) + offset)
+    assert not plane.support[:, 0, 0].any()
+    assert plane.support[:, 1, 1].all()
+
+
+def test_observation_level_central_loader_rejects_missing_weight(tmp_path) -> None:
+    """Silently accepting nine weights for a group must fail this test."""
+
+    path = _observation_level_archive(tmp_path)
+    with np.load(path, allow_pickle=False) as archive:
+        data = {key: np.asarray(archive[key]) for key in archive.files}
+    keep = np.arange(data["group_idx"].size) != 0
+    np.savez_compressed(path, **{key: value[keep] if value.ndim else value for key, value in data.items()})
+
+    from quality_experiments.D1_psf_smoothness_decomposition.io import _load_central_plane
+    with pytest.raises(ValueError, match="10 observation|weight"):
+        _load_central_plane(tmp_path, "sax", "T1", np.zeros((2, 3, 4), dtype=np.float32))
+
+
+def test_observation_level_central_loader_rejects_duplicate_weight(tmp_path) -> None:
+    """Replacing one required weight with a duplicate must fail this test."""
+
+    path = _observation_level_archive(tmp_path)
+    with np.load(path, allow_pickle=False) as archive:
+        data = {key: np.asarray(archive[key]) for key in archive.files}
+    duplicate_row = np.flatnonzero((data["group_idx"] == 0) & (data["weight_idx"] == 9))[0]
+    data["weight_idx"][duplicate_row] = 8
+    np.savez_compressed(path, **data)
+
+    from quality_experiments.D1_psf_smoothness_decomposition.io import _load_central_plane
+    with pytest.raises(ValueError, match="weight"):
+        _load_central_plane(tmp_path, "sax", "T1", np.zeros((2, 3, 4), dtype=np.float32))
+
+
+def test_observation_level_central_loader_rejects_missing_or_extra_group_and_shape_mismatch(tmp_path) -> None:
+    """Inferring groups from row order or resizing a map must fail this test."""
+
+    path = _observation_level_archive(tmp_path)
+    with np.load(path, allow_pickle=False) as archive:
+        data = {key: np.asarray(archive[key]) for key in archive.files}
+    data["group_idx"][data["group_idx"] == 1] = 2
+    np.savez_compressed(path, **data)
+
+    from quality_experiments.D1_psf_smoothness_decomposition.io import _load_central_plane
+    with pytest.raises(ValueError, match="zero-based"):
+        _load_central_plane(tmp_path, "sax", "T1", np.zeros((2, 3, 4), dtype=np.float32))
+
+    _observation_level_archive(tmp_path)
+    with pytest.raises(ValueError, match="no resize"):
+        _load_central_plane(tmp_path, "sax", "T1", np.zeros((2, 4, 4), dtype=np.float32))

@@ -71,3 +71,20 @@
 - Limitations / blockers: local environment cannot access `/data/dengyz/...`; formal evaluation awaits server execution.
 - Git commit: `ae111b87e7d247c754ac64a658e3d7c33978b207` at implementation start; no commit created.
 - Next decision: run `server_commands/run_D1_CYJ.sh` on the formal server, then update this entry with actual results.
+
+## D1_BASELINE_PSF_SMOOTHNESS_V1 — failed server attempt and v2 hotfix
+
+- Date: 2026-09-28
+- First formal server attempt status: FAILED_PRECOMPUTE_INPUT_SCHEMA_VALIDATION.
+- First formal server attempt reason: the v1 D1 loader incorrectly required a one-row-per-group central-plane archive. The historical baseline exporter stores ten observation rows per spatial group, one for each weight `0..9`.
+- Formal CYJ metrics generated: NO.
+- Failed result root: `D1_psf_smoothness_decomposition_baseline_v1`; it is an incomplete failed attempt and must not be overwritten or interpreted as a formal result.
+- Hotfix status: CODE_READY_SERVER_RUN_PENDING.
+- Hotfix method: require `weight_idx`; validate complete zero-based groups, exactly ten rows and weights `0..9` per group; select the unique weight-0 T1/T2 row; AND all ten masks; retain exact native shape.
+- Implementation revision / corrected output root: `D1_psf_smoothness_decomposition_baseline_v2`.
+- Local environment: explicit `knesvr_torch`, CPU-only.
+- Local formal inputs: NOT AVAILABLE; no CYJ result was run locally.
+- Local regression result: 13 targeted tests passed before final hotfix-policy verification.
+- Server command: `quality_experiments/server_commands/run_D1_CYJ.sh`; it records the Git SHA, tees the full log, rejects non-empty `baseline_v2`, and never deletes v1.
+- Key quantitative results / visual findings / interpretation: NOT RUN / NOT AVAILABLE.
+- Next decision: commit the validated hotfix locally; user pushes the commit, server pulls it, then user runs the corrected D1 v2 server script.

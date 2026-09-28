@@ -66,23 +66,35 @@ def _load_central_plane(run_root: Path, stack: str, parameter: str, native: np.n
         raise FileNotFoundError(f"D1 central-plane archive is missing: {path}")
     field = "t1_ms" if parameter == "T1" else "t2_ms"
     with np.load(path, allow_pickle=False) as archive:
-        required = {field, "masks", "group_idx"}
+        required = {field, "masks", "group_idx", "weight_idx"}
         missing = required.difference(archive.files)
         if missing:
             raise ValueError(f"{path} is missing required keys {sorted(missing)}")
         values = np.asarray(archive[field], dtype=np.float32)
         masks = np.asarray(archive["masks"], dtype=bool)
         groups = np.asarray(archive["group_idx"], dtype=np.int64)
-    if values.ndim != 3 or values.shape != masks.shape or groups.shape != (values.shape[0],):
+        weights = np.asarray(archive["weight_idx"], dtype=np.int64)
+    if values.ndim != 3 or values.shape != masks.shape or groups.shape != (values.shape[0],) or weights.shape != (values.shape[0],):
         raise ValueError(f"{path} has invalid D1 central-plane schema.")
     expected = np.arange(native.shape[0], dtype=np.int64)
-    if not np.array_equal(np.sort(groups), expected):
-        raise ValueError(f"{path} group_idx must be a complete zero-based permutation matching the native reference.")
-    reorder = np.argsort(groups)
-    values, masks = values[reorder], masks[reorder]
-    if values.shape != native.shape:
-        raise ValueError(f"{path} {parameter}/{stack} shape={values.shape}, expected native shape={native.shape}; no resize is permitted.")
-    return MapPlane(values=values, support=masks & np.isfinite(values), source=path)
+    if not np.array_equal(np.unique(groups), expected):
+        raise ValueError(f"{path} group_idx must contain the complete zero-based native group set.")
+    selected_values, selected_support = [], []
+    for group in expected:
+        rows = np.flatnonzero(groups == group)
+        if rows.size != 10:
+            raise ValueError(f"{path} group {group} must contain exactly 10 observation rows.")
+        if not np.array_equal(np.sort(weights[rows]), np.arange(10, dtype=np.int64)):
+            raise ValueError(f"{path} group {group} must contain exactly one row for every weight 0..9.")
+        weight_zero = rows[weights[rows] == 0]
+        if weight_zero.size != 1:
+            raise ValueError(f"{path} group {group} must contain a unique weight-0 central-plane row.")
+        selected_values.append(values[int(weight_zero[0])])
+        selected_support.append(np.all(masks[rows], axis=0))
+    central_values, central_support = np.stack(selected_values), np.stack(selected_support)
+    if central_values.shape != native.shape:
+        raise ValueError(f"{path} {parameter}/{stack} shape={central_values.shape}, expected native shape={native.shape}; no resize is permitted.")
+    return MapPlane(values=central_values, support=central_support & np.isfinite(central_values), source=path)
 
 
 def load_d1_inputs(

@@ -14,11 +14,12 @@ PREPARED_ROOT="${BASELINE_EXP_ROOT}/inputs/prepared"
 PREPROCESSED_ROOT="${BASELINE_EXP_ROOT}/inputs/preprocessed"
 NATIVE_REFERENCE_ROOT="${BASELINE_EXP_ROOT}/inputs/reference/native_reference_2d"
 MYOCARDIUM_MASK_ROOT="${BASELINE_EXP_ROOT}/inputs/reference/myocardium_masks_v2"
-OUTPUT_ROOT="${QUALITY_ROOT}/${SUBJECT_ID}/D1_psf_smoothness_decomposition_baseline_v1"
+OUTPUT_ROOT="${QUALITY_ROOT}/${SUBJECT_ID}/D1_psf_smoothness_decomposition_baseline_v2"
 
 source "$(conda info --base)/etc/profile.d/conda.sh"
 conda activate cr_dreme
 cd "${CODE10W_ROOT}"
+COMMIT_SHA="$(git rev-parse HEAD)"
 
 for required in \
   "${TRAD_RUN}" "${MLP_RUN}" "${TRAD_EVAL}" "${MLP_EVAL}" \
@@ -36,6 +37,7 @@ if [[ -e "${OUTPUT_ROOT}" ]] && [[ -n "$(find "${OUTPUT_ROOT}" -mindepth 1 -maxd
 fi
 
 RUN_LOG="$(mktemp -t code10w-d1.XXXXXX.log)"
+printf '%s\n' "D1 implementation revision: baseline_v2" "Git commit: ${COMMIT_SHA}" | tee "${RUN_LOG}"
 python quality_experiments/D1_psf_smoothness_decomposition/run_d1_psf_smoothness_decomposition.py \
   --subject-id "${SUBJECT_ID}" \
   --trad-run "${TRAD_RUN}" \
@@ -45,6 +47,6 @@ python quality_experiments/D1_psf_smoothness_decomposition/run_d1_psf_smoothness
   --preprocessed-root "${PREPROCESSED_ROOT}" \
   --native-reference-root "${NATIVE_REFERENCE_ROOT}" \
   --myocardium-mask-root "${MYOCARDIUM_MASK_ROOT}" \
-  --output "${OUTPUT_ROOT}" 2>&1 | tee "${RUN_LOG}"
+  --output "${OUTPUT_ROOT}" 2>&1 | tee -a "${RUN_LOG}"
 cp "${RUN_LOG}" "${OUTPUT_ROOT}/logs/run.log"
 printf '%s\n' "D1 outputs: ${OUTPUT_ROOT}" "Metrics: ${OUTPUT_ROOT}/metrics" "Summary: ${OUTPUT_ROOT}/RESULT_SUMMARY.md"

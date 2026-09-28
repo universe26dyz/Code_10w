@@ -3,9 +3,15 @@ baseline_git_head: ae111b87e7d247c754ac64a658e3d7c33978b207
 current_git_head: ae111b87e7d247c754ac64a658e3d7c33978b207
 d1:
   status: CODE_READY_SERVER_RUN_PENDING
+  implementation_revision: D1_psf_smoothness_decomposition_baseline_v2
   code_complete: true
   local_tests_complete: true
   server_run_status: NOT_RUN
+  failed_server_attempt:
+    status: FAILED_PRECOMPUTE_INPUT_SCHEMA_VALIDATION
+    result_root: D1_psf_smoothness_decomposition_baseline_v1
+    formal_metrics_generated: false
+    reason: historical central-plane export has 10 weight rows per group; v1 loader incorrectly required one row per group
 d2:
   status: PLANNED
   code_complete: false
