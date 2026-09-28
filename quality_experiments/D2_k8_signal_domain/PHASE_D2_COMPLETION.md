@@ -1,6 +1,7 @@
 # D2 K=8 signal-domain completion report
 
 - Status: `CODE_READY_SERVER_RUN_PENDING`.
+- Implementation commit: `79ff7b64cf47e630974e359ec16af6f542d384b8` — `Add D2 K8 signal-domain evaluation`.
 - Scope: final-checkpoint, read-only K=8 native weighted-signal inference and metrics only; no optimizer, training, reconstruction rerun, or baseline artifact modification.
 - Existing path reused: stored `resolved_config` and training space, `QuantPointDataset`, baseline decoder builders/checkpoint loaders, and `export_native_plane_reprojections`; the D2 wrapper supplies `output_psf={enabled: true, n_samples: 8}` and evaluation seed `20260911`.
 - Metrics: `signal_agreement_metrics()` in `original_input_intensity`, method-specific and strict paired support outputs, all requested stack/weight aggregations, and Bloch-vs-FrozenMLP predicted-signal disagreement.

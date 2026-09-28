@@ -49,6 +49,7 @@
 - Local validation: synthetic K=8 export, metric-schema, strict-support, artifact-schema, overwrite-protection tests plus CPU CLI/import validation in `knesvr_torch`.
 - Server command/output: run `server_commands/run_D2_CYJ.sh` on `cr_dreme`; output root is `/data/dengyz/dataset/Code_10w_v1/Code_10w_runs/quality_experiments_v1/CYJ/D2_k8_signal_domain_baseline_v1/`.
 - Formal results: FORMAL K=8 RESULT NOT RUN. No server-only CYJ checkpoints or prepared artifacts were loaded locally.
+- Local implementation commit: `79ff7b6` (`Add D2 K8 signal-domain evaluation`). PUSH PERFORMED: NO.
 
 ## D3_BASELINE_SIGNAL_DICTIONARY_V1
 

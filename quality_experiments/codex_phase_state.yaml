@@ -1,6 +1,6 @@
 schema: code10w_quality_experiment_state/v1
 baseline_git_head: ae111b87e7d247c754ac64a658e3d7c33978b207
-current_git_head: 31ca7a3
+current_git_head: 79ff7b6
 d1:
   status: CODE_READY_SERVER_RUN_PENDING
   implementation_revision: D1_psf_smoothness_decomposition_baseline_v2
@@ -18,6 +18,7 @@ d2:
   implementation_revision: D2_k8_signal_domain_baseline_v1
   code_complete: true
   local_tests_complete: true
+  implementation_commit: 79ff7b6
   server_run_status: NOT_RUN
 d3:
   status: PLANNED
