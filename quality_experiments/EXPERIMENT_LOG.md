@@ -108,3 +108,5 @@
 - Metrics/visuals/interpretation: formal result NOT RUN / NOT AVAILABLE.
 - Ruling: use the established baseline `_extract_quantitative_stack` to preserve the historical 10-weight central-plane semantics; cost if wrong is an audit incompatible with D1/baseline exports.
 - Next decision: run the generated server command after this phase commit; do not start a later v2 phase automatically.
+- Local implementation commit: `5d803ab` (`Add G0 geometry correspondence audit`).
+- PUSH PERFORMED: NO.
