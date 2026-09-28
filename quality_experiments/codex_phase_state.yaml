@@ -20,6 +20,10 @@ d2:
   local_tests_complete: true
   implementation_commit: 79ff7b6
   server_run_status: NOT_RUN
+  pre_server_hotfix:
+    status: CODE_READY_SERVER_RUN_PENDING
+    formal_cyj_result: NOT_RUN
+    reason: fixed undefined paired_weight figure path and strict-paired aggregation bookkeeping
 d3:
   status: PLANNED
   code_complete: false
@@ -48,4 +52,4 @@ g0_pose_error_correlation:
   missing_local_artifacts:
     - metrics/G0_per_slice.csv
     - metrics/G0_pose_drift.csv
-next_phase: D3
+next_phase: D2_SERVER_RUN_AND_REVIEW

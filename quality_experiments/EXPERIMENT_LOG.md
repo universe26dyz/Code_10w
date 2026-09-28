@@ -51,6 +51,15 @@
 - Formal results: FORMAL K=8 RESULT NOT RUN. No server-only CYJ checkpoints or prepared artifacts were loaded locally.
 - Local implementation commit: `79ff7b6` (`Add D2 K8 signal-domain evaluation`). PUSH PERFORMED: NO.
 
+## D2_BASELINE_SIGNAL_K8_V1 — pre-server paired-support hotfix
+
+- Date: 2026-09-28
+- Status: CODE_READY_SERVER_RUN_PENDING; no formal CYJ D2 execution occurred before or during this hotfix.
+- Root cause: runner figure generation referenced undefined `paired_weight`; only paired stack-weight/global aggregations had been built.
+- Fix: strict paired support now has explicit per-stack, per-weight, per-stack-weight, and global outputs. Primary figures and `RESULT_SUMMARY.md` use strict paired rows; method-specific metrics remain preserved as clearly labeled secondary diagnostics.
+- Regression validation: synthetic three-stack/ten-weight downstream integration test writes paired metrics and all figure paths, covering the former runtime failure without `/data` or a formal checkpoint.
+- Formal results: FORMAL K=8 RESULT NOT RUN. D3 remains PLANNED. Next action is D2 server run and review, then a signal-domain fidelity decision before any later conditional evaluation.
+
 ## D3_BASELINE_SIGNAL_DICTIONARY_V1
 
 - Date: 2026-09-28

@@ -74,3 +74,37 @@ def test_nonempty_output_is_never_overwritten(tmp_path) -> None:
 
     with pytest.raises(FileExistsError, match="non-empty"):
         prepare_empty_output(output)
+
+
+def _artifact(path, prediction_offset: float) -> None:
+    observed = np.arange(160, dtype=np.float32).reshape(10, 4, 4)
+    np.savez_compressed(path, observed=observed, predicted=observed + prediction_offset, residual=np.full_like(observed, prediction_offset), group_idx=np.zeros(10, dtype=np.int64), weight_idx=np.arange(10, dtype=np.int64), timing9_ms=np.ones((10, 9), dtype=np.float32), masks=np.ones_like(observed, dtype=bool), tr_ms=np.ones(10), vps=np.ones(10, dtype=np.int64))
+
+
+def test_downstream_metrics_and_figures_use_strict_paired_per_weight_rows(tmp_path) -> None:
+    """The former undefined paired_weight path must create all primary outputs."""
+
+    from quality_experiments.D2_k8_signal_domain.run_d2_k8_signal_domain import materialize_metric_outputs
+
+    artifacts = {"Bloch": {}, "FrozenMLP": {}}
+    for method, offset in (("Bloch", 1.0), ("FrozenMLP", 2.0)):
+        for stack in ("sax", "2ch", "4ch"):
+            path = tmp_path / f"{method}_{stack}_K8.npz"; _artifact(path, offset); artifacts[method][stack] = path
+    output = tmp_path / "output"
+    for relative in ("metrics", "figures/summary", "figures/residual_by_weight"):
+        (output / relative).mkdir(parents=True, exist_ok=True)
+
+    summaries = materialize_metric_outputs(output, artifacts)
+
+    assert len(summaries["paired_weight"]) == 20
+    assert all(row["support_provenance"].startswith("Bloch_valid AND FrozenMLP_valid") for row in summaries["paired_weight"])
+    for relative in (
+        "metrics/paired_common_support_per_stack_weight.csv",
+        "metrics/paired_common_support_per_stack.csv",
+        "metrics/paired_common_support_per_weight.csv",
+        "metrics/paired_common_support_global.json",
+        "figures/summary/D2_K8_signal_per_weight_rmse_ncc.png",
+        "figures/summary/D2_K8_signal_bloch_vs_frozenmlp_per_weight.png",
+        "figures/residual_by_weight/D2_K8_signal_representative_residual_montage.png",
+    ):
+        assert (output / relative).is_file()

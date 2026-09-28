@@ -72,21 +72,56 @@ def _git_commit() -> str:
     return subprocess.run(["git", "rev-parse", "HEAD"], check=True, capture_output=True, text=True).stdout.strip()
 
 
-def _summary(method_global: list[dict[str, Any]], method_stack: list[dict[str, Any]], paired_global: list[dict[str, Any]], method_weight: list[dict[str, Any]], disagreement: dict[str, Any]) -> str:
+def _summary(method_global: list[dict[str, Any]], method_stack: list[dict[str, Any]], paired_global: list[dict[str, Any]], paired_stack: list[dict[str, Any]], paired_weight: list[dict[str, Any]], disagreement: dict[str, Any]) -> str:
     lines = ["# D2 formal K=8 signal-domain result summary", "", "Formal K=8 result generated: YES", ""]
+    lines.extend(["## PRIMARY STRICT PAIRED", "", "All decoder-comparison values below use: Bloch valid AND FrozenMLP valid AND finite observed AND finite both predictions.", ""])
+    for method in ("Bloch", "FrozenMLP"):
+        global_row = next(row for row in paired_global if row["method"] == method)
+        lines.append(f"- {method} global: RMSE_signal={global_row['RMSE_signal']:.4g}, NRMSE={global_row['NRMSE']:.4g}, NCC={global_row['NCC']:.4g}.")
+        for stack in STACKS:
+            row = next(item for item in paired_stack if item["method"] == method and item["stack"] == stack)
+            lines.append(f"  - {stack.upper()}: RMSE_signal={row['RMSE_signal']:.4g}, NRMSE={row['NRMSE']:.4g}, NCC={row['NCC']:.4g}.")
+        weights = [row for row in paired_weight if row["method"] == method]
+        best, worst = min(weights, key=lambda row: row["RMSE_signal"]), max(weights, key=lambda row: row["RMSE_signal"])
+        lines.append(f"  - best weight by RMSE={best['weight_idx']} ({best['RMSE_signal']:.4g}); worst weight={worst['weight_idx']} ({worst['RMSE_signal']:.4g}).")
+    lines.extend(["", "## SECONDARY METHOD-SPECIFIC", "", "These diagnostics retain each method's own valid finite support and are not the primary decoder comparison.", ""])
     for method in ("Bloch", "FrozenMLP"):
         global_row = next(row for row in method_global if row["method"] == method)
         lines.append(f"- {method} global: RMSE_signal={global_row['RMSE_signal']:.4g}, NRMSE={global_row['NRMSE']:.4g}, NCC={global_row['NCC']:.4g}.")
         for stack in STACKS:
             row = next(item for item in method_stack if item["method"] == method and item["stack"] == stack)
             lines.append(f"  - {stack.upper()}: RMSE_signal={row['RMSE_signal']:.4g}, NRMSE={row['NRMSE']:.4g}, NCC={row['NCC']:.4g}.")
-        weights = [row for row in method_weight if row["method"] == method]
-        best, worst = min(weights, key=lambda row: row["RMSE_signal"]), max(weights, key=lambda row: row["RMSE_signal"])
-        lines.append(f"  - best weight by RMSE={best['weight_idx']} ({best['RMSE_signal']:.4g}); worst weight={worst['weight_idx']} ({worst['RMSE_signal']:.4g}).")
-        paired = next(row for row in paired_global if row["method"] == method)
-        lines.append(f"  - primary strict paired support: RMSE_signal={paired['RMSE_signal']:.4g}, NRMSE={paired['NRMSE']:.4g}, NCC={paired['NCC']:.4g}.")
-    lines.extend([f"", f"- Bloch-vs-FrozenMLP predicted-signal disagreement: RMSE_signal={disagreement['RMSE_signal']:.4g}, MAE_signal={disagreement['MAE_signal']:.4g}, Pearson_r={disagreement['Pearson_r']:.4g}, NCC={disagreement['NCC']:.4g}."])
+    lines.extend([f"", f"- Bloch-vs-FrozenMLP predicted-signal disagreement on strict paired support: RMSE_signal={disagreement['RMSE_signal']:.4g}, MAE_signal={disagreement['MAE_signal']:.4g}, Pearson_r={disagreement['Pearson_r']:.4g}, NCC={disagreement['NCC']:.4g}."])
     return "\n".join(lines) + "\n"
+
+
+def materialize_metric_outputs(output: Path, artifact_paths: dict[str, dict[str, Path]]) -> dict[str, Any]:
+    """Build/write all secondary and primary metric levels, then render strict-paired figures."""
+
+    method_specific = method_specific_slice_rows("Bloch", artifact_paths["Bloch"]) + method_specific_slice_rows("FrozenMLP", artifact_paths["FrozenMLP"])
+    paired_rows, disagreement_rows = paired_slice_rows(artifact_paths["Bloch"], artifact_paths["FrozenMLP"])
+    method_stack_weight = aggregate(method_specific, ("method", "stack", "weight_idx", "support_provenance"))
+    method_stack = aggregate(method_specific, ("method", "stack", "support_provenance"))
+    method_weight = aggregate(method_specific, ("method", "weight_idx", "support_provenance"))
+    method_global = aggregate(method_specific, ("method", "support_provenance"))
+    paired_stack_weight = aggregate(paired_rows, ("method", "stack", "weight_idx", "support_provenance"))
+    paired_stack = aggregate(paired_rows, ("method", "stack", "support_provenance"))
+    paired_weight = aggregate(paired_rows, ("method", "weight_idx", "support_provenance"))
+    paired_global = aggregate(paired_rows, ("method", "support_provenance"))
+    disagreement_weight = aggregate(disagreement_rows, ("weight_idx", "support_provenance"))
+    disagreement_global = aggregate(disagreement_rows, ("support_provenance",))[0]
+    write_csv(output / "metrics/method_specific_per_stack_weight.csv", method_stack_weight)
+    write_csv(output / "metrics/method_specific_per_stack.csv", method_stack)
+    write_csv(output / "metrics/method_specific_per_weight.csv", method_weight)
+    write_json(output / "metrics/method_specific_global.json", {"schema": "code10w_d2_signal_metrics/v1", "rows": method_global})
+    write_csv(output / "metrics/paired_common_support_per_stack_weight.csv", paired_stack_weight)
+    write_csv(output / "metrics/paired_common_support_per_stack.csv", paired_stack)
+    write_csv(output / "metrics/paired_common_support_per_weight.csv", paired_weight)
+    write_json(output / "metrics/paired_common_support_global.json", {"schema": "code10w_d2_strict_paired_signal_metrics/v1", "support_provenance": "Bloch valid AND FrozenMLP valid AND finite observed AND finite both predictions", "rows": paired_global})
+    write_json(output / "metrics/bloch_vs_mlp_prediction.json", {"schema": "code10w_d2_prediction_disagreement/v1", "global": disagreement_global, "per_weight": disagreement_weight})
+    render_metric_summaries(paired_weight, disagreement_weight, output / "figures/summary")
+    render_residual_montage(artifact_paths, output / "figures/residual_by_weight")
+    return {"method_specific": method_specific, "method_stack_weight": method_stack_weight, "method_stack": method_stack, "method_weight": method_weight, "method_global": method_global, "paired_rows": paired_rows, "paired_stack_weight": paired_stack_weight, "paired_stack": paired_stack, "paired_weight": paired_weight, "paired_global": paired_global, "disagreement_weight": disagreement_weight, "disagreement_global": disagreement_global}
 
 
 def run(args: argparse.Namespace) -> Path:
@@ -106,29 +141,11 @@ def run(args: argparse.Namespace) -> Path:
         model, space, provenance = load_final_model(method, checkpoint, prepared, args.protocol, device)
         artifact_paths[method] = export_k8_reprojections(model, space, prepared, output / "artifacts" / method, evaluation_seed=EVALUATION_SEED)
         model_provenance[method] = provenance
-    method_specific = method_specific_slice_rows("Bloch", artifact_paths["Bloch"]) + method_specific_slice_rows("FrozenMLP", artifact_paths["FrozenMLP"])
-    paired_rows, disagreement_rows = paired_slice_rows(artifact_paths["Bloch"], artifact_paths["FrozenMLP"])
-    method_stack_weight = aggregate(method_specific, ("method", "stack", "weight_idx", "support_provenance"))
-    method_stack = aggregate(method_specific, ("method", "stack", "support_provenance"))
-    method_weight = aggregate(method_specific, ("method", "weight_idx", "support_provenance"))
-    method_global = aggregate(method_specific, ("method", "support_provenance"))
-    paired_stack_weight = aggregate(paired_rows, ("method", "stack", "weight_idx", "support_provenance"))
-    paired_global = aggregate(paired_rows, ("method", "support_provenance"))
-    disagreement_weight = aggregate(disagreement_rows, ("weight_idx", "support_provenance"))
-    disagreement_global = aggregate(disagreement_rows, ("support_provenance",))[0]
-    write_csv(output / "metrics/method_specific_per_stack_weight.csv", method_stack_weight)
-    write_csv(output / "metrics/method_specific_per_stack.csv", method_stack)
-    write_csv(output / "metrics/method_specific_per_weight.csv", method_weight)
-    write_json(output / "metrics/method_specific_global.json", {"schema": "code10w_d2_signal_metrics/v1", "rows": method_global})
-    write_csv(output / "metrics/paired_common_support_per_stack_weight.csv", paired_stack_weight)
-    write_json(output / "metrics/paired_common_support_global.json", {"schema": "code10w_d2_strict_paired_signal_metrics/v1", "support_provenance": "Bloch valid AND FrozenMLP valid AND finite observed AND finite both predictions", "rows": paired_global})
-    write_json(output / "metrics/bloch_vs_mlp_prediction.json", {"schema": "code10w_d2_prediction_disagreement/v1", "global": disagreement_global, "per_weight": disagreement_weight})
-    render_metric_summaries(paired_weight, disagreement_weight, output / "figures/summary")
-    render_residual_montage(artifact_paths, output / "figures/residual_by_weight")
+    summaries = materialize_metric_outputs(output, artifact_paths)
     manifest = {"schema": "code10w_d2_k8_signal_domain/v1", "experiment_id": EXPERIMENT_ID, "status": "COMPLETE", "subject_id": args.subject_id, "psf_samples": 8, "evaluation_seed": EVALUATION_SEED, "analysis_git_commit": _git_commit(), "baseline_read_only": True, "reconstruction_rerun": False, "prepared_inputs": [{"path": str(path), "sha256": sha256(path)} for path in prepared], "protocol_provenance": str(Path(args.protocol).resolve()), "decoders": model_provenance, "artifacts": {method: {stack: {"path": str(path.relative_to(output)), "schema": "observed,predicted,residual,group_idx,weight_idx,timing9_ms,masks,tr_ms,vps", "psf_samples": 8, "evaluation_seed": EVALUATION_SEED} for stack, path in stacks.items()} for method, stacks in artifact_paths.items()}}
     write_json(output / "manifest.json", manifest)
     (output / "README.md").write_text("# D2 formal K=8 signal-domain output\n\nRead-only final-checkpoint inference. All new K=8 artifacts are distinct from historical K=1 exports.\n", encoding="utf-8")
-    (output / "RESULT_SUMMARY.md").write_text(_summary(method_global, method_stack, paired_global, method_weight, disagreement_global), encoding="utf-8")
+    (output / "RESULT_SUMMARY.md").write_text(_summary(summaries["method_global"], summaries["method_stack"], summaries["paired_global"], summaries["paired_stack"], summaries["paired_weight"], summaries["disagreement_global"]), encoding="utf-8")
     (output / "logs/run.log").write_text("D2 formal K=8 signal-domain evaluation completed without reconstruction optimization.\n", encoding="utf-8")
     (output / "commands/run_command.txt").write_text(" ".join(sys.argv) + "\n", encoding="utf-8")
     return output
