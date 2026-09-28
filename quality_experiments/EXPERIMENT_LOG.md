@@ -90,3 +90,21 @@
 - Next decision: commit the validated hotfix locally; user pushes the commit, server pulls it, then user runs the corrected D1 v2 server script.
 - Local hotfix implementation commit: `43b0424` (`Fix D1 central-plane observation grouping`).
 - PUSH PERFORMED: NO.
+
+## G0_GEOMETRY_CORRESPONDENCE_BASELINE_V1
+
+- Date: 2026-09-28
+- Status: CODE_READY_SERVER_RUN_PENDING
+- Category: read-only geometry/correspondence diagnostic
+- Scientific question / hypothesis: determine whether central/no-PSF reconstructed groups correspond to the same-index native groups, and quantify discrete orientation, assignment ambiguity, and available pose drift without changing official metrics.
+- Baseline: CYJ FrozenMLP B6.
+- Single intended change: independent content/orientation audit only.
+- Held-fixed controls: FrozenMLP checkpoint, baseline run outputs, native reference provenance, pixel grids, official `g ↔ g` pairing, and all historical code/results.
+- Code/config: `quality_experiments/G0_geometry_correspondence/` and `server_commands/run_G0_CYJ.sh`; no baseline config changed.
+- Actual local commands: targeted synthetic tests, compile/CLI validation, and shell syntax validation; no formal CYJ inputs are local.
+- Local/server environments: `knesvr_torch` CPU / `cr_dreme` server.
+- Input provenance: verified native-reference bundle plus FrozenMLP B6 central-plane archives; optional D2-compatible signal artifacts are absent, so `G0-signal = DEPENDENCY_PENDING`.
+- Output root: `/data/dengyz/dataset/Code_10w_v1/Code_10w_runs/quality_experiments_v1/CYJ/G0_geometry_correspondence_baseline_v1/`.
+- Metrics/visuals/interpretation: formal result NOT RUN / NOT AVAILABLE.
+- Ruling: use the established baseline `_extract_quantitative_stack` to preserve the historical 10-weight central-plane semantics; cost if wrong is an audit incompatible with D1/baseline exports.
+- Next decision: run the generated server command after this phase commit; do not start a later v2 phase automatically.

@@ -23,4 +23,10 @@ d3:
   code_complete: false
   local_tests_complete: false
   server_run_status: NOT_RUN
+g0:
+  status: CODE_READY_SERVER_RUN_PENDING
+  code_complete: true
+  local_tests_complete: true
+  server_run_status: NOT_RUN
+  signal_status: DEPENDENCY_PENDING
 next_phase: D2
