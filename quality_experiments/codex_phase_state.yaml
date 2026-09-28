@@ -1,6 +1,6 @@
 schema: code10w_quality_experiment_state/v1
 baseline_git_head: ae111b87e7d247c754ac64a658e3d7c33978b207
-current_git_head: d491c96
+current_git_head: 31ca7a3
 d1:
   status: CODE_READY_SERVER_RUN_PENDING
   implementation_revision: D1_psf_smoothness_decomposition_baseline_v2
@@ -14,9 +14,10 @@ d1:
     reason: historical central-plane export has 10 weight rows per group; v1 loader incorrectly required one row per group
   hotfix_implementation_commit: 43b0424
 d2:
-  status: PLANNED
-  code_complete: false
-  local_tests_complete: false
+  status: CODE_READY_SERVER_RUN_PENDING
+  implementation_revision: D2_k8_signal_domain_baseline_v1
+  code_complete: true
+  local_tests_complete: true
   server_run_status: NOT_RUN
 d3:
   status: PLANNED
@@ -46,4 +47,4 @@ g0_pose_error_correlation:
   missing_local_artifacts:
     - metrics/G0_per_slice.csv
     - metrics/G0_pose_drift.csv
-next_phase: D2
+next_phase: D3

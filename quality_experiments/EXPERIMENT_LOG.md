@@ -38,6 +38,18 @@
 - Limitations / blockers: server-only formal data.
 - Next decision: start only after D1 completion.
 
+## D2_BASELINE_SIGNAL_K8_V1 — implementation update
+
+- Date: 2026-09-28
+- Status: CODE_READY_SERVER_RUN_PENDING.
+- Why historical exports are insufficient: their PSF export was disabled, so they are K=1 and do not match the reconstruction training physics (`training.psf_samples=8`).
+- Method: load only final `trad_B6/model.pt` and `frozen_mlp_B6/model.pt`, restore their stored configuration/training space, and perform K=8 seeded native weighted-signal inference without an optimizer or reconstruction step.
+- Code/config: `quality_experiments/D2_k8_signal_domain/` and `quality_experiments/server_commands/run_D2_CYJ.sh`; baseline trainer/exporter and all historical artifacts remain unchanged.
+- Metrics: method-specific global/per-stack/per-weight/per-stack-weight signal metrics, strict Bloch/FrozenMLP paired support, and decoder prediction disagreement. Signal units are `original_input_intensity`.
+- Local validation: synthetic K=8 export, metric-schema, strict-support, artifact-schema, overwrite-protection tests plus CPU CLI/import validation in `knesvr_torch`.
+- Server command/output: run `server_commands/run_D2_CYJ.sh` on `cr_dreme`; output root is `/data/dengyz/dataset/Code_10w_v1/Code_10w_runs/quality_experiments_v1/CYJ/D2_k8_signal_domain_baseline_v1/`.
+- Formal results: FORMAL K=8 RESULT NOT RUN. No server-only CYJ checkpoints or prepared artifacts were loaded locally.
+
 ## D3_BASELINE_SIGNAL_DICTIONARY_V1
 
 - Date: 2026-09-28
