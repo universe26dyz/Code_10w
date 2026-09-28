@@ -6,11 +6,13 @@ import numpy as np
 import pytest
 import subprocess
 import sys
+import torch
 from pathlib import Path
 
 from quality_experiments.G0_geometry_correspondence.correspondence import audit_stack
 from quality_experiments.G0_geometry_correspondence.pose_audit import pose_delta_rows
 from quality_experiments.G0_geometry_correspondence.signal_adapter import extract_weight_zero_signal
+from trad.third_party.nesvor.nesvor.transform import RigidTransform, ax_transform_points
 
 
 def _maps(count: int = 3, shape: tuple[int, int] = (5, 7)) -> np.ndarray:
@@ -83,15 +85,62 @@ def test_weight_zero_signal_adapter_selects_only_weight_zero_rows() -> None:
 
 
 def test_known_pose_translation_rotation_and_neighbors_are_measured() -> None:
-    """Ignoring physical pose deltas must fail this test."""
+    """Interpreting axis-angle as translation-first must fail this test."""
 
     initial = np.zeros((2, 6), dtype=float)
-    final = np.array([[1, 0, 0, 0, 0, np.pi / 2], [0, 3, 0, 0, 0, 0]], dtype=float)
+    final = np.array([[0, 0, np.pi / 2, 1, 0, 0], [0, 0, 0, 0, 3, 0]], dtype=float)
     rows = pose_delta_rows("sax", initial, final)
 
     assert rows[0]["translation_magnitude_mm"] == pytest.approx(1.0)
     assert rows[0]["rotation_magnitude_deg"] == pytest.approx(90.0)
     assert rows[0]["neighbor_center_distance_mm"] == pytest.approx(2.0)
+
+
+def test_pure_translation_and_rotation_use_vendored_axisangle_component_order() -> None:
+    """Swapping rotation and translation vector halves must fail this test."""
+
+    initial = np.zeros((2, 6), dtype=float)
+    final = np.array([[0, 0, 0, 5, 0, 0], [0, 0, np.deg2rad(10), 0, 0, 0]], dtype=float)
+    rows = pose_delta_rows("sax", initial, final)
+
+    assert rows[0]["translation_magnitude_mm"] == pytest.approx(5.0)
+    assert rows[0]["rotation_magnitude_deg"] == pytest.approx(0.0)
+    assert rows[1]["translation_magnitude_mm"] == pytest.approx(0.0)
+    assert rows[1]["rotation_magnitude_deg"] == pytest.approx(10.0)
+
+
+def test_combined_pose_center_normal_and_neighbor_distance_match_vendored_transform() -> None:
+    """Manual raw subtraction or translation-contaminated normals must fail this test."""
+
+    initial = np.array([[0, 0, np.deg2rad(5), 1, 0, 0], [0, 0, 0, 0, 1, 0]], dtype=float)
+    final = np.array([[0, np.deg2rad(20), 0, 0, 2, 3], [0, 0, np.deg2rad(15), -2, 0, 1]], dtype=float)
+    rows = pose_delta_rows("sax", initial, final)
+    initial_tf, final_tf = RigidTransform(torch.as_tensor(initial, dtype=torch.float32), trans_first=True), RigidTransform(torch.as_tensor(final, dtype=torch.float32), trans_first=True)
+    delta = initial_tf.inv().compose(final_tf).axisangle(trans_first=True).detach().cpu().numpy()
+    origin = torch.zeros((2, 3), dtype=torch.float32)
+    z_axis = torch.tensor([[0.0, 0.0, 1.0], [0.0, 0.0, 1.0]])
+    centers = ax_transform_points(torch.as_tensor(final, dtype=torch.float32), origin, trans_first=True).detach().cpu().numpy()
+    normals = ax_transform_points(torch.as_tensor(final, dtype=torch.float32), z_axis, trans_first=True).detach().cpu().numpy() - centers
+    normals /= np.linalg.norm(normals, axis=1, keepdims=True)
+
+    assert rows[0]["rotation_magnitude_deg"] == pytest.approx(np.linalg.norm(delta[0, :3]) * 180 / np.pi)
+    assert rows[0]["translation_magnitude_mm"] == pytest.approx(np.linalg.norm(delta[0, 3:]))
+    assert np.allclose(rows[0]["final_center_ras_mm"], centers[0])
+    assert np.allclose(rows[0]["slice_normal_ras"], normals[0])
+    assert np.linalg.norm(rows[0]["slice_normal_ras"]) == pytest.approx(1.0)
+    assert rows[0]["neighbor_center_distance_mm"] == pytest.approx(np.linalg.norm(centers[1] - centers[0]))
+
+
+def test_correspondence_assignment_is_independent_of_pose_audit() -> None:
+    """The pose hotfix must not mutate G0 correspondence/Hungarian output."""
+
+    reference = _maps()
+    before = audit_stack(reference, reference[[2, 0, 1]], np.ones_like(reference, bool), np.ones_like(reference, bool))
+    pose_delta_rows("sax", np.zeros((3, 6)), np.zeros((3, 6)))
+    after = audit_stack(reference, reference[[2, 0, 1]], np.ones_like(reference, bool), np.ones_like(reference, bool))
+
+    assert np.array_equal(before.assignment, after.assignment)
+    assert before.rows == after.rows
 
 
 def test_overwrite_refusal_and_heterogeneous_stack_counts(tmp_path) -> None:

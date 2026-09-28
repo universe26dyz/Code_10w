@@ -25,9 +25,13 @@ d3:
   server_run_status: NOT_RUN
 g0:
   status: CODE_READY_SERVER_RUN_PENDING
+  implementation_revision: G0_geometry_correspondence_baseline_v2
   code_complete: true
   local_tests_complete: true
   server_run_status: NOT_RUN
   signal_status: DEPENDENCY_PENDING
   implementation_commit: 5d803ab
+  v1_correspondence_status: VALID
+  v1_pose_audit_status: INVALID_AXISANGLE_COMPONENT_SEMANTICS
+  v2_server_run_status: NOT_RUN
 next_phase: D2

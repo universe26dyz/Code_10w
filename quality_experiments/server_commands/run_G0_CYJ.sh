@@ -9,7 +9,7 @@ QUALITY_ROOT="${DATA_ROOT}/Code_10w_runs/quality_experiments_v1"
 MLP_RUN="${BASELINE_EXP_ROOT}/runs/frozen_mlp_B6"
 PREPROCESSED_ROOT="${BASELINE_EXP_ROOT}/inputs/preprocessed"
 NATIVE_REFERENCE_ROOT="${BASELINE_EXP_ROOT}/inputs/reference/native_reference_2d"
-OUTPUT_ROOT="${QUALITY_ROOT}/${SUBJECT_ID}/G0_geometry_correspondence_baseline_v1"
+OUTPUT_ROOT="${QUALITY_ROOT}/${SUBJECT_ID}/G0_geometry_correspondence_baseline_v2"
 
 source "$(conda info --base)/etc/profile.d/conda.sh"
 conda activate cr_dreme
@@ -28,7 +28,7 @@ if [[ -e "${OUTPUT_ROOT}" ]] && [[ -n "$(find "${OUTPUT_ROOT}" -mindepth 1 -maxd
 fi
 
 RUN_LOG="$(mktemp -t code10w-g0.XXXXXX.log)"
-printf '%s\n' "G0 Git commit: ${COMMIT_SHA}" | tee "${RUN_LOG}"
+printf '%s\n' "G0 implementation revision: baseline_v2" "G0 Git commit: ${COMMIT_SHA}" | tee "${RUN_LOG}"
 python quality_experiments/G0_geometry_correspondence/run_g0_geometry_audit.py \
   --subject-id "${SUBJECT_ID}" \
   --run-root "${MLP_RUN}" \

@@ -91,6 +91,19 @@
 - Local hotfix implementation commit: `43b0424` (`Fix D1 central-plane observation grouping`).
 - PUSH PERFORMED: NO.
 
+## G0_GEOMETRY_CORRESPONDENCE_BASELINE_V1 — pose-semantics hotfix
+
+- Date: 2026-09-28
+- G0 v1 formal correspondence status: VALID. For T1/T2 × SAX/2CH/4CH, diagonal assignment fraction was 1.0; non-diagonal and non-identity-orientation counts were 0.
+- G0 v1 pose audit status: INVALID. It interpreted NeSVoR axis-angle vectors as `[translation, rotation]`; the vendored transform contract is `[rotation-vector, translation]`.
+- Consequence: G0 v1 `translation_magnitude_mm`, `rotation_magnitude_deg`, `final_center_ras_mm`, `slice_normal_ras`, and `neighbor_center_distance_mm` must not be interpreted.
+- G0 v2 status: CODE_READY_SERVER_RUN_PENDING.
+- Hotfix: use vendored `RigidTransform(initial).inv().compose(final)` for relative motion and `ax_transform_points` for final centers/normals; no correspondence/Hungarian/signal logic changed.
+- Formal v2 output root: `/data/dengyz/dataset/Code_10w_v1/Code_10w_runs/quality_experiments_v1/CYJ/G0_geometry_correspondence_baseline_v2/`.
+- Local formal G0 rerun: NOT RUN / NOT AVAILABLE; server-only CYJ artifacts are not available locally.
+- Local regression result: 12 targeted tests passed before final validation.
+- Next decision: commit the hotfix locally; user pushes, server pulls, then user runs the corrected G0 v2 script.
+
 ## G0_GEOMETRY_CORRESPONDENCE_BASELINE_V1
 
 - Date: 2026-09-28
