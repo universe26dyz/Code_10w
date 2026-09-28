@@ -88,3 +88,5 @@
 - Server command: `quality_experiments/server_commands/run_D1_CYJ.sh`; it records the Git SHA, tees the full log, rejects non-empty `baseline_v2`, and never deletes v1.
 - Key quantitative results / visual findings / interpretation: NOT RUN / NOT AVAILABLE.
 - Next decision: commit the validated hotfix locally; user pushes the commit, server pulls it, then user runs the corrected D1 v2 server script.
+- Local hotfix implementation commit: `43b0424` (`Fix D1 central-plane observation grouping`).
+- PUSH PERFORMED: NO.

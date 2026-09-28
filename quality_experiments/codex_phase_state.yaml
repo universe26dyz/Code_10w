@@ -12,6 +12,7 @@ d1:
     result_root: D1_psf_smoothness_decomposition_baseline_v1
     formal_metrics_generated: false
     reason: historical central-plane export has 10 weight rows per group; v1 loader incorrectly required one row per group
+  hotfix_implementation_commit: 43b0424
 d2:
   status: PLANNED
   code_complete: false
