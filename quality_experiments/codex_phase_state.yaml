@@ -35,4 +35,14 @@ g0:
   v1_pose_audit_status: INVALID_AXISANGLE_COMPONENT_SEMANTICS
   v2_server_run_status: NOT_RUN
   pose_hotfix_implementation_commit: df336eb
+g0_pose_error_correlation:
+  status: CODE_READY_SERVER_RUN_PENDING
+  experiment_id: G0_POSE_ERROR_CORRELATION_CYJ_V1
+  code_complete: true
+  local_tests_complete: true
+  formal_local_analysis: NOT_RUN_MISSING_G0_V2_ARTIFACTS
+  required_input_revision: G0_geometry_correspondence_baseline_v2
+  missing_local_artifacts:
+    - metrics/G0_per_slice.csv
+    - metrics/G0_pose_drift.csv
 next_phase: D2

@@ -91,6 +91,19 @@
 - Local hotfix implementation commit: `43b0424` (`Fix D1 central-plane observation grouping`).
 - PUSH PERFORMED: NO.
 
+## G0_POSE_ERROR_CORRELATION_CYJ_V1
+
+- Date: 2026-09-28
+- Status: CODE_READY_SERVER_RUN_PENDING.
+- Category: independent read-only post-hoc diagnostic; it does not change the G0 correspondence audit or `next_phase: D2`.
+- Scientific question: whether corrected G0 v2 translation/rotation drift is associated with central-map `relative_rmse` or `1-correlation` across local groups.
+- Required provenance: `G0_geometry_correspondence_baseline_v2/manifest.json` with its matching revision, `metrics/G0_per_slice.csv`, and `metrics/G0_pose_drift.csv`; join is strictly `stack + expected_group == group_idx`.
+- Method: six stack/parameter combinations × four Pearson/Spearman associations; Spearman p-values receive one 24-test BH-FDR correction; leave-one-group-out rank sensitivity is recorded.
+- Code/config: `quality_experiments/G0_pose_error_correlation/`; synthetic contracts only, explicit `knesvr_torch` CPU validation.
+- Actual local artifact search: `/home/universe/SVR/multimap_postprogramming` contained no complete corrected G0 v2 bundle. `FORMAL_LOCAL_ANALYSIS = NOT_RUN_MISSING_G0_V2_ARTIFACTS`.
+- Formal CYJ metrics, figures, conclusions: NOT RUN / NOT AVAILABLE. Missing required local paths are `metrics/G0_per_slice.csv` and `metrics/G0_pose_drift.csv` beneath a verified v2 bundle.
+- Next decision: copy a verified corrected G0 v2 bundle locally and invoke the documented CLI; no reconstruction or follow-on phase is authorized by this diagnostic.
+
 ## G0_GEOMETRY_CORRESPONDENCE_BASELINE_V1 — pose-semantics hotfix
 
 - Date: 2026-09-28
