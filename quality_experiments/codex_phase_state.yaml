@@ -1,6 +1,6 @@
 schema: code10w_quality_experiment_state/v1
 baseline_git_head: ae111b87e7d247c754ac64a658e3d7c33978b207
-current_git_head: df336eb
+current_git_head: d491c96
 d1:
   status: CODE_READY_SERVER_RUN_PENDING
   implementation_revision: D1_psf_smoothness_decomposition_baseline_v2
@@ -40,6 +40,7 @@ g0_pose_error_correlation:
   experiment_id: G0_POSE_ERROR_CORRELATION_CYJ_V1
   code_complete: true
   local_tests_complete: true
+  implementation_commit: d491c96
   formal_local_analysis: NOT_RUN_MISSING_G0_V2_ARTIFACTS
   required_input_revision: G0_geometry_correspondence_baseline_v2
   missing_local_artifacts:
