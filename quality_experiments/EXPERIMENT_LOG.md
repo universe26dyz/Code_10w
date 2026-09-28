@@ -103,6 +103,8 @@
 - Local formal G0 rerun: NOT RUN / NOT AVAILABLE; server-only CYJ artifacts are not available locally.
 - Local regression result: 12 targeted tests passed before final validation.
 - Next decision: commit the hotfix locally; user pushes, server pulls, then user runs the corrected G0 v2 script.
+- Local hotfix implementation commit: `df336eb` (`Fix G0 pose audit transform semantics`).
+- PUSH PERFORMED: NO.
 
 ## G0_GEOMETRY_CORRESPONDENCE_BASELINE_V1
 

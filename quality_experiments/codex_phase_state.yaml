@@ -1,6 +1,6 @@
 schema: code10w_quality_experiment_state/v1
 baseline_git_head: ae111b87e7d247c754ac64a658e3d7c33978b207
-current_git_head: 5d803ab
+current_git_head: df336eb
 d1:
   status: CODE_READY_SERVER_RUN_PENDING
   implementation_revision: D1_psf_smoothness_decomposition_baseline_v2
@@ -34,4 +34,5 @@ g0:
   v1_correspondence_status: VALID
   v1_pose_audit_status: INVALID_AXISANGLE_COMPONENT_SEMANTICS
   v2_server_run_status: NOT_RUN
+  pose_hotfix_implementation_commit: df336eb
 next_phase: D2
