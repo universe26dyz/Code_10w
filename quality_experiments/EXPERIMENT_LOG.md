@@ -60,6 +60,13 @@
 - Route dependency: Q001A verifies both full-FOV and cropped references; Q001B verifies the cropped reference against its cropped preprocessed MAT provenance and does not require a full-FOV reference.
 - Status unchanged: FORMAL Q001A/Q001B and SERVER MIGRATION remain NOT RUN; D3/Q002 remain NOT STARTED; PUSH PERFORMED: NO.
 
+## Q001B — post-hoc map-domain PSF correction
+
+- Formal Q001B reconstruction is COMPLETE. Its central/no-map-PSF metrics and K=8 signal evaluation are VALID.
+- `mapping_map_psf_K32` parameter archives are INVALID_AS_MAP_PSF: native-plane parameter fields were point samples, so K=32 affected only signal generation. They remain historical provenance artifacts and are not a map-domain endpoint.
+- True map-domain K=32 is now a post-hoc, no-reconstruction wrapper over final T1/T2 volumes, final rigid poses, route-matched prepared geometry, and the verified route reference. Status: `PENDING_POSTHOC`.
+- Q001A remains NOT RUN; D3/Q002 remain NOT STARTED; PUSH PERFORMED: NO.
+
 ## D1_BASELINE_PSF_SMOOTHNESS_V1
 
 - Date: 2026-09-28

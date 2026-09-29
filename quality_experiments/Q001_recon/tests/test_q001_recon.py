@@ -109,8 +109,19 @@ def test_b6_and_signal_simulator_provenance_are_distinct(tmp_path):
 def test_evaluation_plan_has_central_k32_k8_same_checkpoint():
     plan = evaluation_plan("abc123", "Q001A")
     assert plan["mapping_central_no_psf"]["psf_samples"] == 1
-    assert plan["mapping_map_psf_K32"] == {"psf_samples": 32, "seed": 20260911, "checkpoint_sha256": "abc123"}
+    assert plan["mapping_map_psf_K32"]["status"] == "INVALID_AS_MAP_PSF"
+    assert plan["map_domain_psf_K32"] == {"domain": "map", "psf_implementation": "trad.evaluation.scmr.map_domain_psf", "psf_samples": 32, "seed": 20260911, "checkpoint_sha256": "abc123"}
     assert plan["signal_psf_K8"]["psf_samples"] == 8
+
+
+def test_true_map_k32_uses_d1_validated_posthoc_path_not_parameter_reprojection_export():
+    root = Path(__file__).resolve().parents[1]
+    wrapper = (root / "run_map_domain_psf.py").read_text()
+    evaluator = (root / "evaluate_q001.py").read_text()
+    reconstruction = (root / "run_controlled_reconstruction.py").read_text()
+    assert "run_map_domain_psf_comparison import run" in wrapper and "n_samples=32" in wrapper and "seed=SEED" in wrapper
+    assert "_true_map_domain_psf_samples" in evaluator and '"mapping_map_psf_K32"' not in evaluator.split("def run(args", 1)[1]
+    assert 'output / "evaluation/mapping_map_psf_K32"' not in reconstruction
 
 
 def _reference(tmp_path, bundle):

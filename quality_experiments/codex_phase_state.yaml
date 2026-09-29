@@ -93,12 +93,16 @@ q001_full_fov_native_reference:
     2ch: {map_sha256: be888e965794412b1f0be648bc67a21edde9f70a37018da93c5e448b6343ce5e, source_preprocessed_mat_sha256: 18d5a62d75808c92e6704ec60a4f062c8bece6ec0a423c9842d52a658b5ce8ec}
     4ch: {map_sha256: 546500dc5aab6236918d26b912a790cdf5d29fa43929fbd0f52bd9121597d72a, source_preprocessed_mat_sha256: 436f49d8263faf7b35b2c9583f912e2832bbff28b40b4f1fd36ce5b309ebebcf}
 q001_controlled_reconstruction:
-  status: CODE_READY_SERVER_MIGRATION_PENDING
+  status: Q001B_POSTHOC_MAP_DOMAIN_K32_PENDING
   experiments:
     - Q001A_full_fov_full_recon
     - Q001B_full_fov_reg_cropped_recon
   formal_q001a_status: NOT_RUN
-  formal_q001b_status: NOT_RUN
+  formal_q001b_status: COMPLETE
+  q001b_primary_central: VALID
+  q001b_k8_signal: VALID
+  q001b_old_parameter_k32: INVALID_AS_MAP_PSF
+  q001b_true_map_domain_k32: PENDING_POSTHOC
   d3_status: NOT_STARTED
   q002_status: NOT_STARTED
   evaluator_contracts_complete: true
@@ -106,4 +110,4 @@ q001_controlled_reconstruction:
   shared_init_integration_required: PASSED_LOCAL
   server_migration_status: NOT_RUN
   pre_server_correctness_hotfix: COMPLETE_LOCAL_VERIFIED
-next_phase: Q001_SERVER_MIGRATION_AND_REVIEW
+next_phase: Q001B_POSTHOC_MAP_DOMAIN_K32_REVIEW

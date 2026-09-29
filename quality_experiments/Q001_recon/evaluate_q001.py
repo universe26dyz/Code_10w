@@ -42,11 +42,24 @@ def _require_same_checkpoint(run: Path, route: dict[str, Any]) -> str:
     expected = route.get("reconstruction_checkpoint_sha256")
     if actual != expected:
         raise ValueError("Q001 route manifest final checkpoint SHA256 mismatch.")
-    for export, samples in (("mapping_central_no_psf", 1), ("mapping_map_psf_K32", 32), ("signal_psf_K8", 8)):
+    for export, samples in (("mapping_central_no_psf", 1), ("signal_psf_K8", 8)):
         record = route.get("evaluation", {}).get(export, {})
         if record.get("checkpoint_sha256") != actual or record.get("psf_samples") != samples:
             raise ValueError(f"{export} provenance does not identify the same final checkpoint.")
     return actual
+
+
+def _true_map_domain_psf_samples(root: Path) -> list[dict[str, Any]]:
+    """Read only the D1-validated map-domain-PSF comparison artifacts."""
+    samples: list[dict[str, Any]] = []
+    for parameter in ("T1", "T2"):
+        path = root / f"{parameter}_native_map_domain_psf_comparison.npz"
+        with np.load(path, allow_pickle=False) as data:
+            for stack in STACKS:
+                prediction, reference, support = data[f"{stack}_predicted_ms"], data[f"{stack}_native_reference_ms"], data[f"{stack}_common_support"]
+                for group in range(prediction.shape[0]):
+                    samples.append({"endpoint": "true_map_domain_psf_K32_secondary", "export": "map_domain_psf_K32", "stack": stack, "group_idx": group, "parameter": parameter, "support_provenance": "map_domain_psf_support AND verified_native_reference_valid", "reference": reference[group], "prediction": prediction[group], "support": support[group]})
+    return samples
 
 
 def _stack_rows(run: Path, export: str, stack: str, kind: str) -> dict[str, np.ndarray]:
@@ -224,8 +237,8 @@ def run(args: argparse.Namespace) -> Path:
         _write_map_metrics(metrics, "q001b_maps", map_samples)
         paired_maps = _paired_map_samples(run_root, Path(args.b6_map_root), Path(args.cropped_reference_root))
         _write_map_metrics(metrics, "q001b_vs_b6_strict_common_support_maps", paired_maps)
-        psf_maps = _map_samples(run_root, "mapping_map_psf_K32", Path(args.cropped_reference_root), prediction_roi=False, reference_is_already_cropped=True, endpoint="cropped_native_reference_secondary_K32")
-        _write_map_metrics(metrics, "q001b_maps_K32_secondary", psf_maps)
+        if not args.map_domain_psf_root: raise ValueError("Q001B formal map secondary requires --map-domain-psf-root from run_map_domain_psf.")
+        _write_map_metrics(metrics, "q001b_true_map_domain_psf_K32_secondary", _true_map_domain_psf_samples(Path(args.map_domain_psf_root)))
         strict = _signal_matched_samples(run_root, Path(args.b6_d2_root))
         _write_levels(metrics, "q001b_vs_b6_strict_common_support", strict, domain="signal", include_method=True)
     b6_maps = _artifact_hashes(Path(args.b6_map_root), {stack: Path(args.b6_map_root) / f"t1_t2_native_plane_{stack}.npz" for stack in STACKS}) if args.b6_map_root else {}
@@ -240,7 +253,7 @@ def run(args: argparse.Namespace) -> Path:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--mode", choices=("Q001A", "Q001B"), required=True); parser.add_argument("--run-root", required=True); parser.add_argument("--full-input-root", required=True); parser.add_argument("--full-reference-root"); parser.add_argument("--cropped-reference-root"); parser.add_argument("--cropped-preprocessed-root"); parser.add_argument("--b6-map-root"); parser.add_argument("--b6-d2-root"); parser.add_argument("--output", required=True)
+    parser.add_argument("--mode", choices=("Q001A", "Q001B"), required=True); parser.add_argument("--run-root", required=True); parser.add_argument("--full-input-root", required=True); parser.add_argument("--full-reference-root"); parser.add_argument("--cropped-reference-root"); parser.add_argument("--cropped-preprocessed-root"); parser.add_argument("--b6-map-root"); parser.add_argument("--b6-d2-root"); parser.add_argument("--map-domain-psf-root"); parser.add_argument("--output", required=True)
     print(run(parser.parse_args()))
 
 
