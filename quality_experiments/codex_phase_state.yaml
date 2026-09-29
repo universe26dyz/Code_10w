@@ -1,6 +1,6 @@
 schema: code10w_quality_experiment_state/v1
 baseline_git_head: ae111b87e7d247c754ac64a658e3d7c33978b207
-current_git_head: Q001_RECON_IMPLEMENTATION_COMMIT_PENDING
+current_git_head: 8649895 # Q001 controlled reconstruction implementation; no formal run
 d1:
   status: CODE_READY_SERVER_RUN_PENDING
   implementation_revision: D1_psf_smoothness_decomposition_baseline_v2
