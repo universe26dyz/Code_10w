@@ -53,4 +53,10 @@ g0_pose_error_correlation:
   missing_local_artifacts:
     - metrics/G0_per_slice.csv
     - metrics/G0_pose_drift.csv
-next_phase: D2_SERVER_RUN_AND_REVIEW
+next_phase: Q001_FULL_FOV_INPUT_GENERATION
+q001_full_fov_preparation:
+  status: CODE_READY_LOCAL_INPUT_ROOT_REQUIRED
+  code_complete: true
+  local_tests_complete: true
+  formal_local_preprocessing: NOT_RUN_OUTPUT_ROOT_UNRESOLVED
+  full_fov_prepared_available: false

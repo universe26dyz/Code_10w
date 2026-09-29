@@ -1,5 +1,16 @@
 # Quality experiment ledger
 
+## Q001_FULL_FOV_PREPARATION_V1
+
+- Date: 2026-09-29
+- Status: CODE_READY_LOCAL_INPUT_ROOT_REQUIRED.
+- Method: independent full-FOV DICOM sort, MIND-to-HB1, MP-PCA, v7.3 provenance MAT, and a validated Q001 adapter over the existing SOP-resolved bridge; no reconstruction.
+- Baseline contract: `preprocess_stack_v1` and all baseline bridge code remain unchanged. Q001 does not crop or pad images and does not require dimensions divisible by four.
+- Local availability: MATLAB plus CYJ sax/2ch/4ch manifest-resolved DICOM directories are present. A non-example deployment-path configuration with an authorized new Q001 output root is absent, so real preprocessing was not run.
+- Code: `quality_experiments/Q001_full_fov/`, including `run_Q001_full_fov_local_CYJ.sh` which requires an explicit new `Q001_OUTPUT_ROOT` and refuses overwrite.
+- Formal/real result: NOT RUN; full-FOV prepared inputs NOT AVAILABLE.
+- Next decision: generate and QC full-FOV inputs at an explicit new root, then review signal-domain fidelity before any reconstruction phase.
+
 ## D1_BASELINE_PSF_SMOOTHNESS_V1
 
 - Date: 2026-09-28
