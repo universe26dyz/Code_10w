@@ -8,6 +8,8 @@ import numpy as np
 import pydicom
 import pytest
 import shutil
+import subprocess
+from pathlib import Path
 from pydicom.dataset import FileDataset, FileMetaDataset
 from pydicom.uid import ExplicitVRLittleEndian, SecondaryCaptureImageStorage
 
@@ -175,3 +177,28 @@ def test_qc_refuses_to_overwrite_existing_report(tmp_path):
     prepare_full_fov_observations(full_mat, dicoms, "sax", full_dir); prepare_observations(cropped_mat, dicoms, "sax", cropped_dir)
     output = tmp_path / "qc.json"; compare_prepared(cropped_dir, full_dir, output)
     with pytest.raises(FileExistsError, match="Refusing to overwrite"): compare_prepared(cropped_dir, full_dir, output)
+
+
+@pytest.mark.skipif(shutil.which("matlab") is None, reason="MATLAB is required for the Q001 runtime smoke test")
+def test_matlab_geometry_validator_executes_and_rejects_mismatch(tmp_path):
+    dicoms = tmp_path / "dicoms"; _dicoms(dicoms)
+    output = tmp_path / "valid.mat"
+    code_root = Path(__file__).resolve().parents[3]
+    matlab = (
+        f"addpath('{code_root}/quality_experiments/Q001_full_fov/preprocessing'); "
+        f"addpath('{code_root}/trad/modules/module_01_preprocess_matlab/preprocessing_v1'); "
+        "opts=preprocess_options_v1([],false,false); "
+        f"preprocess_stack_full_fov_q001('{dicoms}','{output}',opts);"
+    )
+    valid = subprocess.run(["matlab", "-batch", matlab], capture_output=True, text=True)
+    assert valid.returncode == 0, valid.stdout + valid.stderr
+    with h5py.File(output, "r") as handle:
+        assert bytes(np.asarray(handle["final_data_semantics_ascii"], dtype=np.uint8).reshape(-1)).decode("ascii") == "MIND_mag_reg"
+    mismatched = pydicom.dcmread(next(dicoms.glob("*.dcm")))
+    mismatched.PixelSpacing = [2.1, 3.0]; pydicom.dcmwrite(mismatched.filename, mismatched, write_like_original=False)
+    invalid_command = matlab.replace(
+        f"preprocess_stack_full_fov_q001('{dicoms}','{output}',opts);",
+        f"try, preprocess_stack_full_fov_q001('{dicoms}','{tmp_path / 'invalid.mat'}',opts); error('Q001:ExpectedGeometryFailure','Expected geometry failure'); catch exception, assert(strcmp(exception.identifier,'Q001:Geometry')); end;",
+    )
+    invalid = subprocess.run(["matlab", "-batch", invalid_command], capture_output=True, text=True)
+    assert invalid.returncode == 0, invalid.stdout + invalid.stderr

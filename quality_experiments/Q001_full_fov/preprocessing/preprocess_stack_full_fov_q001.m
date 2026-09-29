@@ -90,15 +90,30 @@ end
 end
 
 function q001_validate_group_geometry(infos, paths, num_img)
+assert(mod(numel(infos),num_img)==0, 'Q001:Geometry', 'DICOM count does not form full groups.');
 for group=1:(numel(infos)/num_img)
     index=(group-1)*num_img+(1:num_img); ref=infos{index(1)};
-    for name={'ImagePositionPatient','ImageOrientationPatient','PixelSpacing','Rows','Columns','SliceThickness'}
-        assert(isfield(ref,name{1}) && ~isempty(ref.(name{1})), 'Q001:Geometry', 'HB1 missing %s.',name{1}); refv=double(ref.(name{1}));
-        for k=index
-            assert(isfield(infos{k},name{1}) && ~isempty(infos{k}.(name{1})), 'Q001:Geometry', 'Missing %s: %s',name{1},paths{k});
-            assert(isequal(size(double(infos{k}.(name{1}))),size(refv)) && all(abs(double(infos{k}.(name{1}))(:)-refv(:)) <= 1e-6*max(1,max(abs(refv(:))))), 'Q001:Geometry', 'Group geometry differs from HB1.');
-        end
+    q001_compare_geometry_field(ref, infos(index), paths(index), 'ImagePositionPatient', group, false);
+    q001_compare_geometry_field(ref, infos(index), paths(index), 'ImageOrientationPatient', group, false);
+    q001_compare_geometry_field(ref, infos(index), paths(index), 'PixelSpacing', group, false);
+    q001_compare_geometry_field(ref, infos(index), paths(index), 'Rows', group, true);
+    q001_compare_geometry_field(ref, infos(index), paths(index), 'Columns', group, true);
+    q001_compare_geometry_field(ref, infos(index), paths(index), 'SliceThickness', group, false);
+end
+end
+
+function q001_compare_geometry_field(reference, group_infos, group_paths, field_name, group_idx, exact)
+assert(isfield(reference,field_name) && ~isempty(reference.(field_name)), 'Q001:Geometry', 'Group %d HB1 lacks %s: %s', group_idx,field_name,group_paths{1});
+reference_value=double(reference.(field_name));
+for k=1:numel(group_infos)
+    assert(isfield(group_infos{k},field_name) && ~isempty(group_infos{k}.(field_name)), 'Q001:Geometry', 'Group %d weight %d lacks %s: %s', group_idx,k-1,field_name,group_paths{k});
+    value=double(group_infos{k}.(field_name));
+    if exact
+        equal=isequal(value,reference_value);
+    else
+        equal=isequal(size(value),size(reference_value)) && all(abs(value(:)-reference_value(:)) <= 1e-6*max(1,max(abs(reference_value(:)))));
     end
+    assert(equal, 'Q001:Geometry', 'Group %d %s differs from HB1: %s', group_idx,field_name,group_paths{k});
 end
 end
 
