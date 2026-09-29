@@ -7,6 +7,8 @@ import pytest
 import torch
 
 from quality_experiments.Q001_recon.config import build_route_config, load_b6_resolved_config
+from quality_experiments.Q001_recon.evaluate_q001 import fixed_baseline_map_pair
+from quality_experiments.Q001_recon.run_controlled_reconstruction import checkpoint_provenance
 from quality_experiments.Q001_recon.contracts import verify_q001_input_bundle
 from quality_experiments.Q001_recon.evaluation import ROI_BY_STACK, evaluation_plan, fixed_roi
 from quality_experiments.Q001_recon.metrics import legacy_macro_rows, strict_common_support, true_pooled_rows
@@ -82,6 +84,26 @@ def test_fixed_baseline_rois_are_exact_and_do_not_resize(stack, expected):
     assert ROI_BY_STACK[stack] == expected
     image = np.zeros((288, 256) if stack != "4ch" else (256, 288))
     assert image[expected].shape == ((145, 129) if stack != "4ch" else (129, 145))
+
+
+@pytest.mark.parametrize(("stack", "shape"), (("sax", (288, 256)), ("2ch", (288, 256)), ("4ch", (256, 288))))
+def test_fixed_endpoint_pairs_full_prediction_roi_with_entire_cropped_reference(stack, shape):
+    cropped_shape = (145, 129) if stack != "4ch" else (129, 145)
+    prediction = np.arange(np.prod(shape), dtype=np.float32).reshape(shape)
+    reference = np.full(cropped_shape, 77.0, np.float32)
+    pred, ref, support = fixed_baseline_map_pair(stack, prediction, reference, np.ones(shape, bool), np.ones(cropped_shape, bool))
+    assert pred.shape == ref.shape == support.shape == cropped_shape
+    assert np.array_equal(pred, prediction[fixed_roi(stack)])
+    assert np.array_equal(ref, reference) and np.all(ref == 77.0)
+
+
+def test_b6_and_signal_simulator_provenance_are_distinct(tmp_path):
+    b6, signal = tmp_path / "b6_model.pt", tmp_path / "signal_simulator.pth"
+    b6.write_bytes(b"b6"); signal.write_bytes(b"signal")
+    provenance = checkpoint_provenance(b6, signal)
+    assert provenance["b6_model_sha256"] == _sha(b6)
+    assert provenance["frozen_signal_simulator_sha256"] == _sha(signal)
+    assert provenance["b6_model_sha256"] != provenance["frozen_signal_simulator_sha256"]
 
 
 def test_evaluation_plan_has_central_k32_k8_same_checkpoint():

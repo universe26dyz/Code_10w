@@ -105,4 +105,5 @@ q001_controlled_reconstruction:
   reference_verifier_complete: true
   shared_init_integration_required: PASSED_LOCAL
   server_migration_status: NOT_RUN
+  pre_server_correctness_hotfix: COMPLETE_LOCAL_VERIFIED
 next_phase: Q001_SERVER_MIGRATION_AND_REVIEW

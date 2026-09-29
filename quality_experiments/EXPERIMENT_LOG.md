@@ -52,6 +52,14 @@
 - Diagnostic record supplied by the completed local run: MATLAB R2025b, exit 0, default matcher parallel behavior, 186990 dictionary entries, SAX group 0 shape `[288,256]`, matcher internal wall `73.8955 s`, shell wall `92 s`, output exists, with no captured crash/OOM evidence. Pool1 was not needed. No matcher was rerun for this record.
 - Status: `CODE_READY_SERVER_MIGRATION_PENDING`. FORMAL Q001A: NOT RUN. FORMAL Q001B: NOT RUN. SERVER MIGRATION: NOT RUN. D3/Q002: NOT STARTED. PUSH PERFORMED: NO.
 
+## Q001_CONTROLLED_RECONSTRUCTION_V1 — pre-server correctness/provenance hotfix
+
+- Date: 2026-09-29
+- Fixed Q001A fixed-baseline endpoint: it now applies the exact full-FOV ROI only to the full-FOV prediction and compares it with the entire already-cropped verified reference; no resize/interpolation is permitted.
+- Fixed provenance: route manifests now record the approved signal simulator SHA separately from the B6 model SHA; evaluation manifests use the distinct values and record verified cropped-reference plus B6 central/K8 artifact hashes.
+- Route dependency: Q001A verifies both full-FOV and cropped references; Q001B verifies the cropped reference against its cropped preprocessed MAT provenance and does not require a full-FOV reference.
+- Status unchanged: FORMAL Q001A/Q001B and SERVER MIGRATION remain NOT RUN; D3/Q002 remain NOT STARTED; PUSH PERFORMED: NO.
+
 ## D1_BASELINE_PSF_SMOOTHNESS_V1
 
 - Date: 2026-09-28

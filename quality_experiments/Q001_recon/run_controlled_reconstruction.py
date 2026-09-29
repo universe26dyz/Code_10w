@@ -38,6 +38,10 @@ def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def checkpoint_provenance(b6_model: str | Path, signal_simulator: str | Path) -> dict[str, str]:
+    return {"b6_model": str(Path(b6_model)), "b6_model_sha256": _sha256(Path(b6_model)), "frozen_signal_simulator": str(Path(signal_simulator)), "frozen_signal_simulator_sha256": _sha256(Path(signal_simulator))}
+
+
 def run(args: argparse.Namespace) -> Path:
     if args.device.startswith("cpu"): raise RuntimeError("Formal Q001 reconstruction is server-GPU only; CPU execution is forbidden.")
     if not torch.cuda.is_available(): raise RuntimeError("Q001 reconstruction requires CUDA.")
@@ -65,7 +69,7 @@ def run(args: argparse.Namespace) -> Path:
     export_native_plane_reprojections(result["model"], result["training_space"], plan.training_inputs, output / "evaluation/mapping_central_no_psf", output_psf={"enabled": False}, export_parameter_maps=True)
     export_native_plane_reprojections(result["model"], result["training_space"], plan.training_inputs, output / "evaluation/mapping_map_psf_K32", output_psf={"enabled": True, "n_samples": 32}, evaluation_seed=20260911, export_parameter_maps=True)
     export_native_plane_reprojections(result["model"], result["training_space"], plan.training_inputs, output / "evaluation/signal_psf_K8", output_psf={"enabled": True, "n_samples": 8}, evaluation_seed=20260911, export_parameter_maps=False)
-    (output / "q001_route_manifest.json").write_text(json.dumps({"experiment_id": args.experiment_id, "route": route_record["route"], "training_inputs": list(plan.training_inputs), "stack_initialization_inputs": list(registration_inputs), "stack_registration_calls": plan.stack_registration_calls, "full_input_manifest_sha256": _sha256(Path(args.full_input_root) / "q001_input_manifest.json"), "full_input_status": full_manifest["status"], "b6_model": str(Path(args.b6_model)), "b6_model_sha256": _sha256(Path(args.b6_model)), "frozen_signal_simulator": str(Path(args.signal_simulator)), "reconstruction_checkpoint_sha256": checkpoint_hash, "evaluation": evaluation_plan(checkpoint_hash, mode), "b6_reconstruction_warm_start": False}, indent=2) + "\n", encoding="utf-8")
+    (output / "q001_route_manifest.json").write_text(json.dumps({"experiment_id": args.experiment_id, "route": route_record["route"], "training_inputs": list(plan.training_inputs), "stack_initialization_inputs": list(registration_inputs), "stack_registration_calls": plan.stack_registration_calls, "full_input_manifest_sha256": _sha256(Path(args.full_input_root) / "q001_input_manifest.json"), "full_input_status": full_manifest["status"], **checkpoint_provenance(args.b6_model, args.signal_simulator), "reconstruction_checkpoint_sha256": checkpoint_hash, "evaluation": evaluation_plan(checkpoint_hash, mode), "b6_reconstruction_warm_start": False}, indent=2) + "\n", encoding="utf-8")
     return output
 
 
