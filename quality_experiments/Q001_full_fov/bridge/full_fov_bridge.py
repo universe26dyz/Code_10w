@@ -15,6 +15,8 @@ from trad.modules.module_02_data_bridge.prepare_observations import prepare_obse
 
 
 FULL_FOV_REQUIRED = ("spatial_mode_ascii", "final_data_semantics_ascii", "geometry_rule_ascii", "full_fov_shape_rows_cols")
+FORMAL_FINAL_DATA_SEMANTICS = "MP-PCA(full-FOV MIND_mag_reg)"
+FORMAL_GEOMETRY_RULE = "After full-FOV MIND, all 10 weights in each group use HB1 geometry."
 
 
 def _matlab_numeric(dataset: h5py.Dataset) -> np.ndarray:
@@ -54,11 +56,17 @@ def load_full_fov_preprocessed(mat_path: str | Path) -> dict[str, Any]:
         raise ValueError("Q001 full_fov MAT must preserve full Mag/Mag_crop spatial shape.")
     if base["crop_row_start_zero_based"] != 0 or base["crop_col_start_zero_based"] != 0:
         raise ValueError("Q001 full_fov MAT crop offsets must both be zero.")
+    final_data_semantics = _ascii(metadata["final_data_semantics_ascii"], "final_data_semantics_ascii")
+    if final_data_semantics != FORMAL_FINAL_DATA_SEMANTICS:
+        raise ValueError(f"Q001 MAT final_data_semantics must be {FORMAL_FINAL_DATA_SEMANTICS!r}, got {final_data_semantics!r}")
+    geometry_rule = _ascii(metadata["geometry_rule_ascii"], "geometry_rule_ascii")
+    if geometry_rule != FORMAL_GEOMETRY_RULE:
+        raise ValueError(f"Q001 MAT geometry_rule must exactly declare the HB1 full-FOV rule, got {geometry_rule!r}")
     return base | {
         "spatial_mode": spatial_mode,
         "full_fov_shape_rows_cols": list(full_shape),
-        "final_data_semantics": _ascii(metadata["final_data_semantics_ascii"], "final_data_semantics_ascii"),
-        "geometry_rule": _ascii(metadata["geometry_rule_ascii"], "geometry_rule_ascii"),
+        "final_data_semantics": final_data_semantics,
+        "geometry_rule": geometry_rule,
     }
 
 

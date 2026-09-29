@@ -73,7 +73,8 @@ for slice_idx = 1:n_slices
 end
 TR=Info.RepetitionTime; VPS=Info.EchoTrainLength; FA=[45 45 45]; TI=[50 150]; T2_prep=[35 45 55]; protocol_version='hhz_v1';
 spatial_mode='full_fov'; spatial_mode_ascii=uint8(spatial_mode); full_fov_shape_rows_cols=[nx ny]; crop_row_start_zero_based=0; crop_col_start_zero_based=0; crop_size_rows_cols=[nx ny]; crop_indices=struct('rows',1:nx,'cols',1:ny);
-final_data_semantics='MP-PCA(full-FOV MIND_mag_reg)'; final_data_semantics_ascii=uint8(final_data_semantics); geometry_rule='After full-FOV MIND, all 10 weights in each group use HB1 geometry.'; geometry_rule_ascii=uint8(geometry_rule); preprocessing_options=opts; mppca_center_data=opts.mppca_options.center_data;
+if opts.enable_mppca, final_data_semantics='MP-PCA(full-FOV MIND_mag_reg)'; else, final_data_semantics='MIND_mag_reg'; end
+final_data_semantics_ascii=uint8(final_data_semantics); geometry_rule='After full-FOV MIND, all 10 weights in each group use HB1 geometry.'; geometry_rule_ascii=uint8(geometry_rule); preprocessing_options=opts; mppca_center_data=opts.mppca_options.center_data;
 sop_instance_uid_ascii=q001_ascii(sops); sop_instance_uid_lengths=cellfun(@strlength,string(sops)); series_instance_uid_ascii=q001_ascii(series); series_instance_uid_lengths=cellfun(@strlength,string(series)); source_basename_ascii=q001_ascii(bases); source_basename_lengths=cellfun(@strlength,string(bases)); HB1_sop_instance_uid_ascii=sop_instance_uid_ascii(:,1:NumImg:end); HB1_sop_instance_uid_lengths=sop_instance_uid_lengths(1:NumImg:end);
 if opts.enable_figures, figure('Color','w'); imshow(Mag_crop(:,:,1,1),[]); title('Q001 full-FOV HB1'); end
 output_dir=fileparts(output_mat_path); assert(isfolder(output_dir), 'Q001:OutputDirectory', 'Output directory must exist: %s', output_dir);
