@@ -2,6 +2,7 @@
 
 - Status: `CODE_READY_LOCAL_INPUT_ROOT_REQUIRED`.
 - Implementation commit: `41331bd008e8f3d160887a7c75dca89f91d6dedb` — `Add Q001 full-FOV preprocessing and bridge`.
+- Pre-run path hotfix: `2d59356b15caf1c1291f431cb7413d497434ab39` corrects the independent MATLAB entry's baseline-helper root resolution; no data was run before the correction.
 - Code ready: independent MATLAB full-FOV MIND/MP-PCA preprocessing and a Python adapter over the baseline SOP/timing/geometry bridge.
 - Local validation: Q001 targeted regression tests (real HDF5-MAT plus generated DICOM geometry fixtures), baseline MAT/geometry/grouping regressions, Python compile/CLI checks, MATLAB `checkcode`, and local runner shell syntax checks.
 - Baseline changes: none. `preprocess_stack_v1` and shared Python bridge files remain unchanged.

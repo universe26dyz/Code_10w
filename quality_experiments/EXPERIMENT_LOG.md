@@ -11,6 +11,7 @@
 - Formal/real result: NOT RUN; full-FOV prepared inputs NOT AVAILABLE.
 - Next decision: generate and QC full-FOV inputs at an explicit new root, then review signal-domain fidelity before any reconstruction phase.
 - Local implementation commit: `41331bd` (`Add Q001 full-FOV preprocessing and bridge`). PUSH PERFORMED: NO.
+- Pre-run MATLAB helper-path hotfix: `2d59356` (`Fix Q001 MATLAB helper path`); formal/real result remains NOT RUN.
 
 ## D1_BASELINE_PSF_SMOOTHNESS_V1
 
