@@ -10,6 +10,7 @@
 - Code: `quality_experiments/Q001_full_fov/`, including `run_Q001_full_fov_local_CYJ.sh` which requires an explicit new `Q001_OUTPUT_ROOT` and refuses overwrite.
 - Formal/real result: NOT RUN; full-FOV prepared inputs NOT AVAILABLE.
 - Next decision: generate and QC full-FOV inputs at an explicit new root, then review signal-domain fidelity before any reconstruction phase.
+- Local implementation commit: `41331bd` (`Add Q001 full-FOV preprocessing and bridge`). PUSH PERFORMED: NO.
 
 ## D1_BASELINE_PSF_SMOOTHNESS_V1
 
