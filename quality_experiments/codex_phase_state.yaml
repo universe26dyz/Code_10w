@@ -83,8 +83,17 @@ q001_full_fov_preparation:
     preserved: true
     successful_preprocessing_completed: false
     next_formal_root: /home/universe/SVR/data/Code_10w_v1/Q001_full_fov_inputs_v2
+q001_full_fov_native_reference:
+  status: COMPLETE_LOCAL_VERIFIED
+  root: /home/universe/SVR/data/Code_10w_v1/Q001_full_fov_native_reference_v2
+  manifest_schema: q001_full_fov_native_reference/v1
+  source: user_provided_successful_local_generation
+  maps:
+    sax: {map_sha256: f4b5b9d8765a106a8ca7c12fe67e6ecf8f84e1d1c03385a9d58a55728b2f84a7, source_preprocessed_mat_sha256: eaa5f825e0d1cd2fbdde093de29e6b05d3e479f47780146ca55473c898121b82}
+    2ch: {map_sha256: be888e965794412b1f0be648bc67a21edde9f70a37018da93c5e448b6343ce5e, source_preprocessed_mat_sha256: 18d5a62d75808c92e6704ec60a4f062c8bece6ec0a423c9842d52a658b5ce8ec}
+    4ch: {map_sha256: 546500dc5aab6236918d26b912a790cdf5d29fa43929fbd0f52bd9121597d72a, source_preprocessed_mat_sha256: 436f49d8263faf7b35b2c9583f912e2832bbff28b40b4f1fd36ce5b309ebebcf}
 q001_controlled_reconstruction:
-  status: CODE_READY_SERVER_INPUT_MIGRATION_PENDING
+  status: CODE_READY_SERVER_MIGRATION_PENDING
   experiments:
     - Q001A_full_fov_full_recon
     - Q001B_full_fov_reg_cropped_recon
@@ -92,4 +101,8 @@ q001_controlled_reconstruction:
   formal_q001b_status: NOT_RUN
   d3_status: NOT_STARTED
   q002_status: NOT_STARTED
-next_phase: Q001_SERVER_INPUT_MIGRATION_PENDING
+  evaluator_contracts_complete: true
+  reference_verifier_complete: true
+  shared_init_integration_required: PASSED_LOCAL
+  server_migration_status: NOT_RUN
+next_phase: Q001_SERVER_MIGRATION_AND_REVIEW

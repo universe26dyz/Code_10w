@@ -21,7 +21,7 @@ from trad.modules.module_08_inference_export.reprojection import export_native_p
 from .config import build_route_config, load_b6_resolved_config
 from .contracts import verify_q001_input_bundle
 from .evaluation import evaluation_plan
-from .routes import build_route_plan
+from .routes import build_route_plan, registration_inputs_for_training
 
 
 STACKS = ("sax", "2ch", "4ch")
@@ -45,6 +45,9 @@ def run(args: argparse.Namespace) -> Path:
     full_paths, cropped_paths = _paths(Path(args.full_input_root) / "full_fov_prepared"), _paths(args.cropped_prepared_root)
     mode = "Q001A" if args.experiment_id.startswith("Q001A_") else "Q001B" if args.experiment_id.startswith("Q001B_") else ""
     plan = build_route_plan(mode, [str(path) for path in full_paths], [str(path) for path in cropped_paths])
+    # Explicit identity ordering prevents a future caller from attaching a full
+    # registration stack to the wrong cropped optimization stack.
+    registration_inputs = registration_inputs_for_training(plan.training_inputs, [str(path) for path in full_paths])
     b6_config = load_b6_resolved_config(args.b6_model)
     if str(b6_config.get("decoder", {}).get("checkpoint")) != str(Path(args.signal_simulator)):
         raise ValueError("B6 resolved_config decoder checkpoint does not match the approved FrozenMLP signal simulator.")
@@ -55,14 +58,14 @@ def run(args: argparse.Namespace) -> Path:
     output = Path(args.output)
     if output.exists() and any(output.iterdir()): raise FileExistsError(f"Refusing non-empty Q001 output root: {output}")
     dataset = QuantPointDataset(plan.training_inputs, device=torch.device(args.device))
-    result = train_mlp_reconstruction(dataset, config, args.protocol, output, prepared_inputs=plan.stack_initialization_inputs, subject_id="CYJ", command=" ".join(__import__("sys").argv))
+    result = train_mlp_reconstruction(dataset, config, args.protocol, output, prepared_inputs=registration_inputs, subject_id="CYJ", command=" ".join(__import__("sys").argv))
     checkpoint = output / "model.pt"; checkpoint_hash = _sha256(checkpoint)
     export_cfg = config["export"]
     export_quantitative_outputs(result["model"], result["training_space"], output, float(export_cfg["output_resolution_mm"]), int(export_cfg["output_batch_size"]), dataset=dataset, export_config={"bbox": config.get("bbox", {}), **export_cfg})
     export_native_plane_reprojections(result["model"], result["training_space"], plan.training_inputs, output / "evaluation/mapping_central_no_psf", output_psf={"enabled": False}, export_parameter_maps=True)
     export_native_plane_reprojections(result["model"], result["training_space"], plan.training_inputs, output / "evaluation/mapping_map_psf_K32", output_psf={"enabled": True, "n_samples": 32}, evaluation_seed=20260911, export_parameter_maps=True)
     export_native_plane_reprojections(result["model"], result["training_space"], plan.training_inputs, output / "evaluation/signal_psf_K8", output_psf={"enabled": True, "n_samples": 8}, evaluation_seed=20260911, export_parameter_maps=False)
-    (output / "q001_route_manifest.json").write_text(json.dumps({"experiment_id": args.experiment_id, "route": route_record["route"], "training_inputs": list(plan.training_inputs), "stack_initialization_inputs": list(plan.stack_initialization_inputs), "stack_registration_calls": plan.stack_registration_calls, "full_input_manifest_sha256": _sha256(Path(args.full_input_root) / "q001_input_manifest.json"), "full_input_status": full_manifest["status"], "b6_model": str(Path(args.b6_model)), "b6_model_sha256": _sha256(Path(args.b6_model)), "frozen_signal_simulator": str(Path(args.signal_simulator)), "reconstruction_checkpoint_sha256": checkpoint_hash, "evaluation": evaluation_plan(checkpoint_hash, mode), "b6_reconstruction_warm_start": False}, indent=2) + "\n", encoding="utf-8")
+    (output / "q001_route_manifest.json").write_text(json.dumps({"experiment_id": args.experiment_id, "route": route_record["route"], "training_inputs": list(plan.training_inputs), "stack_initialization_inputs": list(registration_inputs), "stack_registration_calls": plan.stack_registration_calls, "full_input_manifest_sha256": _sha256(Path(args.full_input_root) / "q001_input_manifest.json"), "full_input_status": full_manifest["status"], "b6_model": str(Path(args.b6_model)), "b6_model_sha256": _sha256(Path(args.b6_model)), "frozen_signal_simulator": str(Path(args.signal_simulator)), "reconstruction_checkpoint_sha256": checkpoint_hash, "evaluation": evaluation_plan(checkpoint_hash, mode), "b6_reconstruction_warm_start": False}, indent=2) + "\n", encoding="utf-8")
     return output
 
 

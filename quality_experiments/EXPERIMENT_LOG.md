@@ -44,6 +44,14 @@
 - Local MATLAB full-FOV original-MultiMap mapping was attempted without reconstruction. The matcher reached `begin build dict` on SAX but produced no mapping output in this environment; partial mapping root is preserved and no native-reference bundle or formal reconstruction result is claimed.
 - Next phase: `Q001_SERVER_INPUT_MIGRATION_PENDING`. FORMAL Q001A/Q001B: NOT RUN. D3/Q002: NOT STARTED. PUSH PERFORMED: NO.
 
+## Q001_CONTROLLED_RECONSTRUCTION_V1 — pre-server evaluation contracts
+
+- Date: 2026-09-29
+- Full-FOV native reference: `COMPLETE_LOCAL_VERIFIED` at `/home/universe/SVR/data/Code_10w_v1/Q001_full_fov_native_reference_v2`, schema `q001_full_fov_native_reference/v1`, with exact MP-PCA(full-FOV MIND_mag_reg) provenance. Map/source-MAT SHA256: SAX `f4b5b9d8765a106a8ca7c12fe67e6ecf8f84e1d1c03385a9d58a55728b2f84a7` / `eaa5f825e0d1cd2fbdde093de29e6b05d3e479f47780146ca55473c898121b82`; 2CH `be888e965794412b1f0be648bc67a21edde9f70a37018da93c5e448b6343ce5e` / `18d5a62d75808c92e6704ec60a4f062c8bece6ec0a423c9842d52a658b5ce8ec`; 4CH `546500dc5aab6236918d26b912a790cdf5d29fa43929fbd0f52bd9121597d72a` / `436f49d8263faf7b35b2c9583f912e2832bbff28b40b4f1fd36ce5b309ebebcf`.
+- Contracts: added read-only full-FOV reference verification, empty-destination-only reference migration/verification commands, true-pooled Q001 map/signal metrics plus retained legacy D2-style macro diagnostics, checkpoint/export provenance checks, exact Q001A ROIs, strict Q001B/B6 common support, and shared-HB1 initialization identity-order regression coverage.
+- Diagnostic record supplied by the completed local run: MATLAB R2025b, exit 0, default matcher parallel behavior, 186990 dictionary entries, SAX group 0 shape `[288,256]`, matcher internal wall `73.8955 s`, shell wall `92 s`, output exists, with no captured crash/OOM evidence. Pool1 was not needed. No matcher was rerun for this record.
+- Status: `CODE_READY_SERVER_MIGRATION_PENDING`. FORMAL Q001A: NOT RUN. FORMAL Q001B: NOT RUN. SERVER MIGRATION: NOT RUN. D3/Q002: NOT STARTED. PUSH PERFORMED: NO.
+
 ## D1_BASELINE_PSF_SMOOTHNESS_V1
 
 - Date: 2026-09-28

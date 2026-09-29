@@ -1,0 +1,3 @@
+function q001_dictionary_grid_report(output_json)
+T1_list=[20:20:500,505:5:1500,1520:20:2500]; T2_list=[5:5:100,110:10:200]; B1_list=0.1:0.05:1.2; valid=sum(arrayfun(@(x) sum(x>T2_list),T1_list))*numel(B1_list); grid=struct('num_T1',numel(T1_list),'num_T2',numel(T2_list),'num_B1',numel(B1_list),'num_valid_dictionary_entries',valid); assert(grid.num_T1==275 && grid.num_T2==30 && grid.num_B1==23 && grid.num_valid_dictionary_entries==186990, 'Q001:ReferenceDiagnosticGrid', 'Diagnostic grid diverges from build_native_reference_maps.m.'); fid=fopen(output_json,'w'); fprintf(fid,'%s\n',jsonencode(grid)); fclose(fid);
+end

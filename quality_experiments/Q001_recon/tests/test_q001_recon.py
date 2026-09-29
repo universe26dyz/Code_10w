@@ -1,5 +1,6 @@
 import hashlib
 import json
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -8,8 +9,10 @@ import torch
 from quality_experiments.Q001_recon.config import build_route_config, load_b6_resolved_config
 from quality_experiments.Q001_recon.contracts import verify_q001_input_bundle
 from quality_experiments.Q001_recon.evaluation import ROI_BY_STACK, evaluation_plan, fixed_roi
+from quality_experiments.Q001_recon.metrics import legacy_macro_rows, strict_common_support, true_pooled_rows
 from quality_experiments.Q001_recon.pose_transfer import compose_stack_delta
-from quality_experiments.Q001_recon.routes import build_route_plan
+from quality_experiments.Q001_recon.routes import build_route_plan, registration_inputs_for_training
+from quality_experiments.Q001_recon.verify_full_fov_reference import verify_full_fov_reference
 
 
 def _sha(path):
@@ -77,6 +80,8 @@ def test_rigid_delta_transfer_preserves_world_point_center_and_normal():
 def test_fixed_baseline_rois_are_exact_and_do_not_resize(stack, expected):
     assert fixed_roi(stack) == expected
     assert ROI_BY_STACK[stack] == expected
+    image = np.zeros((288, 256) if stack != "4ch" else (256, 288))
+    assert image[expected].shape == ((145, 129) if stack != "4ch" else (129, 145))
 
 
 def test_evaluation_plan_has_central_k32_k8_same_checkpoint():
@@ -84,3 +89,103 @@ def test_evaluation_plan_has_central_k32_k8_same_checkpoint():
     assert plan["mapping_central_no_psf"]["psf_samples"] == 1
     assert plan["mapping_map_psf_K32"] == {"psf_samples": 32, "seed": 20260911, "checkpoint_sha256": "abc123"}
     assert plan["signal_psf_K8"]["psf_samples"] == 8
+
+
+def _reference(tmp_path, bundle):
+    root = tmp_path / "reference"; root.mkdir(parents=True); stacks = {}
+    for stack, groups, shape in (("sax", 14, (288, 256)), ("2ch", 15, (288, 256)), ("4ch", 12, (256, 288))):
+        path = root / f"{stack}.npz"; array = np.ones((groups, *shape), np.float32)
+        np.savez_compressed(path, t1_ms=array, t2_ms=array * 2, valid_mask=np.ones_like(array, bool), group_idx=np.arange(groups))
+        stacks[stack] = {"map": path.name, "map_sha256": _sha(path), "source_preprocessed_mat_sha256": json.loads((bundle / "q001_input_manifest.json").read_text())["stacks"][stack]["preprocessed_mat"]["sha256"], "shape_group_row_col": [groups, *shape]}
+    (root / "native_reference_manifest.json").write_text(json.dumps({"schema": "q001_full_fov_native_reference/v1", "subject_id": "CYJ", "spatial_mode": "full_fov", "preprocessing_semantics": "MP-PCA(full-FOV MIND_mag_reg)", "map_units": "ms", "stacks": stacks}), encoding="utf-8")
+    return root
+
+
+def test_full_fov_reference_verifier_checks_map_and_input_provenance(tmp_path):
+    bundle = _bundle(tmp_path)
+    reference = _reference(tmp_path / "again", bundle)
+    report = verify_full_fov_reference(reference, bundle)
+    assert report["stacks"]["4ch"]["shape_group_row_col"] == [12, 256, 288]
+    with (reference / "sax.npz").open("ab") as handle: handle.write(b"tamper")
+    with pytest.raises(ValueError, match="SHA256"): verify_full_fov_reference(reference, bundle)
+
+
+def test_full_fov_reference_rejects_source_mat_hash_mismatch(tmp_path):
+    bundle = _bundle(tmp_path); reference = _reference(tmp_path / "reference_fixture", bundle)
+    manifest_path = reference / "native_reference_manifest.json"; manifest = json.loads(manifest_path.read_text()); manifest["stacks"]["sax"]["source_preprocessed_mat_sha256"] = "bad"; manifest_path.write_text(json.dumps(manifest))
+    with pytest.raises(ValueError, match="source preprocessed MAT"): verify_full_fov_reference(reference, bundle)
+
+
+def test_q001_true_pooled_metrics_are_not_legacy_macro_and_support_is_strict():
+    samples = [
+        {"stack": "sax", "weight_idx": 0, "support_provenance": "fixture", "reference": np.array([0., 10.]), "prediction": np.array([0., 20.]), "support": np.array([True, True])},
+        {"stack": "sax", "weight_idx": 0, "support_provenance": "fixture", "reference": np.array([0., 1.]), "prediction": np.array([1., 1.]), "support": np.array([True, True])},
+    ]
+    keys = ("stack", "weight_idx", "support_provenance")
+    pooled = true_pooled_rows(samples, keys, domain="signal")[0]
+    macro = legacy_macro_rows(samples, keys, domain="signal")[0]
+    assert pooled["RMSE_signal"] != macro["RMSE_signal"]
+    assert np.isclose(pooled["Pearson_r"], pooled["NCC"], equal_nan=True)
+    support = strict_common_support(np.array([1., np.nan]), np.array([1., 2.]), np.array([1., 2.]), np.array([True, True]), np.array([True, True]))
+    assert support.tolist() == [True, False]
+
+
+def test_stack_identity_ordering_prevents_list_order_pairing():
+    crop = ["/crop/CYJ/4ch/observations.npz", "/crop/CYJ/sax/observations.npz", "/crop/CYJ/2ch/observations.npz"]
+    full = ["/full/CYJ/sax/observations.npz", "/full/CYJ/2ch/observations.npz", "/full/CYJ/4ch/observations.npz"]
+    assert registration_inputs_for_training(crop, full) == tuple(["/full/CYJ/4ch/observations.npz", "/full/CYJ/sax/observations.npz", "/full/CYJ/2ch/observations.npz"])
+
+
+def test_q001_migration_scripts_refuse_nonempty_before_rsync_and_diagnostic_has_grep_fallback():
+    root = Path(__file__).resolve().parents[1]
+    for script in (root.parent / "server_commands" / "migrate_Q001_inputs_CYJ.sh", root.parent / "server_commands" / "migrate_Q001_reference_CYJ.sh"):
+        text = script.read_text(); assert "Refusing non-empty remote" in text and text.index("Refusing non-empty remote") < text.index("\nrsync -a")
+    diagnostic = (root / "diagnostics" / "run_native_reference_group0_diagnostic.sh").read_text()
+    assert "command -v rg" in diagnostic and "grep -Ei" in diagnostic
+
+
+def test_diagnostic_grid_contract_is_explicit_and_matches_authoritative_counts():
+    matlab = (Path(__file__).resolve().parents[1] / "matlab" / "q001_dictionary_grid_report.m").read_text()
+    assert "20:20:500,505:5:1500,1520:20:2500" in matlab
+    assert "grid.num_T1==275" in matlab and "grid.num_T2==30" in matlab and "grid.num_B1==23" in matlab
+    assert "grid.num_valid_dictionary_entries==186990" in matlab
+
+
+def _hb1_observations(path):
+    images = np.ones((10, 3, 4), np.float32); masks = np.ones_like(images, bool)
+    affine = np.repeat(np.eye(4)[None], 10, axis=0); affine[:, :3, 0] = [0., 1., 0.]; affine[:, :3, 1] = [1., 0., 0.]; affine[:, :3, 2] = [0., 0., 5.]
+    np.savez_compressed(path, images=images, masks=masks, group_idx=np.zeros(10, dtype=np.int64), weight_idx=np.arange(10), affine_lps_rc=affine, pixel_spacing_rc_mm=np.repeat([[1., 1.]], 10, axis=0), slice_thickness_mm=np.full(10, 5.), stack_idx=np.zeros(10, dtype=np.int64), acquisition_time_ms=np.zeros(10), timing9_ms=np.zeros((10, 9)), tr_ms=np.ones(10), vps=np.ones(10))
+
+
+def test_shared_hb1_init_uses_identity_ordered_full_route_once(monkeypatch, tmp_path):
+    """Exercise the real shared initializer with synthetic full-FOV registration stacks."""
+    from trad.modules.module_06_rigid_psf import hb1_stack_adapter as adapter
+    from trad.third_party.nesvor.nesvor.transform import RigidTransform
+    full = []
+    for stack in ("sax", "2ch", "4ch"):
+        directory = tmp_path / "full" / "CYJ" / stack; directory.mkdir(parents=True); path = directory / "observations.npz"; _hb1_observations(path); full.append(str(path))
+    crop_order = [str(tmp_path / "crop" / "CYJ" / stack / "observations.npz") for stack in ("4ch", "sax", "2ch")]
+    ordered = registration_inputs_for_training(crop_order, full)
+    calls = []
+    def register(nested, args_registration=None):
+        calls.append(nested)
+        result = []
+        for index, stack in enumerate(nested[0]):
+            registered = stack.clone()
+            axis = registered.transformation.axisangle(trans_first=True).clone()
+            axis[:, 3] += float(index + 1)
+            registered.transformation = RigidTransform(axis, trans_first=True)
+            result.append(registered)
+        return result
+    monkeypatch.setattr(adapter, "stack_registration", register)
+    dicom = torch.tensor([[0., 0., 0., 40., 0., 0.], [0., 0., 0., 10., 0., 0.], [0., 0., 0., 20., 0., 0.]])
+    result = adapter.initialize_group_poses_from_hb1(dicom, list(ordered), device="cpu")
+    assert len(calls) == 1 and [Path(record["prepared_input"]).parent.name for record in result.stack_pose_records] == ["4ch", "sax", "2ch"]
+    # Deltas follow the full stacks matched by cropped stack identity, with no second registration pass.
+    expected = []
+    for index in range(3):
+        initial = calls[0][0][index].transformation.mean()
+        registered_axis = initial.axisangle(trans_first=True).clone(); registered_axis[:, 3] += float(index + 1)
+        delta = RigidTransform(registered_axis, trans_first=True).compose(initial.inv())
+        expected.append(delta.compose(RigidTransform(dicom[index:index + 1], trans_first=True)).axisangle(trans_first=True)[0])
+    assert torch.allclose(result.post_stack_init_axisangle_physical, torch.stack(expected), atol=1e-5)
