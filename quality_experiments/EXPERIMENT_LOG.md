@@ -24,6 +24,17 @@
 - Formal result: no CYJ preprocessing, prepared inputs, reconstruction, D3, or Q002 was run. Waiting only for explicit output and baseline-prepared roots.
 - Local implementation commit: `34b1e0b` (`Harden Q001 full-FOV input acceptance`). PUSH PERFORMED: NO.
 
+## Q001_FULL_FOV_PREPARATION_V1 — failed real input-generation attempt and MATLAB hotfix
+
+- Date: 2026-09-29
+- Failed root (preserved, never overwritten): `/home/universe/SVR/data/Code_10w_v1/Q001_full_fov_inputs_v1`.
+- Attempt status: `FAILED_INPUT_QC`; it failed before successful full-FOV preprocessing completion. The retained manifest has no stack MAT/prepared/QC artifacts.
+- Root cause: Q001 `q001_validate_group_geometry` used MATLAB-incompatible temporary-result chained indexing (`double(...)(:)`) at line 99. The later Python CUDA-extension warning came from the failure trap and is not causal.
+- Hotfix: mirror the verified baseline geometry-comparison structure: assign DICOM values to local variables before indexing; keep exact Rows/Columns checks and same-shape tolerance checks for ImagePositionPatient, ImageOrientationPatient, PixelSpacing, and SliceThickness. No scientific/preprocessing/QC or baseline behavior changed.
+- Regression: synthetic one-group/ten-DICOM MATLAB runtime smoke executes the validator successfully and separately proves a PixelSpacing mismatch raises `Q001:Geometry`.
+- Rerun state: `CODE_READY_REAL_INPUT_RERUN_PENDING`; next formal root must be `/home/universe/SVR/data/Code_10w_v1/Q001_full_fov_inputs_v2`. No reconstruction was run.
+- Local hotfix implementation commit: `49f176c` (`Fix Q001 MATLAB geometry validator syntax`). PUSH PERFORMED: NO.
+
 ## D1_BASELINE_PSF_SMOOTHNESS_V1
 
 - Date: 2026-09-28

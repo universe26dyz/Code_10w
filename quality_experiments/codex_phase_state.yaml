@@ -1,6 +1,6 @@
 schema: code10w_quality_experiment_state/v1
 baseline_git_head: ae111b87e7d247c754ac64a658e3d7c33978b207
-current_git_head: 34b1e0b # Q001 pre-run acceptance implementation; completion record commit follows
+current_git_head: 49f176c # Q001 MATLAB geometry-validator implementation; completion record commit follows
 d1:
   status: CODE_READY_SERVER_RUN_PENDING
   implementation_revision: D1_psf_smoothness_decomposition_baseline_v2
@@ -68,10 +68,17 @@ g0_pose_error_correlation:
     - metrics/G0_pose_drift.csv
 next_phase: Q001_FULL_FOV_INPUT_GENERATION
 q001_full_fov_preparation:
-  status: CODE_READY_LOCAL_INPUT_ROOTS_REQUIRED
+  status: CODE_READY_REAL_INPUT_RERUN_PENDING
   code_complete: true
   local_tests_complete: true
-  formal_local_preprocessing: NOT_RUN_AWAITING_EXPLICIT_Q001_OUTPUT_ROOT_AND_Q001_BASELINE_PREPARED_ROOT
+  formal_local_preprocessing: FAILED_ATTEMPT_MATLAB_GEOMETRY_VALIDATOR_SYNTAX
   full_fov_prepared_available: false
   implementation_commit: 41331bd
-  pre_run_hotfix_commit: 34b1e0b
+  pre_run_hotfix_commit: 49f176c
+  failed_input_generation_attempt:
+    result_root: /home/universe/SVR/data/Code_10w_v1/Q001_full_fov_inputs_v1
+    status: FAILED_INPUT_QC
+    root_cause: MATLAB temporary-result chained indexing in Q001 geometry validator
+    preserved: true
+    successful_preprocessing_completed: false
+    next_formal_root: /home/universe/SVR/data/Code_10w_v1/Q001_full_fov_inputs_v2
