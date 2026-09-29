@@ -13,6 +13,17 @@
 - Local implementation commit: `41331bd` (`Add Q001 full-FOV preprocessing and bridge`). PUSH PERFORMED: NO.
 - Pre-run MATLAB helper-path hotfix: `2d59356` (`Fix Q001 MATLAB helper path`); formal/real result remains NOT RUN.
 
+## Q001_FULL_FOV_PREPARATION_V1 — pre-run acceptance hotfix
+
+- Date: 2026-09-29
+- Status: CODE_READY_LOCAL_INPUT_ROOTS_REQUIRED. FORMAL/REAL CYJ FULL-FOV INPUT GENERATION: NOT RUN.
+- Root cause fixed: the MATLAB metadata previously asserted MP-PCA semantics even when MP-PCA was disabled, and the runner did not make cropped-vs-full correspondence QC an acceptance gate.
+- Fix: disabled MP-PCA now records `MIND_mag_reg`; the formal bridge accepts only exact `MP-PCA(full-FOV MIND_mag_reg)` and the explicit HB1 full-FOV geometry rule. Per-stack strict QC rejects spatial/SOP/timing/TR-VPS/spacing/thickness/group/observation/affine-origin failures while retaining pixel equality as NOT REQUIRED.
+- Runner contract: requires user-selected `Q001_OUTPUT_ROOT` and `Q001_BASELINE_PREPARED_ROOT`; validates `CYJ/{sax,2ch,4ch}` baseline artifacts before any preprocessing; creates read-only comparison reports and `q001_input_manifest.json` with per-stack paths, hashes, shapes, provenance, and readiness status.
+- Local validation: 12 Q001 targeted tests passed; 4 `trad` and 4 `mlp` baseline bridge/geometry tests passed in their respective project roots; Q001 Python compile/CLI, shell syntax, MATLAB `checkcode`, and a synthetic MP-PCA-disabled MATLAB provenance check passed.
+- Formal result: no CYJ preprocessing, prepared inputs, reconstruction, D3, or Q002 was run. Waiting only for explicit output and baseline-prepared roots.
+- Local implementation commit: `34b1e0b` (`Harden Q001 full-FOV input acceptance`). PUSH PERFORMED: NO.
+
 ## D1_BASELINE_PSF_SMOOTHNESS_V1
 
 - Date: 2026-09-28
@@ -73,6 +84,20 @@
 - Regression validation: synthetic three-stack/ten-weight downstream integration test writes paired metrics and all figure paths, covering the former runtime failure without `/data` or a formal checkpoint.
 - Formal results: FORMAL K=8 RESULT NOT RUN. D3 remains PLANNED. Next action is D2 server run and review, then a signal-domain fidelity decision before any later conditional evaluation.
 - Local hotfix implementation commit: `c9ece24` (`Fix D2 paired-weight evaluation path`). PUSH PERFORMED: NO.
+
+## D2_BASELINE_SIGNAL_K8_V1 — externally reviewed formal server result
+
+- Date: 2026-09-29
+- Status: SERVER_RUN_COMPLETED_EXTERNALLY_REVIEWED. Source: user-provided server result; the server artifact contents were not re-verified locally.
+- FrozenMLP strict-paired global: NRMSE `0.059260425456891364`, NCC `0.9156052955158083`, RMSE_signal `24.05715773093939`.
+- Bloch-vs-FrozenMLP predicted-signal disagreement: NRMSE `0.014340639073069109`, NCC `0.9946402104890828`, RMSE_signal `4.702345780725444`.
+- D3 remains PLANNED and was not started. The next experimental route remains Q001 full-FOV input generation and subsequent signal-domain review.
+
+## G0 — externally reviewed server diagnostics
+
+- Date: 2026-09-29
+- Corrected G0 v2 pose audit: server run completed and externally reviewed. G0 v1 correspondence remains valid; v2 corrected pose values are interpretable and show no catastrophic rigid divergence. Source: externally reviewed, not locally re-verified artifacts.
+- G0 pose-error correlation: formal diagnostic completed and reviewed from user-provided server results. Conclusion: pose drift is a local/secondary contributor, not a consistent cross-stack dominant explanation of central-map structural mismatch.
 
 ## D3_BASELINE_SIGNAL_DICTIONARY_V1
 

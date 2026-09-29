@@ -1,6 +1,6 @@
 schema: code10w_quality_experiment_state/v1
 baseline_git_head: ae111b87e7d247c754ac64a658e3d7c33978b207
-current_git_head: 2d59356
+current_git_head: 34b1e0b # Q001 pre-run acceptance implementation; completion record commit follows
 d1:
   status: CODE_READY_SERVER_RUN_PENDING
   implementation_revision: D1_psf_smoothness_decomposition_baseline_v2
@@ -14,12 +14,21 @@ d1:
     reason: historical central-plane export has 10 weight rows per group; v1 loader incorrectly required one row per group
   hotfix_implementation_commit: 43b0424
 d2:
-  status: CODE_READY_SERVER_RUN_PENDING
+  status: SERVER_RUN_COMPLETED_EXTERNALLY_REVIEWED
   implementation_revision: D2_k8_signal_domain_baseline_v1
   code_complete: true
   local_tests_complete: true
   implementation_commit: 79ff7b6
-  server_run_status: NOT_RUN
+  server_run_status: COMPLETED_EXTERNALLY_REVIEWED
+  result_source: user_provided_server_result
+  formal_frozenmlp_strict_paired_global:
+    nrmse: 0.059260425456891364
+    ncc: 0.9156052955158083
+    rmse_signal: 24.05715773093939
+  bloch_vs_frozenmlp_predicted_signal_disagreement:
+    nrmse: 0.014340639073069109
+    ncc: 0.9946402104890828
+    rmse_signal: 4.702345780725444
   pre_server_hotfix:
     status: CODE_READY_SERVER_RUN_PENDING
     formal_cyj_result: NOT_RUN
@@ -31,34 +40,38 @@ d3:
   local_tests_complete: false
   server_run_status: NOT_RUN
 g0:
-  status: CODE_READY_SERVER_RUN_PENDING
+  status: SERVER_RUN_COMPLETED_EXTERNALLY_REVIEWED
   implementation_revision: G0_geometry_correspondence_baseline_v2
   code_complete: true
   local_tests_complete: true
-  server_run_status: NOT_RUN
+  server_run_status: COMPLETED_EXTERNALLY_REVIEWED
+  result_source: externally_reviewed
   signal_status: DEPENDENCY_PENDING
   implementation_commit: 5d803ab
   v1_correspondence_status: VALID
   v1_pose_audit_status: INVALID_AXISANGLE_COMPONENT_SEMANTICS
-  v2_server_run_status: NOT_RUN
+  v2_server_run_status: COMPLETED_EXTERNALLY_REVIEWED
+  v2_pose_audit_conclusion: interpretable_corrected_pose_values_no_catastrophic_rigid_divergence
   pose_hotfix_implementation_commit: df336eb
 g0_pose_error_correlation:
-  status: CODE_READY_SERVER_RUN_PENDING
+  status: SERVER_RUN_COMPLETED_EXTERNALLY_REVIEWED
   experiment_id: G0_POSE_ERROR_CORRELATION_CYJ_V1
   code_complete: true
   local_tests_complete: true
   implementation_commit: d491c96
-  formal_local_analysis: NOT_RUN_MISSING_G0_V2_ARTIFACTS
+  formal_local_analysis: COMPLETED_EXTERNALLY_REVIEWED
+  result_source: user_provided_server_result
+  conclusion: pose_drift_is_local_secondary_not_consistent_cross_stack_dominant_explanation
   required_input_revision: G0_geometry_correspondence_baseline_v2
   missing_local_artifacts:
     - metrics/G0_per_slice.csv
     - metrics/G0_pose_drift.csv
 next_phase: Q001_FULL_FOV_INPUT_GENERATION
 q001_full_fov_preparation:
-  status: CODE_READY_LOCAL_INPUT_ROOT_REQUIRED
+  status: CODE_READY_LOCAL_INPUT_ROOTS_REQUIRED
   code_complete: true
   local_tests_complete: true
-  formal_local_preprocessing: NOT_RUN_OUTPUT_ROOT_UNRESOLVED
+  formal_local_preprocessing: NOT_RUN_AWAITING_EXPLICIT_Q001_OUTPUT_ROOT_AND_Q001_BASELINE_PREPARED_ROOT
   full_fov_prepared_available: false
   implementation_commit: 41331bd
-  pre_run_hotfix_commit: 2d59356
+  pre_run_hotfix_commit: 34b1e0b

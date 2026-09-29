@@ -16,12 +16,17 @@ cd "${CODE10W_ROOT}"
 write_failed_manifest() {
   conda run --no-capture-output -n knesvr_torch python -m quality_experiments.Q001_full_fov.bridge.q001_input_manifest --output-root "${Q001_OUTPUT_ROOT}" --baseline-prepared-root "${Q001_BASELINE_PREPARED_ROOT}" --allow-incomplete >/dev/null || true
 }
+fail_after_root_created() {
+  echo "$1" >&2
+  write_failed_manifest
+  exit 1
+}
 trap write_failed_manifest ERR
 
 for stack in sax 2ch 4ch; do
   BASELINE_DIR="${Q001_BASELINE_PREPARED_ROOT}/CYJ/${stack}"
   for required in observations.npz manifest.json timing.npy qc_summary.json; do
-    [[ -f "${BASELINE_DIR}/${required}" ]] || { echo "Missing baseline prepared artifact: ${BASELINE_DIR}/${required}" >&2; exit 1; }
+    [[ -f "${BASELINE_DIR}/${required}" ]] || fail_after_root_created "Missing baseline prepared artifact: ${BASELINE_DIR}/${required}"
   done
 done
 
@@ -30,7 +35,7 @@ for stack in sax 2ch 4ch; do
   MAT_PATH="${Q001_OUTPUT_ROOT}/full_fov_preprocessed/CYJ/${stack}/preprocessed.mat"
   PREPARED_DIR="${Q001_OUTPUT_ROOT}/full_fov_prepared/CYJ/${stack}"
   BASELINE_DIR="${Q001_BASELINE_PREPARED_ROOT}/CYJ/${stack}"
-  [[ -d "${DICOM_DIR}" ]] || { echo "Missing configured DICOM directory: ${DICOM_DIR}" >&2; exit 1; }
+  [[ -d "${DICOM_DIR}" ]] || fail_after_root_created "Missing configured DICOM directory: ${DICOM_DIR}"
   mkdir -p "$(dirname "${MAT_PATH}")"
   matlab -batch "addpath('${CODE10W_ROOT}/quality_experiments/Q001_full_fov/preprocessing'); addpath('${CODE10W_ROOT}/trad/modules/module_01_preprocess_matlab/preprocessing_v1'); opts=preprocess_options_v1([],false,true); preprocess_stack_full_fov_q001('${DICOM_DIR}','${MAT_PATH}',opts);"
   conda run --no-capture-output -n knesvr_torch python -m quality_experiments.Q001_full_fov.bridge.full_fov_bridge --preprocessed-mat "${MAT_PATH}" --dicom-dir "${DICOM_DIR}" --stack "${stack}" --output-dir "${PREPARED_DIR}"
