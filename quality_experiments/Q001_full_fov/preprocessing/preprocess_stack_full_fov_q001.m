@@ -29,7 +29,7 @@ else
     max_slices = opts.max_slices;
 end
 
-repo_root = fileparts(fileparts(fileparts(mfilename('fullpath'))));
+repo_root = fileparts(fileparts(fileparts(fileparts(mfilename('fullpath')))));
 baseline_dir = fullfile(repo_root, 'trad', 'modules', 'module_01_preprocess_matlab', 'preprocessing_v1');
 addpath(baseline_dir);
 dicoms = dir(fullfile(input_dicom_dir, '*.dcm'));
