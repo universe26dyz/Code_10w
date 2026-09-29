@@ -1,6 +1,6 @@
 schema: code10w_quality_experiment_state/v1
 baseline_git_head: ae111b87e7d247c754ac64a658e3d7c33978b207
-current_git_head: 49f176c # Q001 MATLAB geometry-validator implementation; completion record commit follows
+current_git_head: Q001_RECON_IMPLEMENTATION_COMMIT_PENDING
 d1:
   status: CODE_READY_SERVER_RUN_PENDING
   implementation_revision: D1_psf_smoothness_decomposition_baseline_v2
@@ -66,15 +66,16 @@ g0_pose_error_correlation:
   missing_local_artifacts:
     - metrics/G0_per_slice.csv
     - metrics/G0_pose_drift.csv
-next_phase: Q001_FULL_FOV_INPUT_GENERATION
 q001_full_fov_preparation:
-  status: CODE_READY_REAL_INPUT_RERUN_PENDING
+  status: READY_FOR_Q001_RECON_IMPLEMENTATION
   code_complete: true
   local_tests_complete: true
-  formal_local_preprocessing: FAILED_ATTEMPT_MATLAB_GEOMETRY_VALIDATOR_SYNTAX
-  full_fov_prepared_available: false
+  formal_local_preprocessing: COMPLETE_EXTERNALLY_PROVIDED
+  full_fov_prepared_available: true
   implementation_commit: 41331bd
-  pre_run_hotfix_commit: 49f176c
+  ready_input_root: /home/universe/SVR/data/Code_10w_v1/Q001_full_fov_inputs_v2
+  ready_input_source_git: 8297845a562d70bc33a135dbd76e7bf0daa3e2ce
+  strict_qc: ALL_STACKS_PASSED
   failed_input_generation_attempt:
     result_root: /home/universe/SVR/data/Code_10w_v1/Q001_full_fov_inputs_v1
     status: FAILED_INPUT_QC
@@ -82,3 +83,13 @@ q001_full_fov_preparation:
     preserved: true
     successful_preprocessing_completed: false
     next_formal_root: /home/universe/SVR/data/Code_10w_v1/Q001_full_fov_inputs_v2
+q001_controlled_reconstruction:
+  status: CODE_READY_SERVER_INPUT_MIGRATION_PENDING
+  experiments:
+    - Q001A_full_fov_full_recon
+    - Q001B_full_fov_reg_cropped_recon
+  formal_q001a_status: NOT_RUN
+  formal_q001b_status: NOT_RUN
+  d3_status: NOT_STARTED
+  q002_status: NOT_STARTED
+next_phase: Q001_SERVER_INPUT_MIGRATION_PENDING

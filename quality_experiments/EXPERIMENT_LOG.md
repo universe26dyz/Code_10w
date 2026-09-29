@@ -35,6 +35,15 @@
 - Rerun state: `CODE_READY_REAL_INPUT_RERUN_PENDING`; next formal root must be `/home/universe/SVR/data/Code_10w_v1/Q001_full_fov_inputs_v2`. No reconstruction was run.
 - Local hotfix implementation commit: `49f176c` (`Fix Q001 MATLAB geometry validator syntax`). PUSH PERFORMED: NO.
 
+## Q001_CONTROLLED_RECONSTRUCTION_V1 — implementation and server migration preparation
+
+- Date: 2026-09-29
+- Ready input verification: `/home/universe/SVR/data/Code_10w_v1/Q001_full_fov_inputs_v2/q001_input_manifest.json` is `READY_FOR_Q001_RECON_IMPLEMENTATION`, with strict QC passed for SAX 14/140/[288,256], 2CH 15/150/[288,256], and 4CH 12/120/[256,288]. Source git: `8297845a562d70bc33a135dbd76e7bf0daa3e2ce`.
+- Implementation: Q001A trains only full-FOV prepared observations; Q001B provides full-FOV observations only to one HB1 stack-registration pass then optimizes only original cropped observations. Both load only B6 `resolved_config`; B6 trained reconstruction state warm-start is rejected.
+- Migration target: `/data/dengyz/dataset/Code_10w_v1/Q001_full_fov_inputs_v2`, copied by checksum rsync and verified there against all manifest artifact SHA256 values before either server route can run.
+- Local MATLAB full-FOV original-MultiMap mapping was attempted without reconstruction. The matcher reached `begin build dict` on SAX but produced no mapping output in this environment; partial mapping root is preserved and no native-reference bundle or formal reconstruction result is claimed.
+- Next phase: `Q001_SERVER_INPUT_MIGRATION_PENDING`. FORMAL Q001A/Q001B: NOT RUN. D3/Q002: NOT STARTED. PUSH PERFORMED: NO.
+
 ## D1_BASELINE_PSF_SMOOTHNESS_V1
 
 - Date: 2026-09-28
