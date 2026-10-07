@@ -124,6 +124,16 @@ def test_true_map_k32_uses_d1_validated_posthoc_path_not_parameter_reprojection_
     assert 'output / "evaluation/mapping_map_psf_K32"' not in reconstruction
 
 
+def test_q001_posthoc_manifest_validation_rejects_pose_hash_and_wrong_k32(tmp_path):
+    from quality_experiments.Q001_recon.run_map_domain_psf import validate_posthoc_manifest
+    route = tmp_path / "q001_route_manifest.json"; checkpoint = tmp_path / "model.pt"; t1 = tmp_path / "T1_3D.nii.gz"; t2 = tmp_path / "T2_3D.nii.gz"; poses = tmp_path / "final_rigid_poses.json"
+    for path, content in ((route, b"route"), (checkpoint, b"model"), (t1, b"t1"), (t2, b"t2"), (poses, b"poses")): path.write_bytes(content)
+    manifest = {"mode": "Q001B", "domain": "map", "n_samples": 32, "seed": 20260911, "q001_route_manifest_sha256": _sha(route), "reconstruction_checkpoint_sha256": _sha(checkpoint), "t1_volume_sha256": _sha(t1), "t2_volume_sha256": _sha(t2), "final_rigid_poses_sha256": _sha(poses), "prepared_observations_sha256": {}, "reference_manifest_sha256": "ref", "map_domain_psf_manifest_sha256": "nested"}
+    validate_posthoc_manifest(manifest, route, checkpoint, t1, t2, poses, {}, "ref", "nested")
+    manifest["final_rigid_poses_sha256"] = "wrong"
+    with pytest.raises(ValueError, match="final_rigid_poses"): validate_posthoc_manifest(manifest, route, checkpoint, t1, t2, poses, {}, "ref", "nested")
+
+
 def _reference(tmp_path, bundle):
     root = tmp_path / "reference"; root.mkdir(parents=True); stacks = {}
     for stack, groups, shape in (("sax", 14, (288, 256)), ("2ch", 15, (288, 256)), ("4ch", 12, (256, 288))):
