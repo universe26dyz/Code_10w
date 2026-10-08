@@ -127,3 +127,31 @@ class TradQuantitativeForward(nn.Module):
         selected = fingerprint.gather(1, weight_idx[:, None, None].expand(-1, n_psf_samples, 1).reshape(-1, 1)).squeeze(1)
         amplitude = fields["amplitude"]
         return (selected * amplitude).reshape(batch_size, n_psf_samples).mean(dim=1)
+
+    def forward_fingerprint(
+        self,
+        local_xyz_mm: torch.Tensor,
+        group_idx: torch.Tensor,
+        timing9_ms: torch.Tensor,
+        n_psf_samples: int,
+        profile: Callable[[str], ContextManager[None]] | None = None,
+    ) -> torch.Tensor:
+        """Predict all ten weights from one shared PSF neighbourhood per anchor."""
+
+        batch_size = local_xyz_mm.shape[0]
+        if timing9_ms.shape != (batch_size, 9):
+            raise ValueError("timing9_ms must be [B,9].")
+        measure = profile or (lambda _name: nullcontext())
+        with measure("psf_and_rigid"):
+            world_samples = self.rigid_psf.sample_local_then_transform(local_xyz_mm, group_idx, n_psf_samples)
+        with measure("inr_forward"):
+            fields = self.quantitative_inr(world_samples.reshape(-1, 3))
+        with measure("forward_decoder"):
+            fingerprint = self.signal_simulator(
+                fields["t1_ms"], fields["t2_ms"], fields["b1"],
+                timing9_ms[:, None, :].expand(-1, n_psf_samples, -1).reshape(-1, 9),
+                self.protocol, normalize=True,
+            )
+        if fingerprint.shape != (batch_size * n_psf_samples, 1, 10):
+            raise ValueError("FrozenMLP fingerprint must have shape [B*K,1,10].")
+        return (fields["amplitude"][:, None] * fingerprint.squeeze(1)).reshape(batch_size, n_psf_samples, 10).mean(dim=1)

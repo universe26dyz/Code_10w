@@ -98,7 +98,7 @@ q001_controlled_reconstruction:
   experiments:
     - Q001A_full_fov_full_recon
     - Q001B_full_fov_reg_cropped_recon
-  formal_q001a_status: FAILED_PRETRAIN_INTENSITY_QUANTILE_CPU_FALLBACK
+  formal_q001a_status: COMPLETED_EXTERNALLY_REPORTED
   q001a_failed_attempts:
     - code_commit: 609bfaecd54b176ee3bd513d6900d8ebdfcd32d9
       status: FAILED_PRETRAIN_INTENSITY_QUANTILE
@@ -131,11 +131,19 @@ formal_export_psf128_contract:
   n_inference_samples: 128
   seed: 20260911
 q001a:
-  status: READY_FOR_FORMAL_SERVER_RERUN
-  formal_result: NOT_PRODUCED
+  status: COMPLETED_EXTERNALLY_REPORTED
+  formal_result: USER_REPORTED_SUCCESS_NO_LOCAL_MANIFEST
   formal_reference_server_root: /data/dengyz/dataset/Code_10w_v1/reference_data/CYJ/Q001_full_fov_native_reference_v2
 q002:
-  status: NOT_STARTED
+  status: READY_FOR_FORMAL_SERVER_RUN
+  code_complete: true
+  local_tests_complete: true
+  formal_result: NOT_RUN
+  baseline: frozen_mlp_B6
+  training_input: B6_original_cropped_prepared_only
+  effective_scalar_budget: 640
+  anchor_batch_size: 64
+  shared_training_psf_samples: 8
 q003:
   status: NOT_STARTED
-next_phase: Q001A_FORMAL_SERVER_RERUN
+next_phase: Q002_FORMAL_SERVER_RUN

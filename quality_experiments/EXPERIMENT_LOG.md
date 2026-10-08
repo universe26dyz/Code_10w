@@ -278,3 +278,15 @@
 - The next fallback uses exact CPU `torch.kthvalue` order statistics with `rank=q*(N-1)`, floor/ceil ranks, and linear interpolation. It uses every element and performs no approximation or subsampling; strict `>`/`<` trimming remains unchanged.
 - The second failed log remains user-preserved before rerun as `Q001A_full_fov_full_recon_v1.FAILED_PRETRAIN_QUANTILE_CPU_5fef4b1.log`; the runner continues to refuse log overwrite.
 - Current Q001A code status: `READY_FOR_FORMAL_SERVER_RERUN` after an actual `2**24 + 1` float32 CPU preflight. Q002/Q003: NOT STARTED. PUSH PERFORMED: NO.
+
+## Q002_B6_ROI_SAME_ANCHOR_MSE
+
+- Date: 2026-10-08
+- Status: `CODE_READY_LOCAL_TESTED`; formal Q002 reconstruction/evaluation: `NOT_RUN`; PUSH PERFORMED: NO.
+- Historical bookkeeping correction: user reported Q001A formal Stage A/B and evaluation completion at `e0e35158397a07556039fecedf1d98921d78ab2e`; Q001B remains completed. No Q001A manifest SHA or unprovided metric provenance is invented here.
+- Control: B6 FrozenMLP baseline; only original cropped `CYJ/{sax,2ch,4ch}/observations.npz` are accepted for training and stack initialization. Q001 data/poses and all warm starts are rejected.
+- Sampling: 64 integer native anchors, each holding ordered weights 0..9, for effective scalar budget 640. Training uses one shared K=8 PSF neighbourhood and vector MSE; cosine is evaluator-only.
+- Support/QC: ten-way foreground AND plus finite observations; per-group intersection/union, mask equality, discarded scalar support, scalar per-weight counts, source SHA256, scalar-derived B6 stack weights, and fixed monitor identity hash are written to the Q002 route manifest.
+- Evaluation: central/no-map-PSF T1/T2 and K8 signal compare Q002 and B6 only on strict finite common support. True-pooled outputs include per-group/per-stack/global metrics; fingerprint cosine is a read-only diagnostic. K128 reuse is 1 mm/factor 1/K128/seed 20260911.
+- Server commands: `quality_experiments/server_commands/run_Q002_CYJ.sh` then `quality_experiments/server_commands/evaluate_Q002_CYJ.sh`. They require CUDA, approved-checkpoint checksum visibility, a clean Git worktree, and empty output targets; they do not delete paths.
+- Q003: `NOT_STARTED`; no cosine training objective or other Q003 scientific change was implemented.
