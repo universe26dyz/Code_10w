@@ -308,3 +308,10 @@
 - Q002 data sampling is unchanged at 64 joint anchors × 10 weights/K8. Spatial regularization now independently reuses `CachedBalancedSampler` on original B6 scalar cropped support, yielding 640 scalar candidates and the B6-configured 256 effective regularization points per iteration.
 - Training logs record candidate/effective counts and source. Evaluation validates full unique group×weight identity sets, records separate reconstruction/evaluation Git provenance, and writes observed-fingerprint cosine per group/stack/global with per-norm epsilon semantics.
 - Phase-state bookkeeping now consistently records Q001A as externally reported complete, Q001B complete, Q002 ready but formal NOT_RUN, and Q003 NOT_STARTED.
+
+## Q002_B6_ROI_SAME_ANCHOR_MSE — v1 forward-shape failure and immutable v2 retry
+
+- v1 formal attempt status: `FAILED_PRETRAIN_FORWARD_FINGERPRINT_SHAPE_CONTRACT` at commit `5158f7b28362f6c9edd802a5fe08a1bbe4a63859`.
+- Failure phase: Stage A first forward, before backward/optimizer; optimizer steps 0; checkpoint/export/metrics not generated. Existing v1 output root and `.log` are immutable and must not be overwritten.
+- Root cause: Q002 incorrectly required fingerprint `[B*K,1,10]`; approved FrozenMLP contract is `[B*K,10]`, matching scalar forward gather semantics.
+- v2 retry root: `Q002_B6_roi_same_anchor_mse_v2` with matching v2 log. It remains `READY_FOR_FORMAL_SERVER_RERUN`; formal successful result `NOT_RUN`.

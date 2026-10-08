@@ -7,7 +7,7 @@ CROPPED_ROOT="${DATA_ROOT}/Code_10w_prepared"
 B6_EXP="${DATA_ROOT}/Code_10w_runs/CYJ_decoder_comparison_20260924_clean_v1"
 B6_MODEL="${B6_EXP}/runs/frozen_mlp_B6/model.pt"
 SIGNAL="${B6_EXP}/inputs/mlp/signal_simulator_approved.pth"
-OUTPUT="${DATA_ROOT}/Code_10w_runs/quality_experiments_v1/CYJ/Q002_B6_roi_same_anchor_mse_v1"
+OUTPUT="${DATA_ROOT}/Code_10w_runs/quality_experiments_v1/CYJ/Q002_B6_roi_same_anchor_mse_v2"
 LOG="${OUTPUT}.log"
 
 source "$(conda info --base)/etc/profile.d/conda.sh"

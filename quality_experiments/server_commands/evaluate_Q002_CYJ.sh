@@ -4,7 +4,7 @@ set -euo pipefail
 CODE10W_ROOT=/data/dengyz/code/Code_10w
 DATA_ROOT=/data/dengyz/dataset/Code_10w_v1
 B6_EXP="${DATA_ROOT}/Code_10w_runs/CYJ_decoder_comparison_20260924_clean_v1"
-RUN_ROOT="${DATA_ROOT}/Code_10w_runs/quality_experiments_v1/CYJ/Q002_B6_roi_same_anchor_mse_v1"
+RUN_ROOT="${DATA_ROOT}/Code_10w_runs/quality_experiments_v1/CYJ/Q002_B6_roi_same_anchor_mse_v2"
 OUTPUT="${RUN_ROOT}/evaluation/formal_q002_b6_roi_common_support"
 
 source "$(conda info --base)/etc/profile.d/conda.sh"

@@ -152,6 +152,6 @@ class TradQuantitativeForward(nn.Module):
                 timing9_ms[:, None, :].expand(-1, n_psf_samples, -1).reshape(-1, 9),
                 self.protocol, normalize=True,
             )
-        if fingerprint.shape != (batch_size * n_psf_samples, 1, 10):
-            raise ValueError("FrozenMLP fingerprint must have shape [B*K,1,10].")
-        return (fields["amplitude"][:, None] * fingerprint.squeeze(1)).reshape(batch_size, n_psf_samples, 10).mean(dim=1)
+        if fingerprint.shape != (batch_size * n_psf_samples, 10):
+            raise ValueError("FrozenMLP fingerprint must have shape [B*K,10].")
+        return (fields["amplitude"][:, None] * fingerprint).reshape(batch_size, n_psf_samples, 10).mean(dim=1)

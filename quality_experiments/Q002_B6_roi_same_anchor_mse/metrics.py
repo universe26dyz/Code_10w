@@ -28,9 +28,10 @@ def fingerprint_cosine_summary(predicted: np.ndarray, observed: np.ndarray, supp
     if predicted.shape != observed.shape or predicted.ndim != 3 or predicted.shape[0] != 10 or support.shape != predicted.shape[1:]:
         raise ValueError("Fingerprint cosine requires matching [10,H,W] prediction/observed and [H,W] support.")
     dot = (predicted * observed).sum(axis=0)
-    norms = np.linalg.norm(predicted, axis=0) * np.linalg.norm(observed, axis=0)
-    near_zero = norms < epsilon
-    cosine = dot / np.maximum(norms, epsilon)
+    pred_norm_raw = np.linalg.norm(predicted, axis=0)
+    obs_norm_raw = np.linalg.norm(observed, axis=0)
+    near_zero = (pred_norm_raw < epsilon) | (obs_norm_raw < epsilon)
+    cosine = dot / (np.maximum(pred_norm_raw, epsilon) * np.maximum(obs_norm_raw, epsilon))
     values = cosine[np.asarray(support, bool)]
     return {"mean_cosine": float(values.mean()) if values.size else float("nan"), "median_cosine": float(np.median(values)) if values.size else float("nan"), "support_N": int(values.size), "near_zero_norm_count": int((near_zero & np.asarray(support, bool)).sum())}
 
