@@ -23,4 +23,16 @@ def strict_fingerprint_common_support(b6_fingerprint: np.ndarray, q002_fingerpri
     return (np.asarray(b6_masks, bool) & np.asarray(q002_masks, bool) & np.isfinite(b6_fingerprint) & np.isfinite(q002_fingerprint)).all(axis=0)
 
 
-__all__ = ["strict_q002_common_support", "strict_fingerprint_common_support", "true_pooled_rows"]
+def fingerprint_cosine_summary(predicted: np.ndarray, observed: np.ndarray, support: np.ndarray, *, epsilon: float = 1e-8) -> dict[str, float | int]:
+    """Observed fingerprint-shape fidelity for ordered [10,H,W] vectors."""
+    if predicted.shape != observed.shape or predicted.ndim != 3 or predicted.shape[0] != 10 or support.shape != predicted.shape[1:]:
+        raise ValueError("Fingerprint cosine requires matching [10,H,W] prediction/observed and [H,W] support.")
+    dot = (predicted * observed).sum(axis=0)
+    norms = np.linalg.norm(predicted, axis=0) * np.linalg.norm(observed, axis=0)
+    near_zero = norms < epsilon
+    cosine = dot / np.maximum(norms, epsilon)
+    values = cosine[np.asarray(support, bool)]
+    return {"mean_cosine": float(values.mean()) if values.size else float("nan"), "median_cosine": float(np.median(values)) if values.size else float("nan"), "support_N": int(values.size), "near_zero_norm_count": int((near_zero & np.asarray(support, bool)).sum())}
+
+
+__all__ = ["strict_q002_common_support", "strict_fingerprint_common_support", "fingerprint_cosine_summary", "true_pooled_rows"]
