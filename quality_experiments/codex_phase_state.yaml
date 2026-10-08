@@ -94,7 +94,7 @@ q001_full_fov_native_reference:
     2ch: {map_sha256: be888e965794412b1f0be648bc67a21edde9f70a37018da93c5e448b6343ce5e, source_preprocessed_mat_sha256: 18d5a62d75808c92e6704ec60a4f062c8bece6ec0a423c9842d52a658b5ce8ec}
     4ch: {map_sha256: 546500dc5aab6236918d26b912a790cdf5d29fa43929fbd0f52bd9121597d72a, source_preprocessed_mat_sha256: 436f49d8263faf7b35b2c9583f912e2832bbff28b40b4f1fd36ce5b309ebebcf}
 q001_controlled_reconstruction:
-  status: Q001A_FORMAL_SERVER_RERUN_PENDING
+  status: COMPLETED_EXTERNALLY_REPORTED
   experiments:
     - Q001A_full_fov_full_recon
     - Q001B_full_fov_reg_cropped_recon
@@ -118,7 +118,7 @@ q001_controlled_reconstruction:
   q001b_old_parameter_k32: INVALID_AS_MAP_PSF
   q001b_true_map_domain_k32: COMPLETE
   d3_status: NOT_STARTED
-  q002_status: NOT_STARTED
+  q002_status: READY_FOR_FORMAL_SERVER_RUN
   evaluator_contracts_complete: true
   reference_verifier_complete: true
   shared_init_integration_required: PASSED_LOCAL

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import subprocess
 from pathlib import Path
 
 import numpy as np
@@ -38,6 +39,23 @@ def _canonical_weight_zero_maps(archive: dict[str, np.ndarray], key: str, group_
         if index.size != 1: raise ValueError(f"Expected exactly one weight-zero map for group {group}.")
         result.append(archive[key][index[0]]); masks.append(archive["masks"][index[0]])
     return np.stack(result), np.stack(masks)
+
+
+def _signal_identity_index(archive: dict[str, np.ndarray], label: str) -> dict[tuple[int, int], int]:
+    """Validate the complete 0..9 fingerprint identity contract before pairing."""
+    groups, weights = np.asarray(archive["group_idx"], np.int64), np.asarray(archive["weight_idx"], np.int64)
+    if groups.shape != weights.shape:
+        raise ValueError(f"{label} group_idx/weight_idx shapes differ.")
+    index: dict[tuple[int, int], int] = {}
+    for row, pair in enumerate(zip(groups.tolist(), weights.tolist())):
+        if pair in index:
+            raise ValueError(f"{label} has duplicate group-weight identity {pair}.")
+        index[pair] = row
+    for group in np.unique(groups):
+        group_weights = {weight for current_group, weight in index if current_group == int(group)}
+        if group_weights != set(range(10)):
+            raise ValueError(f"{label} group {int(group)} must contain exactly weights 0..9.")
+    return index
 
 
 def run(args: argparse.Namespace) -> Path:
@@ -75,7 +93,9 @@ def run(args: argparse.Namespace) -> Path:
         b6_path = Path(args.b6_d2_root) / "artifacts" / "FrozenMLP" / f"signal_reprojection_{stack}_K8.npz"
         if not b6_path.is_file(): b6_path = Path(args.b6_d2_root) / f"signal_reprojection_{stack}_K8.npz"
         b6 = _load(b6_path)
-        b6_index = {(int(b6["group_idx"][i]), int(b6["weight_idx"][i])): i for i in range(b6["observed"].shape[0])}
+        b6_index, candidate_index = _signal_identity_index(b6, "B6 K8"), _signal_identity_index(candidate, "Q002 K8")
+        if set(b6_index) != set(candidate_index):
+            raise ValueError("B6/Q002 K8 identity sets differ (missing or extra group-weight pair).")
         for index in range(candidate["observed"].shape[0]):
             pair = (int(candidate["group_idx"][index]), int(candidate["weight_idx"][index]))
             if pair not in b6_index: raise ValueError("B6/Q002 K8 group-weight identities differ.")
@@ -100,9 +120,16 @@ def run(args: argparse.Namespace) -> Path:
     pooled_signal = true_pooled_rows(signal_samples, ("method", "stack", "weight_idx", "support_provenance"), domain="signal") + true_pooled_rows(signal_samples, ("method", "stack", "support_provenance"), domain="signal") + true_pooled_rows(signal_samples, ("method", "support_provenance"), domain="signal")
     write_csv(metrics / "signal_psf_K8_true_pooled.csv", pooled_signal)
     write_csv(metrics / "fingerprint_cosine_read_only.csv", cosine_rows)
-    manifest = {"route": route["route"], "q002_checkpoint_sha256": _sha(checkpoint), "b6_map_sha256": {stack: _sha(Path(args.b6_map_root) / f"t1_t2_native_plane_{stack}.npz") for stack in STACKS}, "b6_k8_root": str(args.b6_d2_root), "evaluation": evaluation_plan(_sha(checkpoint)), "common_support": "reference_valid AND B6_valid AND Q002_valid AND finite", "q001_artifacts": "read_only_not_comparable_without_audited_mapping"}
+    cosine_summary = []
+    for method in ("FrozenMLP_B6", "Q002"):
+        members = [row for row in cosine_rows if row["method"] == method]
+        for scope, selected in (("global", members), *[(f"stack:{stack}", [row for row in members if row["stack"] == stack]) for stack in STACKS]):
+            values = np.asarray([row["mean_cosine"] for row in selected], float); cosine_summary.append({"method": method, "scope": scope, "mean_cosine": float(np.nanmean(values)) if values.size else float("nan"), "median_cosine": float(np.nanmedian(values)) if values.size else float("nan"), "support_N": int(sum(row["support_N"] for row in selected)), "near_zero_norm_count": int(sum(row["near_zero_norm_count"] for row in selected))})
+    write_csv(metrics / "fingerprint_cosine_summary.csv", cosine_summary)
+    evaluation_git_sha = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(); evaluation_git_dirty = bool(subprocess.check_output(["git", "status", "--porcelain"], text=True).strip())
+    manifest = {"route": route["route"], "evaluation_git_sha": evaluation_git_sha, "evaluation_git_dirty": evaluation_git_dirty, "q002_reconstruction_git_sha": route["reconstruction_git_sha"], "q002_checkpoint_sha256": _sha(checkpoint), "b6_map_sha256": {stack: _sha(Path(args.b6_map_root) / f"t1_t2_native_plane_{stack}.npz") for stack in STACKS}, "b6_k8_root": str(args.b6_d2_root), "evaluation": evaluation_plan(_sha(checkpoint)), "common_support": "reference_valid AND B6_valid AND Q002_valid AND finite", "q001_artifacts": "read_only_not_comparable_without_audited_mapping"}
     write_json(output / "evaluation_manifest.json", manifest)
-    (output / "RESULT_SUMMARY.md").write_text("# Q002 evaluation\n\nPrimary metrics use strict B6/Q002/reference common support. Q001 artifacts are read-only historical context.\n", encoding="utf-8")
+    (output / "RESULT_SUMMARY.md").write_text(f"# Q002 evaluation\n\nreconstruction Git SHA: {manifest['q002_reconstruction_git_sha']}\nevaluation Git SHA: {evaluation_git_sha}\ncheckpoint SHA256: {manifest['q002_checkpoint_sha256']}\n\nPrimary metrics use strict B6/Q002/reference common support. Q001 artifacts are read-only historical context.\n", encoding="utf-8")
     return output
 
 

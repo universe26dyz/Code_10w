@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 
 def test_strict_common_support_requires_reference_b6_q002_and_finite_values():
@@ -38,3 +39,12 @@ def test_map_support_requires_reference_mask_and_weight_zero_group_alignment():
     assert maps[:, 0, 0].tolist() == [4.0, 0.0] and masks.shape == (2, 2, 2)
     support = strict_q002_common_support(np.ones((2, 2)), np.ones((2, 2)), np.ones((2, 2)), np.ones((2, 2), bool), np.ones((2, 2), bool), np.array([[True, False], [True, True]]))
     assert support.tolist() == [[True, False], [True, True]]
+
+
+def test_signal_identity_validator_rejects_duplicate_missing_and_extra_pairs():
+    from quality_experiments.Q002_B6_roi_same_anchor_mse.evaluate_q002 import _signal_identity_index
+    archive = {"group_idx": np.repeat(np.arange(2), 10), "weight_idx": np.tile(np.arange(10), 2)}
+    assert len(_signal_identity_index(archive, "fixture")) == 20
+    duplicate = dict(archive); duplicate["weight_idx"] = duplicate["weight_idx"].copy(); duplicate["weight_idx"][1] = 0
+    with pytest.raises(ValueError, match="duplicate|weights"):
+        _signal_identity_index(duplicate, "fixture")

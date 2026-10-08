@@ -21,6 +21,7 @@ from reconstruction_core.orchestration import (
     save_checkpoint,
 )
 from trad.modules.module_07_objective_training.experiment_infrastructure import normalize_step1_config
+from trad.modules.module_07_objective_training.experiment_infrastructure import CachedBalancedSampler
 from trad.modules.module_06_rigid_psf.hb1_stack_adapter import initialize_group_poses_from_hb1
 
 
@@ -59,6 +60,16 @@ def joint_vector_mse(prediction: torch.Tensor, observed: torch.Tensor, stack_idx
     return (weights * (prediction - observed).pow(2).mean(dim=1)).mean()
 
 
+def regularization_batch_from_b6_scalar_support(sampler: CachedBalancedSampler, *, n_points: int) -> dict[str, Any]:
+    """Reuse the B6 scalar sampler so Q002 regularization keeps its 640→256 semantics."""
+    if n_points != 256:
+        raise ValueError("Q002 requires B6 spatial_regularization.n_points=256.")
+    batch = sampler.sample(640)
+    if batch["xyz"].shape[0] < n_points:
+        raise ValueError("B6 scalar regularization candidates must cover all 256 regularization points.")
+    return {"batch": batch, "candidate_count": int(batch["xyz"].shape[0]), "effective_point_count": int(n_points), "sampling_source": "B6 scalar cropped support"}
+
+
 def train_q002_reconstruction(scalar_dataset: Any, joint_dataset: Any, config: Mapping[str, Any], protocol_yaml: str | Path, output_dir: str | Path, *, prepared_inputs: list[str | Path]) -> dict[str, Any]:
     """Train fresh Q002 state; only sampler and data MSE differ from scalar B6."""
 
@@ -82,12 +93,13 @@ def train_q002_reconstruction(scalar_dataset: Any, joint_dataset: Any, config: M
         raise FileExistsError(f"Q002 output_dir must be absent or empty: {output}")
     output.mkdir(parents=True, exist_ok=True)
     sampler = JointAnchorSampler(joint_dataset, seed=controls["seed"])
+    regularization_sampler = CachedBalancedSampler(scalar_dataset)
     monitor = joint_dataset.fixed_monitor(seed=controls["seed"], samples_per_stack=int(training.get("monitor_samples_per_weight_per_stack", 1)))
     (output / "fixed_monitor.json").write_text(json.dumps({"seed": monitor["seed"], "samples_per_stack": monitor["samples_per_stack"], "anchor_identity_sha256": monitor["anchor_identity_sha256"]}, indent=2) + "\n")
     resolved_record = dict(resolved); resolved_record["q002_sampling"] = controls; resolved_record["q002_joint_stack_weights"] = {int(k): float(v) for k, v in joint_dataset.stack_weights.items()}; resolved_record["q002_intensity_normalization"] = normalization
     (output / "config_resolved.yaml").write_text(yaml.safe_dump(resolved_record, sort_keys=False))
     started = time.perf_counter(); global_iteration = 0
-    fields = ["stage", "iteration", "joint_signal_mse", "reg_t1", "reg_t2", "reg_b1", "amplitude_reg_t1", "amplitude_reg_t2", "transformation", "total", "intensity_scale", "lr_encoding", "lr_network", "lr_rigid"]
+    fields = ["stage", "iteration", "joint_signal_mse", "reg_t1", "reg_t2", "reg_b1", "amplitude_reg_t1", "amplitude_reg_t2", "transformation", "total", "intensity_scale", "lr_encoding", "lr_network", "lr_rigid", "regularization_candidate_count", "regularization_effective_point_count", "regularization_sampling_source"]
     log_handle = (output / "training_log.csv").open("w", newline="", encoding="utf-8"); monitor_handle = (output / "monitor_log.csv").open("w", newline="", encoding="utf-8")
     writer, monitor_writer = csv.DictWriter(log_handle, fieldnames=fields), csv.DictWriter(monitor_handle, fieldnames=["iteration", "stage", "monitor_mse", "per_weight_mse", "per_stack_mse", "fixed_monitor_anchor_identity_sha256"])
     writer.writeheader(); monitor_writer.writeheader()
@@ -101,15 +113,17 @@ def train_q002_reconstruction(scalar_dataset: Any, joint_dataset: Any, config: M
             batch = sampler.sample(64); batch["xyz"] = space.local_to_train(batch["xyz"].to(device)); batch["group_idx"] = batch["group_idx"].to(device); batch["stack_idx"] = batch["stack_idx"].to(device); batch["timing"] = batch["timing"].to(device); batch["observed"] = batch["observed"].to(device)
             prediction = model.forward_fingerprint(batch, 8)
             data = joint_vector_mse(prediction, batch["observed"] / model.intensity_scale, batch["stack_idx"], joint_dataset.stack_weights)
-            world = _regularization_world_points(model, batch["xyz"], batch["group_idx"])
             regularization_cfg = _require(resolved, "spatial_regularization")
-            regularization = _quantitative_regularization(model, world, space.spatial_scaling, _require(loss_cfg, "quantitative"), regularization_cfg)
+            regularization_batch = regularization_batch_from_b6_scalar_support(regularization_sampler, n_points=int(regularization_cfg["n_points"]))
+            scalar_regularization = regularization_batch["batch"]
+            regularization_world = _regularization_world_points(model, space.local_to_train(scalar_regularization["xyz"].to(device)), scalar_regularization["group_idx"].to(device))
+            regularization = _quantitative_regularization(model, regularization_world, space.spatial_scaling, _require(loss_cfg, "quantitative"), regularization_cfg)
             total = data + sum(float(regularization_cfg[key]["weight"]) * regularization[key] for key in ("t1", "t2", "b1"))
             total = total + float(regularization_cfg["amplitude_guidance"]["t1_weight"]) * regularization["amplitude_t1"] + float(regularization_cfg["amplitude_guidance"]["t2_weight"]) * regularization["amplitude_t2"]
             if joint: total = total + float(_require(loss_cfg, "transformation")) * model.rigid_psf.transformation_loss(space.spatial_scaling)
             optimizer.zero_grad(set_to_none=True); total.backward(); _assert_finite_gradients(model, stage, iteration + 1); optimizer.step(); _assert_finite_parameters(model, stage, iteration + 1); scheduler.step()
             lrs = {group["name"]: group["lr"] for group in optimizer.param_groups}
-            writer.writerow({"stage": stage, "iteration": global_iteration, "joint_signal_mse": float(data.detach()), "reg_t1": float(regularization["t1"].detach()), "reg_t2": float(regularization["t2"].detach()), "reg_b1": float(regularization["b1"].detach()), "amplitude_reg_t1": float(regularization["amplitude_t1"].detach()), "amplitude_reg_t2": float(regularization["amplitude_t2"].detach()), "transformation": float(model.rigid_psf.transformation_loss(space.spatial_scaling).detach()), "total": float(total.detach()), "intensity_scale": float(model.intensity_scale.detach()), "lr_encoding": lrs["encoding"], "lr_network": lrs["network"], "lr_rigid": lrs.get("rigid", "")})
+            writer.writerow({"stage": stage, "iteration": global_iteration, "joint_signal_mse": float(data.detach()), "reg_t1": float(regularization["t1"].detach()), "reg_t2": float(regularization["t2"].detach()), "reg_b1": float(regularization["b1"].detach()), "amplitude_reg_t1": float(regularization["amplitude_t1"].detach()), "amplitude_reg_t2": float(regularization["amplitude_t2"].detach()), "transformation": float(model.rigid_psf.transformation_loss(space.spatial_scaling).detach()), "total": float(total.detach()), "intensity_scale": float(model.intensity_scale.detach()), "lr_encoding": lrs["encoding"], "lr_network": lrs["network"], "lr_rigid": lrs.get("rigid", ""), "regularization_candidate_count": regularization_batch["candidate_count"], "regularization_effective_point_count": regularization_batch["effective_point_count"], "regularization_sampling_source": regularization_batch["sampling_source"]})
             if int(training.get("monitor_every", 0)) and global_iteration % int(training["monitor_every"]) == 0:
                 monitor_batch = {key: value.to(device) for key, value in monitor.items() if key in {"xyz", "observed", "group_idx", "stack_idx", "timing"}}
                 monitor_batch["xyz"] = space.local_to_train(monitor_batch["xyz"])

@@ -43,3 +43,16 @@ def test_q002_runner_exposes_explicit_cropped_only_arguments():
 
     args = build_parser().parse_args(["--cropped-prepared-root", "/crop", "--b6-model", "/b6.pt", "--signal-simulator", "/approved.pth", "--output", "/out"])
     assert args.device == "cuda:0" and args.cropped_prepared_root == "/crop"
+
+
+def test_regularization_batch_reuses_b6_scalar_sampler_with_640_candidates():
+    from quality_experiments.Q002_B6_roi_same_anchor_mse.training import regularization_batch_from_b6_scalar_support
+
+    class ScalarSampler:
+        def sample(self, n):
+            assert n == 640
+            return {"xyz": torch.zeros((n, 3)), "group_idx": torch.zeros(n, dtype=torch.long)}
+    result = regularization_batch_from_b6_scalar_support(ScalarSampler(), n_points=256)
+    assert result["candidate_count"] == 640
+    assert result["effective_point_count"] == 256
+    assert result["sampling_source"] == "B6 scalar cropped support"
