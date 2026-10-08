@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import subprocess
 from pathlib import Path
 
 import torch
@@ -46,6 +47,7 @@ def run(args: argparse.Namespace) -> Path:
     if args.device.startswith("cpu"): raise RuntimeError("Formal Q001 reconstruction is server-GPU only; CPU execution is forbidden.")
     if not torch.cuda.is_available(): raise RuntimeError("Q001 reconstruction requires CUDA.")
     full_manifest = verify_q001_input_bundle(args.full_input_root)
+    reconstruction_code_git_commit = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
     full_paths, cropped_paths = _paths(Path(args.full_input_root) / "full_fov_prepared"), _paths(args.cropped_prepared_root)
     mode = "Q001A" if args.experiment_id.startswith("Q001A_") else "Q001B" if args.experiment_id.startswith("Q001B_") else ""
     plan = build_route_plan(mode, [str(path) for path in full_paths], [str(path) for path in cropped_paths])
@@ -65,12 +67,13 @@ def run(args: argparse.Namespace) -> Path:
     result = train_mlp_reconstruction(dataset, config, args.protocol, output, prepared_inputs=registration_inputs, subject_id="CYJ", command=" ".join(__import__("sys").argv))
     checkpoint = output / "model.pt"; checkpoint_hash = _sha256(checkpoint)
     export_cfg = config["export"]
-    export_quantitative_outputs(result["model"], result["training_space"], output, float(export_cfg["output_resolution_mm"]), int(export_cfg["output_batch_size"]), dataset=dataset, export_config={"bbox": config.get("bbox", {}), **export_cfg})
+    quantitative_export_config = {"bbox": config.get("bbox", {}), **export_cfg}
+    export_quantitative_outputs(result["model"], result["training_space"], output, float(export_cfg["output_resolution_mm"]), int(export_cfg["output_batch_size"]), dataset=dataset, export_config=quantitative_export_config)
     if mode == "Q001A":
-        export_quantitative_outputs_psf128(result["model"], result["training_space"], output, bbox_ras_mm=result["training_space"].physical_bbox_ras_mm, batch_size=int(export_cfg["output_batch_size"]), experiment_id=args.experiment_id, subject_id="CYJ", source_checkpoint=output / "model.pt", reconstruction_code_git_commit=__import__("subprocess").check_output(["git", "rev-parse", "HEAD"], text=True).strip())
+        export_quantitative_outputs_psf128(result["model"], result["training_space"], output, dataset=dataset, export_config=quantitative_export_config, batch_size=int(export_cfg["output_batch_size"]), experiment_id=args.experiment_id, subject_id="CYJ", source_checkpoint=output / "model.pt", reconstruction_code_git_commit=reconstruction_code_git_commit)
     export_native_plane_reprojections(result["model"], result["training_space"], plan.training_inputs, output / "evaluation/mapping_central_no_psf", output_psf={"enabled": False}, export_parameter_maps=True)
     export_native_plane_reprojections(result["model"], result["training_space"], plan.training_inputs, output / "evaluation/signal_psf_K8", output_psf={"enabled": True, "n_samples": 8}, evaluation_seed=20260911, export_parameter_maps=False)
-    (output / "q001_route_manifest.json").write_text(json.dumps({"experiment_id": args.experiment_id, "route": route_record["route"], "training_inputs": list(plan.training_inputs), "stack_initialization_inputs": list(registration_inputs), "stack_registration_calls": plan.stack_registration_calls, "full_input_manifest_sha256": _sha256(Path(args.full_input_root) / "q001_input_manifest.json"), "full_input_status": full_manifest["status"], **checkpoint_provenance(args.b6_model, args.signal_simulator), "reconstruction_checkpoint_sha256": checkpoint_hash, "evaluation": evaluation_plan(checkpoint_hash, mode), "b6_reconstruction_warm_start": False}, indent=2) + "\n", encoding="utf-8")
+    (output / "q001_route_manifest.json").write_text(json.dumps({"experiment_id": args.experiment_id, "route": route_record["route"], "training_inputs": list(plan.training_inputs), "stack_initialization_inputs": list(registration_inputs), "stack_registration_calls": plan.stack_registration_calls, "full_input_manifest_sha256": _sha256(Path(args.full_input_root) / "q001_input_manifest.json"), "full_input_status": full_manifest["status"], **checkpoint_provenance(args.b6_model, args.signal_simulator), "reconstruction_code_git_commit": reconstruction_code_git_commit, "reconstruction_checkpoint_sha256": checkpoint_hash, "evaluation": evaluation_plan(checkpoint_hash, mode), "b6_reconstruction_warm_start": False}, indent=2) + "\n", encoding="utf-8")
     return output
 
 

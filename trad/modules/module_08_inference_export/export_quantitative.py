@@ -17,6 +17,10 @@ from trad.third_party.nesvor.nesvor.utils import resolution2sigma
 
 
 FORMAL_PSF128_SEED = 20260911
+FORMAL_PSF128_OUTPUT_RESOLUTION_MM = 1.0
+FORMAL_PSF128_OUTPUT_PSF_FACTOR = 1.0
+FORMAL_PSF128_SAMPLES = 128
+FORMAL_PSF128_MAX_POINTS_PER_CHUNK = 1_048_576
 
 
 def _sha256(path: Path) -> str:
@@ -68,38 +72,83 @@ def sample_quantitative_fields(model: torch.nn.Module, space: TrainingSpace, out
     return {key: torch.cat(value).reshape(shape).numpy().astype(np.float32) for key, value in result.items()}, affine
 
 
-def sample_quantitative_fields_psf(model: torch.nn.Module, space: TrainingSpace, *, bbox_ras_mm: torch.Tensor, batch_size: int, seed: int = FORMAL_PSF128_SEED) -> tuple[dict[str, np.ndarray], np.ndarray]:
-    """Explicit 1-mm isotropic NeSVoR PSF128 quantitative-volume operator."""
-    physical, shape, affine = _physical_grid(bbox_ras_mm, 1.0)
-    device = next(model.parameters()).device; cpu_state = torch.random.get_rng_state(); cuda_state = torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None; torch.manual_seed(seed)
-    result = {"t1_ms": [], "t2_ms": [], "b1": [], "amplitude": []}; was_training = model.training; model.eval()
-    with torch.no_grad():
-        for start in range(0, physical.shape[0], batch_size):
-            points = space.physical_ras_to_train(physical[start:start + batch_size].to(device))
-            sampled = points[:, None] + torch.randn(points.shape[0], 128, 3, dtype=points.dtype, device=device) * resolution2sigma(1.0, isotropic=True)
-            fields = model.inr(sampled)
-            for key in result:
-                value = fields[key].mean(-1)
-                if key == "amplitude": value = value * model.intensity_scale
-                result[key].append(value.detach().cpu())
-    if was_training: model.train()
-    torch.random.set_rng_state(cpu_state)
-    if cuda_state is not None: torch.cuda.set_rng_state_all(cuda_state)
+def psf128_effective_voxel_chunk_size(requested_output_batch_size: int, max_psf_points_per_chunk: int = FORMAL_PSF128_MAX_POINTS_PER_CHUNK) -> int:
+    """Limit K=128 inference to a bounded number of sampled points."""
+
+    if requested_output_batch_size <= 0:
+        raise ValueError("requested_output_batch_size must be positive.")
+    if max_psf_points_per_chunk < FORMAL_PSF128_SAMPLES:
+        raise ValueError("max_psf_points_per_chunk must accommodate at least one K=128 voxel.")
+    return min(requested_output_batch_size, max_psf_points_per_chunk // FORMAL_PSF128_SAMPLES)
+
+
+def sample_quantitative_fields_psf(model: torch.nn.Module, space: TrainingSpace, *, bbox_ras_mm: torch.Tensor, batch_size: int, seed: int = FORMAL_PSF128_SEED, max_psf_points_per_chunk: int = FORMAL_PSF128_MAX_POINTS_PER_CHUNK) -> tuple[dict[str, np.ndarray], np.ndarray]:
+    """Sample the frozen K=128 PSF in physical RAS-mm, then convert to INR space."""
+
+    if seed != FORMAL_PSF128_SEED:
+        # Alternate seeds are permitted for deterministic tests, but formal callers
+        # must retain the frozen experiment seed recorded in their manifest.
+        seed = int(seed)
+    physical, shape, affine = _physical_grid(bbox_ras_mm, FORMAL_PSF128_OUTPUT_RESOLUTION_MM)
+    if not hasattr(model, "intensity_scale"):
+        raise ValueError("Model lacks required intensity_scale provenance for amplitude export.")
+    intensity_scale = torch.as_tensor(model.intensity_scale)
+    if intensity_scale.numel() != 1 or not torch.isfinite(intensity_scale).all() or intensity_scale.item() <= 0:
+        raise ValueError("Model intensity_scale must be one finite positive scalar for amplitude export.")
+    voxel_chunk_size = psf128_effective_voxel_chunk_size(batch_size, max_psf_points_per_chunk)
+    sigma_mm = resolution2sigma(FORMAL_PSF128_OUTPUT_RESOLUTION_MM * FORMAL_PSF128_OUTPUT_PSF_FACTOR, isotropic=True)
+    device = next(model.parameters()).device
+    # A local NumPy stream is independent of Torch/GPU RNG state and emits one
+    # logical [voxel, sample, xyz] sequence regardless of chunk partition.
+    rng = np.random.default_rng(seed)
+    result = {"t1_ms": [], "t2_ms": [], "b1": [], "amplitude": []}
+    was_training = model.training
+    model.eval()
+    try:
+        with torch.no_grad():
+            for start in range(0, physical.shape[0], voxel_chunk_size):
+                centers_mm = physical[start:start + voxel_chunk_size].to(device)
+                noise = torch.from_numpy(rng.standard_normal((centers_mm.shape[0], FORMAL_PSF128_SAMPLES, 3), dtype=np.float32)).to(device=device, dtype=centers_mm.dtype)
+                physical_samples_mm = centers_mm[:, None, :] + noise * sigma_mm
+                train_samples = space.physical_ras_to_train(physical_samples_mm)
+                fields = model.inr(train_samples)
+                for key in result:
+                    value = fields[key].mean(-1)
+                    if key == "amplitude": value = value * intensity_scale
+                    result[key].append(value.detach().cpu())
+    finally:
+        if was_training:
+            model.train()
     return {key: torch.cat(value).reshape(shape).numpy().astype(np.float32) for key, value in result.items()}, affine
 
 
-def export_quantitative_outputs_psf128(model: torch.nn.Module, space: TrainingSpace, output_dir: str | Path, *, bbox_ras_mm: torch.Tensor, batch_size: int, experiment_id: str, subject_id: str, source_checkpoint: str | Path, reconstruction_code_git_commit: str, seed: int = FORMAL_PSF128_SEED) -> dict[str, Path]:
+def _git_provenance(repo_root: Path, reconstruction_code_git_commit: str) -> dict[str, object]:
+    status = subprocess.check_output(["git", "status", "--porcelain"], cwd=repo_root, text=True)
+    vendored_tree = subprocess.check_output(["git", "rev-parse", f"{reconstruction_code_git_commit}:trad/third_party/nesvor"], cwd=repo_root, text=True).strip()
+    return {
+        "reconstruction_code_git_commit": reconstruction_code_git_commit,
+        "git_dirty": bool(status.strip()),
+        # The vendored NeSVoR directory is tracked in the reconstruction commit;
+        # its tree SHA fixes the exact in-repository implementation used here.
+        "vendored_nesvor_commit": reconstruction_code_git_commit,
+        "vendored_nesvor_tree_sha": vendored_tree,
+    }
+
+
+def export_quantitative_outputs_psf128(model: torch.nn.Module, space: TrainingSpace, output_dir: str | Path, *, dataset: Any | None, export_config: dict[str, Any] | None, batch_size: int, experiment_id: str, subject_id: str, source_checkpoint: str | Path, reconstruction_code_git_commit: str, seed: int = FORMAL_PSF128_SEED, max_psf_points_per_chunk: int = FORMAL_PSF128_MAX_POINTS_PER_CHUNK) -> dict[str, Path]:
     """Additive immutable formal PSF128 export; legacy raw exports are untouched."""
     import nibabel as nib
     root = Path(output_dir) / "formal_export_psf128"
     if root.exists() and any(root.iterdir()): raise FileExistsError(f"Refusing non-empty formal PSF128 export: {root}")
     root.mkdir(parents=True, exist_ok=True)
-    fields, affine = sample_quantitative_fields_psf(model, space, bbox_ras_mm=bbox_ras_mm, batch_size=batch_size, seed=seed)
+    bbox = resolve_quantitative_export_bbox(model, space, dataset=dataset, export_config=export_config)
+    fields, affine = sample_quantitative_fields_psf(model, space, bbox_ras_mm=bbox, batch_size=batch_size, seed=seed, max_psf_points_per_chunk=max_psf_points_per_chunk)
     names = {"t1_ms": "T1_3D.nii.gz", "t2_ms": "T2_3D.nii.gz", "b1": "B1_3D.nii.gz", "amplitude": "amplitude_3D.nii.gz"}; paths = {}
     for key, name in names.items():
         path = root / name; nib.save(nib.Nifti1Image(fields[key], affine), path); paths[key] = path
     poses = Path(output_dir) / "final_rigid_poses.json"
-    manifest = {"schema": "code10w_formal_quantitative_export_psf128/v1", "experiment_id": experiment_id, "subject_id": subject_id, "reconstruction_code_git_commit": reconstruction_code_git_commit, "source_checkpoint": str(Path(source_checkpoint)), "source_checkpoint_sha256": _sha256(Path(source_checkpoint)), "final_rigid_poses": str(poses), "final_rigid_poses_sha256": _sha256(poses), "output_resolution_mm": 1.0, "output_psf_factor": 1.0, "n_inference_samples": 128, "export_seed": seed, "psf_domain": "quantitative_volume", "psf_isotropic": True, "psf_implementation": "vendored nesvor.inr.sample.sample_batch + resolution2sigma(1.0,isotropic=True)", "physical_bbox_ras_mm": bbox_ras_mm.detach().cpu().tolist(), "affine_ras_mm": affine.tolist(), "intensity_scale": float(model.intensity_scale.detach().cpu()), "outputs": {name: _sha256(path) for name, path in paths.items()}}
+    repo_root = Path(__file__).resolve().parents[3]
+    manifest = {"schema": "code10w_formal_quantitative_export_psf128/v1", "experiment_id": experiment_id, "subject_id": subject_id, **_git_provenance(repo_root, reconstruction_code_git_commit), "source_checkpoint": str(Path(source_checkpoint)), "source_checkpoint_sha256": _sha256(Path(source_checkpoint)), "final_rigid_poses": str(poses), "final_rigid_poses_sha256": _sha256(poses), "output_resolution_mm": FORMAL_PSF128_OUTPUT_RESOLUTION_MM, "output_psf_factor": FORMAL_PSF128_OUTPUT_PSF_FACTOR, "n_inference_samples": FORMAL_PSF128_SAMPLES, "export_seed": seed, "spatial_scaling": space.spatial_scaling, "sigma_physical_mm": float(resolution2sigma(FORMAL_PSF128_OUTPUT_RESOLUTION_MM * FORMAL_PSF128_OUTPUT_PSF_FACTOR, isotropic=True)), "requested_output_batch_size": batch_size, "effective_voxel_chunk_size": psf128_effective_voxel_chunk_size(batch_size, max_psf_points_per_chunk), "max_psf_points_per_chunk": max_psf_points_per_chunk, "psf_domain": "quantitative_volume", "psf_isotropic": True, "psf_implementation": "Gaussian Monte-Carlo offsets in physical RAS-mm; sigma from vendored nesvor.utils.resolution2sigma(..., isotropic=True); then physical_ras_to_train", "physical_bbox_ras_mm": bbox.detach().cpu().tolist(), "affine_ras_mm": affine.tolist(), "intensity_scale": float(model.intensity_scale.detach().cpu()), "outputs": {name: _sha256(path) for name, path in paths.items()}}
     (root / "formal_export_manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
     return paths
 
@@ -124,6 +173,19 @@ def _final_support_bbox(model: torch.nn.Module, space: TrainingSpace, dataset: A
     bbox = torch.stack((world.amin(0), world.amax(0)), 0)
     bbox[0] -= margin_mm; bbox[1] += margin_mm
     return bbox
+
+
+def resolve_quantitative_export_bbox(model: torch.nn.Module, space: TrainingSpace, *, dataset: Any | None, export_config: dict[str, Any] | None) -> torch.Tensor:
+    """Resolve the sole raw/PSF quantitative-volume bounding-box contract."""
+
+    settings = export_config or {}
+    bbox_settings = settings.get("bbox", {})
+    use_final_support = bbox_settings.get("mode") == "final_registered_support"
+    if use_final_support:
+        if dataset is None:
+            raise ValueError("final_registered_support export requires the reconstruction dataset.")
+        return _final_support_bbox(model, space, dataset, float(bbox_settings.get("margin_mm", 0.0)))
+    return space.physical_bbox_ras_mm
 
 
 def _gradient_fields(model: torch.nn.Module, space: TrainingSpace, bbox: torch.Tensor, resolution_mm: float, batch_size: int) -> dict[str, np.ndarray]:
@@ -166,9 +228,7 @@ def export_quantitative_outputs(model: torch.nn.Module, space: TrainingSpace, ou
     if not output.is_dir():
         raise FileNotFoundError(f"Output directory does not exist: {output}")
     settings = export_config or {}
-    bbox_settings = settings.get("bbox", {})
-    use_final_support = bbox_settings.get("mode") == "final_registered_support"
-    bbox = _final_support_bbox(model, space, dataset, float(bbox_settings.get("margin_mm", 0.0))) if use_final_support and dataset is not None else space.physical_bbox_ras_mm
+    bbox = resolve_quantitative_export_bbox(model, space, dataset=dataset, export_config=settings)
     fields, affine = sample_quantitative_fields(model, space, output_resolution_mm, output_batch_size, bbox_ras_mm=bbox)
     names = {"t1_ms": "T1_3D.nii.gz", "t2_ms": "T2_3D.nii.gz", "b1": "B1_3D.nii.gz", "amplitude": "amplitude_3D.nii.gz"}
     paths: dict[str, Path] = {}

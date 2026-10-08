@@ -201,6 +201,15 @@
 - Local hotfix implementation commit: `43b0424` (`Fix D1 central-plane observation grouping`).
 - PUSH PERFORMED: NO.
 
+## Q001A_FORMAL_PSF128_EXPORT — physical-coordinate and provenance hotfix
+
+- Date: 2026-10-08
+- Status: CODE_READY_LOCAL_TESTED_PENDING_COMMIT; formal Q001A reconstruction/export remains NOT RUN.
+- Correction: K=128 Gaussian offsets are now sampled in physical RAS-mm using `resolution2sigma(1.0, isotropic=True)`, then transformed once through `physical_ras_to_train` before INR evaluation. The prior implementation added physical-mm sigma after training-space scaling and was invalid at `spatial_scaling=30`.
+- Export safety/provenance: K=128 uses a bounded point budget with deterministic chunk-invariant sampling; raw and PSF128 share the same bbox resolver. The formal manifest records code/NeSVoR provenance, dirty state, checkpoint/pose hashes, physical sigma, and requested/effective chunk sizes.
+- Historical Q001B results were not changed: reconstruction COMPLETE; central and K8 VALID; old parameter K32 INVALID_AS_MAP_PSF; true map-domain K32 COMPLETE.
+- Q001A/Q002/Q003 formal runs: NOT RUN. PUSH PERFORMED: NO.
+
 ## G0_POSE_ERROR_CORRELATION_CYJ_V1
 
 - Date: 2026-09-28
