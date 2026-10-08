@@ -284,7 +284,7 @@ class IterationProfiler:
                 writer.writerow({"iteration": 0, "stage": "run", "section": section, "milliseconds": value})
 
 
-def write_experiment_manifest(output_dir: str | Path, *, route: str, subject_id: str | None, repo_root: str | Path, config_resolved: str | Path, prepared_inputs: list[str | Path], protocol: Mapping[str, Any], stack_group_counts: Mapping[str, int], seed: int, command: str, method_root: str | Path | None = None) -> dict[str, Any]:
+def write_experiment_manifest(output_dir: str | Path, *, route: str, subject_id: str | None, repo_root: str | Path, config_resolved: str | Path, prepared_inputs: list[str | Path], protocol: Mapping[str, Any], stack_group_counts: Mapping[str, int], seed: int, command: str, method_root: str | Path | None = None, intensity_normalization: Mapping[str, object] | None = None) -> dict[str, Any]:
     """Write non-sensitive provenance, including a recoverable patch for a dirty tree."""
 
     output, root = Path(output_dir), Path(repo_root)
@@ -309,5 +309,7 @@ def write_experiment_manifest(output_dir: str | Path, *, route: str, subject_id:
         "python": sys.version, "torch": torch.__version__, "cuda": cuda, "gpu": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
         "tinycudann": tinycudann_version, "hostname": platform.node(),
     }
+    if intensity_normalization is not None:
+        manifest["intensity_normalization"] = dict(intensity_normalization)
     (output / "experiment_manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return manifest

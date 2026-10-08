@@ -193,7 +193,9 @@ def _intensity_normalization_provenance(training: Mapping[str, Any], dataset: Qu
     lower, upper = float(settings["lower_quantile"]), float(settings["upper_quantile"])
     if lower != 0.1 or upper != 0.9:
         raise ValueError("Trad v1 requires intensity normalization lower_quantile=0.1 and upper_quantile=0.9.")
-    scale = robust_trimmed_mean_intensity(dataset.v.detach(), lower_quantile=lower, upper_quantile=upper)
+    scale, quantile_provenance = robust_trimmed_mean_intensity(
+        dataset.v.detach(), lower_quantile=lower, upper_quantile=upper, return_provenance=True
+    )
     return {
         "enabled": True,
         "method": "trimmed_mean",
@@ -202,6 +204,7 @@ def _intensity_normalization_provenance(training: Mapping[str, Any], dataset: Qu
         "scale": float(scale.detach().cpu()),
         "training_units": "normalized_subject_intensity",
         "amplitude_export_units": "original_input_intensity",
+        **quantile_provenance,
     }
 
 
@@ -389,7 +392,7 @@ def train_reconstruction(dataset: QuantPointDataset, config: Mapping[str, Any], 
     if bool(training["require_clean_git"]) and git_provenance(repo_root)["git_dirty"]:
         raise RuntimeError("require_clean_git=true but the repository has uncommitted changes.")
     stack_group_counts = {f"stack_{stack}": int(torch.unique(dataset.group_idx[dataset.stack_idx == stack]).numel()) for stack in dataset.stack_idx.unique().tolist()}
-    write_experiment_manifest(output, route=route, subject_id=subject_id, repo_root=repo_root, method_root=repo_root / "trad", config_resolved=output / "config_resolved.yaml", prepared_inputs=list(prepared_inputs or ()), protocol={"tr_ms": protocol.tr_ms, "vps": protocol.vps}, stack_group_counts=stack_group_counts, seed=seed, command=command)
+    write_experiment_manifest(output, route=route, subject_id=subject_id, repo_root=repo_root, method_root=repo_root / "trad", config_resolved=output / "config_resolved.yaml", prepared_inputs=list(prepared_inputs or ()), protocol={"tr_ms": protocol.tr_ms, "vps": protocol.vps}, stack_group_counts=stack_group_counts, seed=seed, command=command, intensity_normalization=intensity_normalization)
     log_path = output / "training_log.csv"
     global_iter = 0
     stage_a_axisangle_final: torch.Tensor | None = None

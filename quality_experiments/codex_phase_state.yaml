@@ -1,7 +1,7 @@
 schema: code10w_quality_experiment_state/v1
 baseline_git_head: ae111b87e7d247c754ac64a658e3d7c33978b207
 current_git_head: MANAGED_BY_GIT_HISTORY
-implementation_parent_commit: 7f5cf71 # PSF128 export parent; formal Q001A has not run
+implementation_parent_commit: 609bfae # full-FOV quantile hotfix parent; formal Q001A has not run
 d1:
   status: CODE_READY_SERVER_RUN_PENDING
   implementation_revision: D1_psf_smoothness_decomposition_baseline_v2
@@ -94,11 +94,17 @@ q001_full_fov_native_reference:
     2ch: {map_sha256: be888e965794412b1f0be648bc67a21edde9f70a37018da93c5e448b6343ce5e, source_preprocessed_mat_sha256: 18d5a62d75808c92e6704ec60a4f062c8bece6ec0a423c9842d52a658b5ce8ec}
     4ch: {map_sha256: 546500dc5aab6236918d26b912a790cdf5d29fa43929fbd0f52bd9121597d72a, source_preprocessed_mat_sha256: 436f49d8263faf7b35b2c9583f912e2832bbff28b40b4f1fd36ce5b309ebebcf}
 q001_controlled_reconstruction:
-  status: Q001A_FORMAL_SERVER_RUN_PENDING
+  status: Q001A_FORMAL_SERVER_RERUN_PENDING
   experiments:
     - Q001A_full_fov_full_recon
     - Q001B_full_fov_reg_cropped_recon
-  formal_q001a_status: NOT_RUN
+  formal_q001a_status: FAILED_PRETRAIN_INTENSITY_QUANTILE
+  q001a_failed_attempt:
+    code_commit: 609bfaecd54b176ee3bd513d6900d8ebdfcd32d9
+    formal_metrics_generated: false
+    checkpoint_generated: false
+    root_cause: full-FOV CUDA torch.quantile input-too-large
+    preserved_log: USER_RENAME_REQUIRED_Q001A_full_fov_full_recon_v1.FAILED_PRETRAIN_QUANTILE_609bfae.log
   formal_q001b_status: COMPLETE
   q001b_primary_central: VALID
   q001b_k8_signal: VALID
@@ -118,10 +124,11 @@ formal_export_psf128_contract:
   n_inference_samples: 128
   seed: 20260911
 q001a:
-  status: READY_FOR_FORMAL_SERVER_RUN
-  formal_result: NOT_RUN
+  status: READY_FOR_FORMAL_SERVER_RERUN
+  formal_result: NOT_PRODUCED
+  formal_reference_server_root: /data/dengyz/dataset/Code_10w_v1/reference_data/CYJ/Q001_full_fov_native_reference_v2
 q002:
   status: NOT_STARTED
 q003:
   status: NOT_STARTED
-next_phase: Q001A_FORMAL_SERVER_RUN
+next_phase: Q001A_FORMAL_SERVER_RERUN

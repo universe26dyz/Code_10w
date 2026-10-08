@@ -257,3 +257,14 @@
 - Next decision: run the generated server command after this phase commit; do not start a later v2 phase automatically.
 - Local implementation commit: `5d803ab` (`Add G0 geometry correspondence audit`).
 - PUSH PERFORMED: NO.
+
+## Q001A — failed pre-training full-FOV intensity-normalization attempt
+
+- Date: 2026-10-08
+- Status: `FAILED_PRETRAIN_INTENSITY_QUANTILE`; code commit: `609bfaecd54b176ee3bd513d6900d8ebdfcd32d9`.
+- Failure occurred before stack initialization, model construction, Stage A/B, checkpoint, or metrics: CUDA `torch.quantile` rejected the full-FOV masked-intensity tensor as too large.
+- Formal metrics generated: false. Checkpoint generated: false. This is not a Q001A formal result and does not modify immutable Q001B results.
+- Failed log is protected from overwrite by the server runner. Before rerun it must be retained under `Q001A_full_fov_full_recon_v1.FAILED_PRETRAIN_QUANTILE_609bfae.log` (or an equally explicit preserved name).
+- Hotfix: exact CPU `torch.quantile` thresholds only when the explicit input-too-large runtime error occurs; strict `>`/`<` trimming and mean remain on the original tensor. Provenance records execution path and input count.
+- Confirmed server reference root: `/data/dengyz/dataset/Code_10w_v1/reference_data/CYJ/Q001_full_fov_native_reference_v2`.
+- Current Q001A code status: `READY_FOR_FORMAL_SERVER_RERUN` after local tests. Q002/Q003: NOT STARTED. PUSH PERFORMED: NO.

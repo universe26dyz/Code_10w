@@ -151,4 +151,15 @@ def test_q001a_runner_records_code_sha_and_rejects_untracked_worktree():
     server = (root.parent / "server_commands" / "run_Q001A_CYJ.sh").read_text(encoding="utf-8")
     assert '"reconstruction_code_git_commit": reconstruction_code_git_commit' in runner
     assert "git status --porcelain" in server
+    assert '"${OUTPUT}.log"' in server
+    assert "Refusing to overwrite existing Q001A log" in server
     assert "Refusing non-empty output" in server
+
+
+def test_q001_full_fov_reference_server_root_uses_confirmed_case():
+    root = Path(__file__).resolve().parents[2] / "server_commands"
+    expected_suffix = "/reference_data/CYJ/Q001_full_fov_native_reference_v2"
+    for script in (root / "migrate_Q001_reference_CYJ.sh", root / "evaluate_Q001A_CYJ.sh"):
+        text = script.read_text(encoding="utf-8")
+        assert expected_suffix in text
+        assert "/CYJ/q001_full_fov_native_reference_v2" not in text

@@ -13,8 +13,8 @@ from trad.third_party.nesvor.nesvor.transform import RigidTransform, ax_transfor
 
 
 def robust_trimmed_mean_intensity(
-    values: torch.Tensor, *, lower_quantile: float, upper_quantile: float
-) -> torch.Tensor:
+    values: torch.Tensor, *, lower_quantile: float, upper_quantile: float, return_provenance: bool = False
+) -> torch.Tensor | tuple[torch.Tensor, dict[str, object]]:
     """Return NeSVoR-style robust scale from all subject masked intensities."""
 
     if values.numel() == 0:
@@ -24,13 +24,35 @@ def robust_trimmed_mean_intensity(
     if not 0.0 < lower_quantile < upper_quantile < 1.0:
         raise ValueError("Intensity normalization quantiles must satisfy 0 < lower < upper < 1.")
     flattened = values.reshape(-1)
-    q10, q90 = torch.quantile(flattened, lower_quantile), torch.quantile(flattened, upper_quantile)
+    try:
+        q10, q90 = torch.quantile(flattened, lower_quantile), torch.quantile(flattened, upper_quantile)
+        quantile_execution = "native_device"
+    except RuntimeError as exc:
+        if "quantile() input tensor is too large" not in str(exc):
+            raise
+        # CUDA may reject an otherwise valid full-FOV tensor solely because of
+        # its size.  CPU torch.quantile preserves the exact same quantile and
+        # interpolation semantics; thresholding and the mean remain on the
+        # original device/dtype below.
+        cpu_values = flattened.detach().to("cpu")
+        q10_cpu = torch.quantile(cpu_values, lower_quantile)
+        q90_cpu = torch.quantile(cpu_values, upper_quantile)
+        q10 = q10_cpu.to(device=flattened.device, dtype=flattened.dtype)
+        q90 = q90_cpu.to(device=flattened.device, dtype=flattened.dtype)
+        quantile_execution = "cpu_exact_fallback_for_large_tensor"
     trimmed = flattened[(flattened > q10) & (flattened < q90)]
     if trimmed.numel() == 0:
         raise ValueError("Subject trimmed intensity set is empty.")
     scale = trimmed.mean()
     if not torch.isfinite(scale) or scale <= 0:
         raise ValueError(f"Subject trimmed intensity scale must be finite and positive, got {float(scale)}.")
+    if return_provenance:
+        return scale, {
+            "quantile_execution": quantile_execution,
+            "input_numel": int(flattened.numel()),
+            "lower_quantile": lower_quantile,
+            "upper_quantile": upper_quantile,
+        }
     return scale
 
 
