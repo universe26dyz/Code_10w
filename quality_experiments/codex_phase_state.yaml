@@ -110,4 +110,17 @@ q001_controlled_reconstruction:
   shared_init_integration_required: PASSED_LOCAL
   server_migration_status: NOT_RUN
   pre_server_correctness_hotfix: COMPLETE_LOCAL_VERIFIED
+formal_export_psf128_contract:
+  status: CODE_READY
+  output_resolution_mm: 1.0
+  output_psf_factor: 1.0
+  n_inference_samples: 128
+  seed: 20260911
+q001a:
+  status: READY_FOR_FORMAL_SERVER_RUN
+  formal_result: NOT_RUN
+q002:
+  status: NOT_STARTED
+q003:
+  status: NOT_STARTED
 next_phase: Q001B_POSTHOC_MAP_DOMAIN_K32_REVIEW

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +13,17 @@ import torch
 
 from trad.modules.module_07_objective_training.training_space import TrainingSpace
 from trad.third_party.nesvor.nesvor.transform import RigidTransform, ax_transform_points
+from trad.third_party.nesvor.nesvor.utils import resolution2sigma
+
+
+FORMAL_PSF128_SEED = 20260911
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""): digest.update(block)
+    return digest.hexdigest()
 
 
 def _physical_grid(bbox_ras_mm: torch.Tensor, resolution_mm: float) -> tuple[torch.Tensor, tuple[int, int, int], np.ndarray]:
@@ -53,6 +66,42 @@ def sample_quantitative_fields(model: torch.nn.Module, space: TrainingSpace, out
     if was_training:
         model.train()
     return {key: torch.cat(value).reshape(shape).numpy().astype(np.float32) for key, value in result.items()}, affine
+
+
+def sample_quantitative_fields_psf(model: torch.nn.Module, space: TrainingSpace, *, bbox_ras_mm: torch.Tensor, batch_size: int, seed: int = FORMAL_PSF128_SEED) -> tuple[dict[str, np.ndarray], np.ndarray]:
+    """Explicit 1-mm isotropic NeSVoR PSF128 quantitative-volume operator."""
+    physical, shape, affine = _physical_grid(bbox_ras_mm, 1.0)
+    device = next(model.parameters()).device; cpu_state = torch.random.get_rng_state(); cuda_state = torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None; torch.manual_seed(seed)
+    result = {"t1_ms": [], "t2_ms": [], "b1": [], "amplitude": []}; was_training = model.training; model.eval()
+    with torch.no_grad():
+        for start in range(0, physical.shape[0], batch_size):
+            points = space.physical_ras_to_train(physical[start:start + batch_size].to(device))
+            sampled = points[:, None] + torch.randn(points.shape[0], 128, 3, dtype=points.dtype, device=device) * resolution2sigma(1.0, isotropic=True)
+            fields = model.inr(sampled)
+            for key in result:
+                value = fields[key].mean(-1)
+                if key == "amplitude": value = value * model.intensity_scale
+                result[key].append(value.detach().cpu())
+    if was_training: model.train()
+    torch.random.set_rng_state(cpu_state)
+    if cuda_state is not None: torch.cuda.set_rng_state_all(cuda_state)
+    return {key: torch.cat(value).reshape(shape).numpy().astype(np.float32) for key, value in result.items()}, affine
+
+
+def export_quantitative_outputs_psf128(model: torch.nn.Module, space: TrainingSpace, output_dir: str | Path, *, bbox_ras_mm: torch.Tensor, batch_size: int, experiment_id: str, subject_id: str, source_checkpoint: str | Path, reconstruction_code_git_commit: str, seed: int = FORMAL_PSF128_SEED) -> dict[str, Path]:
+    """Additive immutable formal PSF128 export; legacy raw exports are untouched."""
+    import nibabel as nib
+    root = Path(output_dir) / "formal_export_psf128"
+    if root.exists() and any(root.iterdir()): raise FileExistsError(f"Refusing non-empty formal PSF128 export: {root}")
+    root.mkdir(parents=True, exist_ok=True)
+    fields, affine = sample_quantitative_fields_psf(model, space, bbox_ras_mm=bbox_ras_mm, batch_size=batch_size, seed=seed)
+    names = {"t1_ms": "T1_3D.nii.gz", "t2_ms": "T2_3D.nii.gz", "b1": "B1_3D.nii.gz", "amplitude": "amplitude_3D.nii.gz"}; paths = {}
+    for key, name in names.items():
+        path = root / name; nib.save(nib.Nifti1Image(fields[key], affine), path); paths[key] = path
+    poses = Path(output_dir) / "final_rigid_poses.json"
+    manifest = {"schema": "code10w_formal_quantitative_export_psf128/v1", "experiment_id": experiment_id, "subject_id": subject_id, "reconstruction_code_git_commit": reconstruction_code_git_commit, "source_checkpoint": str(Path(source_checkpoint)), "source_checkpoint_sha256": _sha256(Path(source_checkpoint)), "final_rigid_poses": str(poses), "final_rigid_poses_sha256": _sha256(poses), "output_resolution_mm": 1.0, "output_psf_factor": 1.0, "n_inference_samples": 128, "export_seed": seed, "psf_domain": "quantitative_volume", "psf_isotropic": True, "psf_implementation": "vendored nesvor.inr.sample.sample_batch + resolution2sigma(1.0,isotropic=True)", "physical_bbox_ras_mm": bbox_ras_mm.detach().cpu().tolist(), "affine_ras_mm": affine.tolist(), "intensity_scale": float(model.intensity_scale.detach().cpu()), "outputs": {name: _sha256(path) for name, path in paths.items()}}
+    (root / "formal_export_manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+    return paths
 
 
 def _physical_pose_payload(model: torch.nn.Module, space: TrainingSpace) -> dict[str, Any]:

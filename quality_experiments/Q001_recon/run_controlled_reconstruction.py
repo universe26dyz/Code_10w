@@ -15,7 +15,7 @@ import torch
 
 from mlp.modules.module_07_objective_training.mlp_trainer import train_mlp_reconstruction
 from trad.modules.module_03_dataset_geometry.quantitative_point_dataset import QuantPointDataset
-from trad.modules.module_08_inference_export.export_quantitative import export_quantitative_outputs
+from trad.modules.module_08_inference_export.export_quantitative import export_quantitative_outputs, export_quantitative_outputs_psf128
 from trad.modules.module_08_inference_export.reprojection import export_native_plane_reprojections
 
 from .config import build_route_config, load_b6_resolved_config
@@ -66,6 +66,8 @@ def run(args: argparse.Namespace) -> Path:
     checkpoint = output / "model.pt"; checkpoint_hash = _sha256(checkpoint)
     export_cfg = config["export"]
     export_quantitative_outputs(result["model"], result["training_space"], output, float(export_cfg["output_resolution_mm"]), int(export_cfg["output_batch_size"]), dataset=dataset, export_config={"bbox": config.get("bbox", {}), **export_cfg})
+    if mode == "Q001A":
+        export_quantitative_outputs_psf128(result["model"], result["training_space"], output, bbox_ras_mm=result["training_space"].physical_bbox_ras_mm, batch_size=int(export_cfg["output_batch_size"]), experiment_id=args.experiment_id, subject_id="CYJ", source_checkpoint=output / "model.pt", reconstruction_code_git_commit=__import__("subprocess").check_output(["git", "rev-parse", "HEAD"], text=True).strip())
     export_native_plane_reprojections(result["model"], result["training_space"], plan.training_inputs, output / "evaluation/mapping_central_no_psf", output_psf={"enabled": False}, export_parameter_maps=True)
     export_native_plane_reprojections(result["model"], result["training_space"], plan.training_inputs, output / "evaluation/signal_psf_K8", output_psf={"enabled": True, "n_samples": 8}, evaluation_seed=20260911, export_parameter_maps=False)
     (output / "q001_route_manifest.json").write_text(json.dumps({"experiment_id": args.experiment_id, "route": route_record["route"], "training_inputs": list(plan.training_inputs), "stack_initialization_inputs": list(registration_inputs), "stack_registration_calls": plan.stack_registration_calls, "full_input_manifest_sha256": _sha256(Path(args.full_input_root) / "q001_input_manifest.json"), "full_input_status": full_manifest["status"], **checkpoint_provenance(args.b6_model, args.signal_simulator), "reconstruction_checkpoint_sha256": checkpoint_hash, "evaluation": evaluation_plan(checkpoint_hash, mode), "b6_reconstruction_warm_start": False}, indent=2) + "\n", encoding="utf-8")

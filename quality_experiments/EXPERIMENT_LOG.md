@@ -67,6 +67,12 @@
 - True map-domain K=32 is now a post-hoc, no-reconstruction wrapper over final T1/T2 volumes, final rigid poses, route-matched prepared geometry, and the verified route reference. Status: `PENDING_POSTHOC`.
 - Q001A remains NOT RUN; D3/Q002 remain NOT STARTED; PUSH PERFORMED: NO.
 
+## Q001A — formal PSF128 export preparation
+
+- Added an immutable `formal_export_psf128/` quantitative-volume export. Raw root `T1_3D.nii.gz`, `T2_3D.nii.gz`, `B1_3D.nii.gz`, and `amplitude_3D.nii.gz` retain point-sampled historical semantics.
+- Frozen future convention: 1.0 mm resolution, output PSF factor 1.0, isotropic vendored NeSVoR `resolution2sigma`, K=128, seed 20260911; matched in convention to immutable `nesvor_v5_128_w1` only.
+- Q001A code is READY_FOR_FORMAL_SERVER_RUN; its formal result remains NOT RUN. Q001B remains immutable. Q002/Q003 remain NOT STARTED. PUSH PERFORMED: NO.
+
 ## D1_BASELINE_PSF_SMOOTHNESS_V1
 
 - Date: 2026-09-28
