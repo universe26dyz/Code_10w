@@ -4,7 +4,7 @@ import numpy as np
 def test_strict_common_support_requires_reference_b6_q002_and_finite_values():
     from quality_experiments.Q002_B6_roi_same_anchor_mse.metrics import strict_q002_common_support
 
-    support = strict_q002_common_support(np.array([1.0, np.nan]), np.array([1.0, 2.0]), np.array([1.0, 2.0]), np.array([True, True]), np.array([True, True]))
+    support = strict_q002_common_support(np.array([1.0, np.nan]), np.array([1.0, 2.0]), np.array([1.0, 2.0]), np.array([True, True]), np.array([True, True]), np.array([True, True]))
     assert support.tolist() == [True, False]
 
 
@@ -26,4 +26,15 @@ def test_signal_fingerprint_common_support_requires_all_ten_weights():
     masks = np.ones((10, 2, 2), bool)
     masks[4, 0, 1] = False
     support = strict_fingerprint_common_support(b6, q002, masks, masks)
+    assert support.tolist() == [[True, False], [True, True]]
+
+
+def test_map_support_requires_reference_mask_and_weight_zero_group_alignment():
+    from quality_experiments.Q002_B6_roi_same_anchor_mse.evaluate_q002 import _canonical_weight_zero_maps
+    from quality_experiments.Q002_B6_roi_same_anchor_mse.metrics import strict_q002_common_support
+
+    archive = {"group_idx": np.array([1, 0, 1, 0]), "weight_idx": np.array([0, 0, 1, 1]), "t1_ms": np.arange(16, dtype=np.float32).reshape(4, 2, 2), "masks": np.ones((4, 2, 2), bool)}
+    maps, masks = _canonical_weight_zero_maps(archive, "t1_ms", 2)
+    assert maps[:, 0, 0].tolist() == [4.0, 0.0] and masks.shape == (2, 2, 2)
+    support = strict_q002_common_support(np.ones((2, 2)), np.ones((2, 2)), np.ones((2, 2)), np.ones((2, 2), bool), np.ones((2, 2), bool), np.array([[True, False], [True, True]]))
     assert support.tolist() == [[True, False], [True, True]]

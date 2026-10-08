@@ -29,6 +29,16 @@ def _load(path: Path) -> dict[str, np.ndarray]:
         return {name: np.asarray(source[name]) for name in source.files}
 
 
+def _canonical_weight_zero_maps(archive: dict[str, np.ndarray], key: str, group_count: int) -> tuple[np.ndarray, np.ndarray]:
+    """Select exactly weight zero by declared group identity, never row position."""
+    result, masks = [], []
+    for group in range(group_count):
+        index = np.flatnonzero((archive["group_idx"] == group) & (archive["weight_idx"] == 0))
+        if index.size != 1: raise ValueError(f"Expected exactly one weight-zero map for group {group}.")
+        result.append(archive[key][index[0]]); masks.append(archive["masks"][index[0]])
+    return np.stack(result), np.stack(masks)
+
+
 def run(args: argparse.Namespace) -> Path:
     run_root, output = Path(args.run_root), Path(args.output)
     if output.exists() and any(output.iterdir()):
@@ -44,9 +54,11 @@ def run(args: argparse.Namespace) -> Path:
         b6 = _load(Path(args.b6_map_root) / f"t1_t2_native_plane_{stack}.npz")
         reference = _load(Path(args.reference_root) / f"{stack}.npz")
         for key, label in (("t1_ms", "T1"), ("t2_ms", "T2")):
+            b6_maps, b6_masks = _canonical_weight_zero_maps(b6, key, reference[key].shape[0])
+            candidate_maps, candidate_masks = _canonical_weight_zero_maps(candidate, key, reference[key].shape[0])
             for group in range(reference[key].shape[0]):
-                support = strict_q002_common_support(reference[key][group], b6[key][group], candidate[key][group], b6["masks"][group], candidate["masks"][group])
-                for method, prediction in (("FrozenMLP_B6", b6[key][group]), ("Q002", candidate[key][group])):
+                support = strict_q002_common_support(reference[key][group], b6_maps[group], candidate_maps[group], b6_masks[group], candidate_masks[group], reference["valid_mask"][group])
+                for method, prediction in (("FrozenMLP_B6", b6_maps[group]), ("Q002", candidate_maps[group])):
                     samples.append({"method": method, "stack": stack, "group_idx": group, "parameter": label, "reference": reference[key][group], "prediction": prediction, "support": support})
     rows = []
     for sample in samples:
@@ -60,8 +72,14 @@ def run(args: argparse.Namespace) -> Path:
         b6_path = Path(args.b6_d2_root) / "artifacts" / "FrozenMLP" / f"signal_reprojection_{stack}_K8.npz"
         if not b6_path.is_file(): b6_path = Path(args.b6_d2_root) / f"signal_reprojection_{stack}_K8.npz"
         b6 = _load(b6_path)
+        b6_index = {(int(b6["group_idx"][i]), int(b6["weight_idx"][i])): i for i in range(b6["observed"].shape[0])}
         for index in range(candidate["observed"].shape[0]):
-            support = strict_q002_common_support(candidate["observed"][index], b6["predicted"][index], candidate["predicted"][index], b6["masks"][index], candidate["masks"][index])
+            pair = (int(candidate["group_idx"][index]), int(candidate["weight_idx"][index]))
+            if pair not in b6_index: raise ValueError("B6/Q002 K8 group-weight identities differ.")
+            baseline_index = b6_index[pair]
+            for key in ("observed", "timing9_ms"):
+                if not np.array_equal(candidate[key][index], b6[key][baseline_index], equal_nan=True): raise ValueError(f"B6/Q002 K8 {key} provenance differs.")
+            support = strict_q002_common_support(candidate["observed"][index], b6["predicted"][baseline_index], candidate["predicted"][index], b6["masks"][baseline_index], candidate["masks"][index], np.ones_like(candidate["masks"][index], bool))
             for method, prediction in (("FrozenMLP_B6", b6["predicted"][index]), ("Q002", candidate["predicted"][index])):
                 signal_rows.append({"method": method, "stack": stack, "group_idx": int(candidate["group_idx"][index]), "weight_idx": int(candidate["weight_idx"][index]), **agreement_metrics(candidate["observed"][index], prediction, support, min_pixels=16)})
         for group in np.unique(candidate["group_idx"]):
@@ -69,8 +87,9 @@ def run(args: argparse.Namespace) -> Path:
             if rows_for_group.size != 10 or not np.array_equal(np.sort(candidate["weight_idx"][rows_for_group]), np.arange(10)):
                 raise ValueError("K8 signal archive lacks one ordered ten-weight fingerprint per group.")
             ordered = rows_for_group[np.argsort(candidate["weight_idx"][rows_for_group])]
-            support = strict_fingerprint_common_support(b6["predicted"][ordered], candidate["predicted"][ordered], b6["masks"][ordered], candidate["masks"][ordered])
-            dot = (b6["predicted"][ordered] * candidate["predicted"][ordered]).sum(axis=0); norms = np.linalg.norm(b6["predicted"][ordered], axis=0) * np.linalg.norm(candidate["predicted"][ordered], axis=0)
+            baseline_ordered = np.asarray([b6_index[(int(candidate["group_idx"][i]), int(candidate["weight_idx"][i]))] for i in ordered])
+            support = strict_fingerprint_common_support(b6["predicted"][baseline_ordered], candidate["predicted"][ordered], b6["masks"][baseline_ordered], candidate["masks"][ordered])
+            dot = (b6["predicted"][baseline_ordered] * candidate["predicted"][ordered]).sum(axis=0); norms = np.linalg.norm(b6["predicted"][baseline_ordered], axis=0) * np.linalg.norm(candidate["predicted"][ordered], axis=0)
             cosine_rows.append({"stack": stack, "group_idx": int(group), "N": int(support.sum()), "fingerprint_cosine": float(np.mean((dot / norms)[support])) if support.any() else float("nan"), "role": "read_only_diagnostic"})
     write_csv(metrics / "signal_psf_K8_per_group_common_support.csv", signal_rows)
     write_csv(metrics / "fingerprint_cosine_read_only.csv", cosine_rows)
