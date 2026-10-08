@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 from typing import Dict, Sequence
 
@@ -10,6 +11,33 @@ import torch
 
 from trad.modules.module_02_data_bridge.geometry import cropped_affine_lps_rc_to_initial_rigid
 from trad.third_party.nesvor.nesvor.transform import RigidTransform, ax_transform_points
+
+
+def _exact_linear_quantile_kthvalue(cpu_values: torch.Tensor, q: float) -> torch.Tensor:
+    """Compute ``torch.quantile(..., interpolation='linear')`` without sorting.
+
+    The formal server's PyTorch ``torch.quantile`` has a large-reduction
+    element-count limitation on both CUDA and CPU.  This exact fallback uses
+    all values and the same ``q * (N - 1)`` linear order-statistic definition;
+    it neither subsamples nor approximates the requested quantile.
+    """
+
+    if cpu_values.device.type != "cpu" or cpu_values.ndim != 1:
+        raise ValueError("Exact kthvalue quantile requires a one-dimensional CPU tensor.")
+    if cpu_values.numel() == 0 or not cpu_values.is_floating_point():
+        raise ValueError("Exact kthvalue quantile requires a non-empty floating-point tensor.")
+    if not torch.isfinite(cpu_values).all():
+        raise ValueError("Exact kthvalue quantile requires finite values.")
+    if not 0.0 <= q <= 1.0:
+        raise ValueError("Exact kthvalue quantile q must be in [0, 1].")
+    rank = float(q) * float(cpu_values.numel() - 1)
+    low_index, high_index = math.floor(rank), math.ceil(rank)
+    lower_value = torch.kthvalue(cpu_values, low_index + 1).values
+    if high_index == low_index:
+        return lower_value
+    upper_value = torch.kthvalue(cpu_values, high_index + 1).values
+    weight = torch.as_tensor(rank - low_index, dtype=cpu_values.dtype, device="cpu")
+    return torch.lerp(lower_value, upper_value, weight)
 
 
 def robust_trimmed_mean_intensity(
@@ -26,20 +54,18 @@ def robust_trimmed_mean_intensity(
     flattened = values.reshape(-1)
     try:
         q10, q90 = torch.quantile(flattened, lower_quantile), torch.quantile(flattened, upper_quantile)
-        quantile_execution = "native_device"
+        quantile_execution = "native_device_torch_quantile"
+        quantile_algorithm = "torch_quantile_linear"
     except RuntimeError as exc:
         if "quantile() input tensor is too large" not in str(exc):
             raise
-        # CUDA may reject an otherwise valid full-FOV tensor solely because of
-        # its size.  CPU torch.quantile preserves the exact same quantile and
-        # interpolation semantics; thresholding and the mean remain on the
-        # original device/dtype below.
-        cpu_values = flattened.detach().to("cpu")
-        q10_cpu = torch.quantile(cpu_values, lower_quantile)
-        q90_cpu = torch.quantile(cpu_values, upper_quantile)
+        cpu_values = flattened.detach().to("cpu").contiguous()
+        q10_cpu = _exact_linear_quantile_kthvalue(cpu_values, lower_quantile)
+        q90_cpu = _exact_linear_quantile_kthvalue(cpu_values, upper_quantile)
         q10 = q10_cpu.to(device=flattened.device, dtype=flattened.dtype)
         q90 = q90_cpu.to(device=flattened.device, dtype=flattened.dtype)
-        quantile_execution = "cpu_exact_fallback_for_large_tensor"
+        quantile_execution = "cpu_exact_kthvalue_linear_fallback"
+        quantile_algorithm = "order_statistic_kthvalue_linear"
     trimmed = flattened[(flattened > q10) & (flattened < q90)]
     if trimmed.numel() == 0:
         raise ValueError("Subject trimmed intensity set is empty.")
@@ -49,9 +75,12 @@ def robust_trimmed_mean_intensity(
     if return_provenance:
         return scale, {
             "quantile_execution": quantile_execution,
+            "quantile_algorithm": quantile_algorithm,
+            "rank_semantics": "q_times_n_minus_1_linear",
             "input_numel": int(flattened.numel()),
             "lower_quantile": lower_quantile,
             "upper_quantile": upper_quantile,
+            "torch_version": str(torch.__version__),
         }
     return scale
 

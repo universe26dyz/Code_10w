@@ -98,13 +98,20 @@ q001_controlled_reconstruction:
   experiments:
     - Q001A_full_fov_full_recon
     - Q001B_full_fov_reg_cropped_recon
-  formal_q001a_status: FAILED_PRETRAIN_INTENSITY_QUANTILE
-  q001a_failed_attempt:
-    code_commit: 609bfaecd54b176ee3bd513d6900d8ebdfcd32d9
-    formal_metrics_generated: false
-    checkpoint_generated: false
-    root_cause: full-FOV CUDA torch.quantile input-too-large
-    preserved_log: USER_RENAME_REQUIRED_Q001A_full_fov_full_recon_v1.FAILED_PRETRAIN_QUANTILE_609bfae.log
+  formal_q001a_status: FAILED_PRETRAIN_INTENSITY_QUANTILE_CPU_FALLBACK
+  q001a_failed_attempts:
+    - code_commit: 609bfaecd54b176ee3bd513d6900d8ebdfcd32d9
+      status: FAILED_PRETRAIN_INTENSITY_QUANTILE
+      formal_metrics_generated: false
+      checkpoint_generated: false
+      root_cause: full-FOV CUDA torch.quantile input-too-large
+      preserved_log: USER_RENAME_REQUIRED_Q001A_full_fov_full_recon_v1.FAILED_PRETRAIN_QUANTILE_609bfae.log
+    - code_commit: 5fef4b19035f056a0679b7f1eaca643ff70e197f
+      status: FAILED_PRETRAIN_INTENSITY_QUANTILE_CPU_FALLBACK
+      formal_metrics_generated: false
+      checkpoint_generated: false
+      root_cause: CPU torch.quantile shares formal-server large-tensor size limitation
+      preserved_log: USER_RENAME_REQUIRED_Q001A_full_fov_full_recon_v1.FAILED_PRETRAIN_QUANTILE_CPU_5fef4b1.log
   formal_q001b_status: COMPLETE
   q001b_primary_central: VALID
   q001b_k8_signal: VALID

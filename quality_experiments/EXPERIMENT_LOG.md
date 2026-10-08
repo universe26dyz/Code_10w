@@ -268,3 +268,13 @@
 - Hotfix: exact CPU `torch.quantile` thresholds only when the explicit input-too-large runtime error occurs; strict `>`/`<` trimming and mean remain on the original tensor. Provenance records execution path and input count.
 - Confirmed server reference root: `/data/dengyz/dataset/Code_10w_v1/reference_data/CYJ/Q001_full_fov_native_reference_v2`.
 - Current Q001A code status: `READY_FOR_FORMAL_SERVER_RERUN` after local tests. Q002/Q003: NOT STARTED. PUSH PERFORMED: NO.
+
+## Q001A — second failed pre-training quantile fallback attempt
+
+- Date: 2026-10-08
+- Status: `FAILED_PRETRAIN_INTENSITY_QUANTILE_CPU_FALLBACK`; code commit: `5fef4b19035f056a0679b7f1eaca643ff70e197f`.
+- CPU `torch.quantile` raised the same input-too-large error, confirming an element-count limit in the formal-server PyTorch implementation rather than a CUDA-only limit. This occurred before stack initialization, model construction, Stage A/B, checkpoint, export, or metrics.
+- Formal metrics generated: false. Checkpoint generated: false. The immutable Q001B result is unchanged.
+- The next fallback uses exact CPU `torch.kthvalue` order statistics with `rank=q*(N-1)`, floor/ceil ranks, and linear interpolation. It uses every element and performs no approximation or subsampling; strict `>`/`<` trimming remains unchanged.
+- The second failed log remains user-preserved before rerun as `Q001A_full_fov_full_recon_v1.FAILED_PRETRAIN_QUANTILE_CPU_5fef4b1.log`; the runner continues to refuse log overwrite.
+- Current Q001A code status: `READY_FOR_FORMAL_SERVER_RERUN` after an actual `2**24 + 1` float32 CPU preflight. Q002/Q003: NOT STARTED. PUSH PERFORMED: NO.

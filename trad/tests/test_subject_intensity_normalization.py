@@ -1,11 +1,12 @@
 import pytest
 import torch
 import json
+import math
 from pathlib import Path
 from types import SimpleNamespace
 
 from modules.module_03_dataset_geometry import quantitative_point_dataset as dataset_module
-from modules.module_03_dataset_geometry.quantitative_point_dataset import robust_trimmed_mean_intensity
+from modules.module_03_dataset_geometry.quantitative_point_dataset import _exact_linear_quantile_kthvalue, robust_trimmed_mean_intensity
 from reconstruction_core.orchestration import _intensity_normalization_provenance
 from modules.module_07_objective_training.experiment_infrastructure import write_experiment_manifest
 
@@ -36,12 +37,12 @@ def test_trimmed_mean_small_tensor_retains_exact_native_quantile_semantics():
     q_low, q_high = torch.quantile(values, 0.1), torch.quantile(values, 0.9)
     expected = values[(values > q_low) & (values < q_high)].mean()
     torch.testing.assert_close(scale, expected)
-    assert provenance == {
-        "quantile_execution": "native_device",
-        "input_numel": values.numel(),
-        "lower_quantile": 0.1,
-        "upper_quantile": 0.9,
-    }
+    assert provenance["quantile_execution"] == "native_device_torch_quantile"
+    assert provenance["quantile_algorithm"] == "torch_quantile_linear"
+    assert provenance["rank_semantics"] == "q_times_n_minus_1_linear"
+    assert provenance["input_numel"] == values.numel()
+    assert provenance["lower_quantile"] == 0.1 and provenance["upper_quantile"] == 0.9
+    assert provenance["torch_version"] == str(torch.__version__)
 
 
 def test_trimmed_mean_exact_cpu_fallback_preserves_device_dtype_and_strict_thresholds(monkeypatch):
@@ -51,9 +52,7 @@ def test_trimmed_mean_exact_cpu_fallback_preserves_device_dtype_and_strict_thres
 
     def quantile_with_large_native_failure(input_values, quantile, *args, **kwargs):
         calls.append(input_values.device.type)
-        if len(calls) == 1:
-            raise RuntimeError("quantile() input tensor is too large")
-        return original_quantile(input_values, quantile, *args, **kwargs)
+        raise RuntimeError("quantile() input tensor is too large")
 
     monkeypatch.setattr(dataset_module.torch, "quantile", quantile_with_large_native_failure)
     scale, provenance = robust_trimmed_mean_intensity(
@@ -63,9 +62,34 @@ def test_trimmed_mean_exact_cpu_fallback_preserves_device_dtype_and_strict_thres
     expected = values[(values > q_low) & (values < q_high)].mean()
     torch.testing.assert_close(scale, expected)
     assert scale.device == values.device and scale.dtype == values.dtype
-    assert provenance["quantile_execution"] == "cpu_exact_fallback_for_large_tensor"
+    assert provenance["quantile_execution"] == "cpu_exact_kthvalue_linear_fallback"
+    assert provenance["quantile_algorithm"] == "order_statistic_kthvalue_linear"
     assert provenance["input_numel"] == values.numel()
-    assert calls == ["cpu", "cpu", "cpu"]
+    # The fallback must not invoke torch.quantile again on CPU.
+    assert calls == ["cpu"]
+
+
+@pytest.mark.parametrize(
+    ("values", "q"),
+    [
+        (torch.tensor([-4.0, -1.0, -1.0, 2.0, 9.0], dtype=torch.float32), 0.1),
+        (torch.tensor([-4.0, -1.0, -1.0, 2.0, 9.0], dtype=torch.float32), 0.9),
+        (torch.tensor([-7.0, -2.5, 0.0, 0.0, 3.25, 11.0], dtype=torch.float64), 0.37),
+        (torch.tensor([5.0, 5.0, 5.0, 5.0], dtype=torch.float64), 0.5),
+    ],
+)
+def test_exact_kthvalue_linear_quantile_matches_manual_sorted_reference_and_torch(values, q):
+    original = values.clone()
+    actual = _exact_linear_quantile_kthvalue(values, q)
+    ordered = torch.sort(values).values
+    rank = float(q) * float(values.numel() - 1)
+    low, high = math.floor(rank), math.ceil(rank)
+    expected = ordered[low] if low == high else torch.lerp(
+        ordered[low], ordered[high], torch.as_tensor(rank - low, dtype=values.dtype)
+    )
+    torch.testing.assert_close(actual, expected)
+    torch.testing.assert_close(actual, torch.quantile(values, q, interpolation="linear"))
+    torch.testing.assert_close(values, original)
 
 
 def test_trimmed_mean_does_not_swallow_unrelated_quantile_runtime_errors(monkeypatch):
@@ -81,19 +105,17 @@ def test_normalization_provenance_records_execution_path_and_input_numel(monkeyp
     values = torch.tensor([1.0, 2.0, 3.0, 4.0, 100.0])
     training = {"intensity_normalization": {"enabled": True, "method": "trimmed_mean", "lower_quantile": 0.1, "upper_quantile": 0.9}}
     native = _intensity_normalization_provenance(training, SimpleNamespace(v=values))
-    assert native["quantile_execution"] == "native_device"
+    assert native["quantile_execution"] == "native_device_torch_quantile"
     assert native["input_numel"] == values.numel()
     original_quantile, calls = torch.quantile, []
 
     def fail_once(input_values, quantile, *args, **kwargs):
         calls.append(quantile)
-        if len(calls) == 1:
-            raise RuntimeError("quantile() input tensor is too large")
-        return original_quantile(input_values, quantile, *args, **kwargs)
+        raise RuntimeError("quantile() input tensor is too large")
 
     monkeypatch.setattr(dataset_module.torch, "quantile", fail_once)
     fallback = _intensity_normalization_provenance(training, SimpleNamespace(v=values))
-    assert fallback["quantile_execution"] == "cpu_exact_fallback_for_large_tensor"
+    assert fallback["quantile_execution"] == "cpu_exact_kthvalue_linear_fallback"
     assert fallback["input_numel"] == values.numel()
     torch.testing.assert_close(torch.tensor(fallback["scale"]), torch.tensor(native["scale"]))
 
@@ -102,7 +124,7 @@ def test_experiment_manifest_keeps_intensity_quantile_execution_provenance(tmp_p
     config, prepared = tmp_path / "config_resolved.yaml", tmp_path / "observations.npz"
     config.write_text("training: {}\n", encoding="utf-8")
     prepared.write_bytes(b"prepared")
-    normalization = {"method": "trimmed_mean", "scale": 2.0, "quantile_execution": "cpu_exact_fallback_for_large_tensor", "input_numel": 123}
+    normalization = {"method": "trimmed_mean", "scale": 2.0, "quantile_execution": "cpu_exact_kthvalue_linear_fallback", "quantile_algorithm": "order_statistic_kthvalue_linear", "input_numel": 123}
     manifest = write_experiment_manifest(
         tmp_path,
         route="test",
