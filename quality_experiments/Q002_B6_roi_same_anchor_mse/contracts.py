@@ -8,6 +8,7 @@ from typing import Any, Mapping
 
 
 Q002_EXPERIMENT_ID = "Q002_B6_roi_same_anchor_mse"
+Q002S640_EXPERIMENT_ID = "Q002S640_B6_roi_same_anchor_mse"
 STACKS = ("sax", "2ch", "4ch")
 
 
@@ -25,7 +26,8 @@ def cropped_observation_paths(root: str | Path) -> list[Path]:
 
 
 def build_q002_route_config(
-    resolved_config: Mapping[str, Any], *, cropped_prepared_root: str | Path, reconstruction_checkpoint: str | None = None
+    resolved_config: Mapping[str, Any], *, cropped_prepared_root: str | Path, reconstruction_checkpoint: str | None = None,
+    experiment_id: str = Q002_EXPERIMENT_ID, anchor_batch_size: int = 64,
 ) -> dict[str, Any]:
     """Copy B6 configuration and attach metadata without mutating its controls."""
 
@@ -36,15 +38,30 @@ def build_q002_route_config(
     root = Path(cropped_prepared_root)
     if "full_fov" in str(root).lower():
         raise ValueError("Q002 training root must be B6 cropped, not full-FOV.")
+    expected_batch_size = {Q002_EXPERIMENT_ID: 64, Q002S640_EXPERIMENT_ID: 640}.get(experiment_id)
+    if expected_batch_size is None or int(anchor_batch_size) != expected_batch_size:
+        raise ValueError("Q002 route experiment_id must use its fixed anchor_batch_size.")
+    sampling: dict[str, Any]
+    if experiment_id == Q002_EXPERIMENT_ID:
+        sampling = {"effective_scalar_budget": 640, "anchor_batch_size": 64, "weights_per_anchor": 10, "shared_training_psf_samples": 8}
+    else:
+        sampling = {
+            "anchor_batch_size": 640,
+            "weights_per_anchor": 10,
+            "signal_residual_count": 6400,
+            "shared_training_psf_samples": 8,
+            "data_psf_inr_location_count": 5120,
+            "B6_scalar_batch_size": 640,
+        }
     return {
         "resolved_config": copy.deepcopy(dict(resolved_config)),
         "route": {
-            "experiment_id": Q002_EXPERIMENT_ID,
+            "experiment_id": experiment_id,
             "parent": "frozen_mlp_B6",
             "training_prepared_root": str(root),
             "stack_initialization_prepared_root": str(root),
             "full_fov_used": False,
             "b6_reconstruction_warm_start": False,
-            "sampling": {"effective_scalar_budget": 640, "anchor_batch_size": 64, "weights_per_anchor": 10, "shared_training_psf_samples": 8},
+            "sampling": sampling,
         },
     }

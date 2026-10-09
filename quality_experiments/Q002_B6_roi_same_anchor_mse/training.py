@@ -25,28 +25,58 @@ from trad.modules.module_07_objective_training.experiment_infrastructure import 
 from trad.modules.module_06_rigid_psf.hb1_stack_adapter import initialize_group_poses_from_hb1
 
 
-def q002_training_controls(training: Mapping[str, Any]) -> dict[str, int]:
+def q002_training_controls(training: Mapping[str, Any], *, anchor_batch_size: int = 64) -> dict[str, int]:
     """Validate the scientific controls that Q002 is not allowed to tune."""
 
     expected = {"stage_a_iterations": 2000, "stage_b_iterations": 4000, "batch_size": 640, "psf_samples": 8, "seed": 20260911}
     for key, value in expected.items():
         if int(training.get(key, -1)) != value:
             raise ValueError(f"Q002 requires B6 training.{key}={value}, got {training.get(key)!r}.")
-    return {"stage_a_iterations": 2000, "stage_b_iterations": 4000, "effective_scalar_budget": 640, "anchor_batch_size": 64, "weights_per_anchor": 10, "psf_samples": 8, "seed": 20260911}
+    if anchor_batch_size not in (64, 640):
+        raise ValueError("Q002 route anchor_batch_size must be exactly 64 or 640.")
+    if anchor_batch_size == 64:
+        # Retain the original Q002-64 manifest contract verbatim.
+        return {"stage_a_iterations": 2000, "stage_b_iterations": 4000, "effective_scalar_budget": 640, "anchor_batch_size": 64, "weights_per_anchor": 10, "psf_samples": 8, "seed": 20260911}
+    return {
+        "stage_a_iterations": 2000,
+        "stage_b_iterations": 4000,
+        "anchor_batch_size": 640,
+        "weights_per_anchor": 10,
+        "signal_residual_count": 6400,
+        "training_psf_samples": 8,
+        "data_psf_inr_location_count": 5120,
+        "B6_scalar_batch_size": 640,
+        "regularization_candidate_count": 640,
+        "regularization_effective_point_count": 256,
+        "regularization_application_count_per_optimizer_step": 1,
+        "seed": 20260911,
+    }
 
 
 class JointAnchorSampler:
     """Uniform-with-replacement anchor sampler; B6 inverse stack weights remain in the loss."""
 
-    def __init__(self, dataset: Any, *, seed: int) -> None:
+    def __init__(self, dataset: Any, *, seed: int, anchor_batch_size: int = 64) -> None:
         self.dataset = dataset
+        self.anchor_batch_size = int(anchor_batch_size)
         self.generator = torch.Generator(device=dataset.xyz.device).manual_seed(int(seed))
 
-    def sample(self, anchor_batch_size: int) -> dict[str, Any]:
-        if anchor_batch_size != 64:
-            raise ValueError("Q002 anchor_batch_size must be exactly 64 (effective scalar budget 640).")
-        index = torch.randint(self.dataset.xyz.shape[0], (anchor_batch_size,), generator=self.generator, device=self.dataset.xyz.device)
-        return {name: getattr(self.dataset, name)[index] for name in ("xyz", "observed", "group_idx", "stack_idx", "timing", "row_col")} | {"anchor_idx": index, "effective_scalar_budget": 640}
+    def sample(self, anchor_batch_size: int | None = None) -> dict[str, Any]:
+        requested = self.anchor_batch_size if anchor_batch_size is None else int(anchor_batch_size)
+        if requested != self.anchor_batch_size:
+            raise ValueError("Q002 sampler request must match the route-controlled anchor_batch_size.")
+        index = torch.randint(self.dataset.xyz.shape[0], (requested,), generator=self.generator, device=self.dataset.xyz.device)
+        metadata = {
+            "anchor_idx": index,
+            "anchor_batch_size": requested,
+            "weights_per_anchor": 10,
+            "signal_residual_count": requested * 10,
+            "training_psf_samples": 8,
+            "data_psf_inr_location_count": requested * 8,
+        }
+        if requested == 64:
+            metadata["effective_scalar_budget"] = 640
+        return {name: getattr(self.dataset, name)[index] for name in ("xyz", "observed", "group_idx", "stack_idx", "timing", "row_col")} | metadata
 
 
 def joint_vector_mse(prediction: torch.Tensor, observed: torch.Tensor, stack_idx: torch.Tensor, stack_weights: Mapping[int, float]) -> torch.Tensor:
@@ -70,12 +100,13 @@ def regularization_batch_from_b6_scalar_support(sampler: CachedBalancedSampler, 
     return {"batch": batch, "candidate_count": int(batch["xyz"].shape[0]), "effective_point_count": int(n_points), "sampling_source": "B6 scalar cropped support"}
 
 
-def train_q002_reconstruction(scalar_dataset: Any, joint_dataset: Any, config: Mapping[str, Any], protocol_yaml: str | Path, output_dir: str | Path, *, prepared_inputs: list[str | Path]) -> dict[str, Any]:
+def train_q002_reconstruction(scalar_dataset: Any, joint_dataset: Any, config: Mapping[str, Any], protocol_yaml: str | Path, output_dir: str | Path, *, prepared_inputs: list[str | Path], anchor_batch_size: int = 64) -> dict[str, Any]:
     """Train fresh Q002 state; only sampler and data MSE differ from scalar B6."""
 
     resolved = normalize_step1_config(_with_protocol_path(config, protocol_yaml))
     training, loss_cfg = _require(resolved, "training"), _require(resolved, "loss")
-    controls = q002_training_controls(training)
+    controls = q002_training_controls(training, anchor_batch_size=anchor_batch_size)
+    training_psf_samples = int(controls["training_psf_samples"] if "training_psf_samples" in controls else controls["psf_samples"])
     device = torch.device(training["device"])
     if device.type == "cuda" and not torch.cuda.is_available():
         raise RuntimeError(f"Requested CUDA device is unavailable: {device}")
@@ -92,7 +123,7 @@ def train_q002_reconstruction(scalar_dataset: Any, joint_dataset: Any, config: M
     if output.exists() and any(output.iterdir()):
         raise FileExistsError(f"Q002 output_dir must be absent or empty: {output}")
     output.mkdir(parents=True, exist_ok=True)
-    sampler = JointAnchorSampler(joint_dataset, seed=controls["seed"])
+    sampler = JointAnchorSampler(joint_dataset, seed=controls["seed"], anchor_batch_size=controls["anchor_batch_size"])
     regularization_sampler = CachedBalancedSampler(scalar_dataset)
     monitor = joint_dataset.fixed_monitor(seed=controls["seed"], samples_per_stack=int(training.get("monitor_samples_per_weight_per_stack", 1)))
     (output / "fixed_monitor.json").write_text(json.dumps({"seed": monitor["seed"], "samples_per_stack": monitor["samples_per_stack"], "anchor_identity_sha256": monitor["anchor_identity_sha256"]}, indent=2) + "\n")
@@ -100,18 +131,20 @@ def train_q002_reconstruction(scalar_dataset: Any, joint_dataset: Any, config: M
     (output / "config_resolved.yaml").write_text(yaml.safe_dump(resolved_record, sort_keys=False))
     started = time.perf_counter(); global_iteration = 0
     fields = ["stage", "iteration", "joint_signal_mse", "reg_t1", "reg_t2", "reg_b1", "amplitude_reg_t1", "amplitude_reg_t2", "transformation", "total", "intensity_scale", "lr_encoding", "lr_network", "lr_rigid", "regularization_candidate_count", "regularization_effective_point_count", "regularization_sampling_source"]
+    if controls["anchor_batch_size"] == 640:
+        fields += ["anchor_batch_size", "weights_per_anchor", "signal_residual_count", "training_psf_samples", "data_psf_inr_location_count", "regularization_application_count"]
     log_handle = (output / "training_log.csv").open("w", newline="", encoding="utf-8"); monitor_handle = (output / "monitor_log.csv").open("w", newline="", encoding="utf-8")
     writer, monitor_writer = csv.DictWriter(log_handle, fieldnames=fields), csv.DictWriter(monitor_handle, fieldnames=["iteration", "stage", "monitor_mse", "per_weight_mse", "per_stack_mse", "fixed_monitor_anchor_identity_sha256"])
     writer.writeheader(); monitor_writer.writeheader()
-    for stage, iterations, joint in (("A", 2000, False), ("B", 4000, True)):
+    for stage, iterations, joint in (("A", controls["stage_a_iterations"], False), ("B", controls["stage_b_iterations"], True)):
         model.rigid_psf.axisangle.requires_grad_(joint)
         optimizer = _optimizer(model, training["learning_rates"], joint)
         milestones = [int(float(value) * iterations) for value in training["scheduler_milestones"] if 0 < float(value) < 1]
         scheduler = MultiStepLR(optimizer, milestones=milestones, gamma=float(training["scheduler_gamma"]))
         for iteration in range(iterations):
             global_iteration += 1
-            batch = sampler.sample(64); batch["xyz"] = space.local_to_train(batch["xyz"].to(device)); batch["group_idx"] = batch["group_idx"].to(device); batch["stack_idx"] = batch["stack_idx"].to(device); batch["timing"] = batch["timing"].to(device); batch["observed"] = batch["observed"].to(device)
-            prediction = model.forward_fingerprint(batch, 8)
+            batch = sampler.sample(); batch["xyz"] = space.local_to_train(batch["xyz"].to(device)); batch["group_idx"] = batch["group_idx"].to(device); batch["stack_idx"] = batch["stack_idx"].to(device); batch["timing"] = batch["timing"].to(device); batch["observed"] = batch["observed"].to(device)
+            prediction = model.forward_fingerprint(batch, training_psf_samples)
             data = joint_vector_mse(prediction, batch["observed"] / model.intensity_scale, batch["stack_idx"], joint_dataset.stack_weights)
             regularization_cfg = _require(resolved, "spatial_regularization")
             regularization_batch = regularization_batch_from_b6_scalar_support(regularization_sampler, n_points=int(regularization_cfg["n_points"]))
@@ -123,11 +156,14 @@ def train_q002_reconstruction(scalar_dataset: Any, joint_dataset: Any, config: M
             if joint: total = total + float(_require(loss_cfg, "transformation")) * model.rigid_psf.transformation_loss(space.spatial_scaling)
             optimizer.zero_grad(set_to_none=True); total.backward(); _assert_finite_gradients(model, stage, iteration + 1); optimizer.step(); _assert_finite_parameters(model, stage, iteration + 1); scheduler.step()
             lrs = {group["name"]: group["lr"] for group in optimizer.param_groups}
-            writer.writerow({"stage": stage, "iteration": global_iteration, "joint_signal_mse": float(data.detach()), "reg_t1": float(regularization["t1"].detach()), "reg_t2": float(regularization["t2"].detach()), "reg_b1": float(regularization["b1"].detach()), "amplitude_reg_t1": float(regularization["amplitude_t1"].detach()), "amplitude_reg_t2": float(regularization["amplitude_t2"].detach()), "transformation": float(model.rigid_psf.transformation_loss(space.spatial_scaling).detach()), "total": float(total.detach()), "intensity_scale": float(model.intensity_scale.detach()), "lr_encoding": lrs["encoding"], "lr_network": lrs["network"], "lr_rigid": lrs.get("rigid", ""), "regularization_candidate_count": regularization_batch["candidate_count"], "regularization_effective_point_count": regularization_batch["effective_point_count"], "regularization_sampling_source": regularization_batch["sampling_source"]})
+            row = {"stage": stage, "iteration": global_iteration, "joint_signal_mse": float(data.detach()), "reg_t1": float(regularization["t1"].detach()), "reg_t2": float(regularization["t2"].detach()), "reg_b1": float(regularization["b1"].detach()), "amplitude_reg_t1": float(regularization["amplitude_t1"].detach()), "amplitude_reg_t2": float(regularization["amplitude_t2"].detach()), "transformation": float(model.rigid_psf.transformation_loss(space.spatial_scaling).detach()), "total": float(total.detach()), "intensity_scale": float(model.intensity_scale.detach()), "lr_encoding": lrs["encoding"], "lr_network": lrs["network"], "lr_rigid": lrs.get("rigid", ""), "regularization_candidate_count": regularization_batch["candidate_count"], "regularization_effective_point_count": regularization_batch["effective_point_count"], "regularization_sampling_source": regularization_batch["sampling_source"]}
+            if controls["anchor_batch_size"] == 640:
+                row.update({"anchor_batch_size": batch["anchor_batch_size"], "weights_per_anchor": batch["weights_per_anchor"], "signal_residual_count": batch["signal_residual_count"], "training_psf_samples": batch["training_psf_samples"], "data_psf_inr_location_count": batch["data_psf_inr_location_count"], "regularization_application_count": 1})
+            writer.writerow(row)
             if int(training.get("monitor_every", 0)) and global_iteration % int(training["monitor_every"]) == 0:
                 monitor_batch = {key: value.to(device) for key, value in monitor.items() if key in {"xyz", "observed", "group_idx", "stack_idx", "timing"}}
                 monitor_batch["xyz"] = space.local_to_train(monitor_batch["xyz"])
-                with torch.random.fork_rng(devices=[device.index or 0] if device.type == "cuda" else []), torch.no_grad(): prediction_monitor = model.forward_fingerprint(monitor_batch, 8)
+                with torch.random.fork_rng(devices=[device.index or 0] if device.type == "cuda" else []), torch.no_grad(): prediction_monitor = model.forward_fingerprint(monitor_batch, training_psf_samples)
                 error = (prediction_monitor - monitor_batch["observed"] / model.intensity_scale).pow(2)
                 monitor_writer.writerow({"iteration": global_iteration, "stage": stage, "monitor_mse": float(error.mean()), "per_weight_mse": json.dumps({weight: float(error[:, weight].mean()) for weight in range(10)}), "per_stack_mse": json.dumps({int(stack): float(error[monitor_batch["stack_idx"] == stack].mean()) for stack in monitor_batch["stack_idx"].unique().tolist()}), "fixed_monitor_anchor_identity_sha256": monitor["anchor_identity_sha256"]})
     log_handle.close(); monitor_handle.close()

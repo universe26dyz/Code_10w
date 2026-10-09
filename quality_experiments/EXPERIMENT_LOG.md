@@ -315,3 +315,13 @@
 - Failure phase: Stage A first forward, before backward/optimizer; optimizer steps 0; checkpoint/export/metrics not generated. Existing v1 output root and `.log` are immutable and must not be overwritten.
 - Root cause: Q002 incorrectly required fingerprint `[B*K,1,10]`; approved FrozenMLP contract is `[B*K,10]`, matching scalar forward gather semantics.
 - v2 retry root: `Q002_B6_roi_same_anchor_mse_v2` with matching v2 log. It remains `READY_FOR_FORMAL_SERVER_RERUN`; formal successful result `NOT_RUN`.
+
+## Q002S640_B6_ROI_SAME_ANCHOR_MSE
+
+- Date: 2026-10-09
+- Status: `CODE_READY_FORMAL_SERVER_RUN_PENDING`; formal reconstruction/evaluation: `NOT_RUN`; PUSH PERFORMED: NO.
+- Single scientific variable: Q002-S640 uses 640 same-anchor samples per iteration, while immutable Q002-64 remains 64. Both use the approved FrozenMLP, B6 cropped SAX/2CH/4CH observations and initialization, complete ten-weight AND support, sampling with replacement, K=8 shared-anchor PSF, vector MSE only, seed `20260911`, Stage A/B `2000/4000`, B6 normalization, stack weights, optimizer, scheduler, bbox, and no warm start.
+- Per S640 optimizer iteration: 640 spatial anchors, 10 weights per anchor, 6,400 signal residuals, and 5,120 data PSF/INR spatial locations. This is not called an effective scalar budget. Spatial regularization remains independently sampled once from B6 scalar cropped support: 640 scalar candidates, B6-configured 256 effective regularization points.
+- Immutable formal output/log: `/data/dengyz/dataset/Code_10w_v1/Code_10w_runs/quality_experiments_v1/CYJ/Q002S640_B6_roi_same_anchor_mse_v1` and matching `.log`. Q002-64 v1/v2 roots are read-only and never reused as output.
+- Evaluation: `evaluate_Q002S640_CYJ.sh` requires Q002-64 v2 plus Q002-S640 artifacts and evaluates B6/Q002-64/Q002-S640 only on `reference_valid AND B6_valid AND Q002_64_valid AND Q002_S640_valid AND finite`. Primary comparison is S640 vs 64; B6 is the secondary final-utility comparison. Central T1/T2 and K8 signal true-pooled metrics use this one support; observed-fingerprint cosine is read-only and explicitly marked as macro-over-groups when summarized.
+- Commands prepared, not run: `quality_experiments/server_commands/run_Q002S640_CYJ.sh`, then `quality_experiments/server_commands/evaluate_Q002S640_CYJ.sh`. Q003-S640 remains NOT_STARTED.

@@ -9,6 +9,22 @@ def test_strict_common_support_requires_reference_b6_q002_and_finite_values():
     assert support.tolist() == [True, False]
 
 
+def test_three_way_common_support_requires_reference_b6_q002_64_q002_s640_and_finite_values():
+    from quality_experiments.Q002_B6_roi_same_anchor_mse.metrics import strict_q002_three_way_common_support
+
+    support = strict_q002_three_way_common_support(
+        np.array([1.0, 1.0, np.nan]),
+        np.array([1.0, 1.0, 1.0]),
+        np.array([1.0, np.nan, 1.0]),
+        np.array([1.0, 1.0, 1.0]),
+        np.array([True, True, True]),
+        np.array([True, True, True]),
+        np.array([True, True, True]),
+        np.array([True, True, True]),
+    )
+    assert support.tolist() == [True, False, False]
+
+
 def test_q002_evaluation_plan_keeps_cosine_read_only_and_k128_provenance():
     from quality_experiments.Q002_B6_roi_same_anchor_mse.evaluation import evaluation_plan
 
@@ -28,6 +44,17 @@ def test_signal_fingerprint_common_support_requires_all_ten_weights():
     masks[4, 0, 1] = False
     support = strict_fingerprint_common_support(b6, q002, masks, masks)
     assert support.tolist() == [[True, False], [True, True]]
+
+
+def test_three_way_signal_support_requires_every_weight_for_all_three_methods():
+    from quality_experiments.Q002_B6_roi_same_anchor_mse.metrics import strict_fingerprint_three_way_common_support
+
+    predictions = np.ones((10, 2, 2), np.float32)
+    masks = np.ones((10, 2, 2), bool)
+    s640_masks = masks.copy()
+    s640_masks[7, 1, 0] = False
+    support = strict_fingerprint_three_way_common_support(predictions, predictions, predictions, masks, masks, s640_masks)
+    assert support.tolist() == [[True, True], [False, True]]
 
 
 def test_map_support_requires_reference_mask_and_weight_zero_group_alignment():

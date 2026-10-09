@@ -21,6 +21,7 @@ class _INR(nn.Module):
         self.gain = nn.Parameter(torch.tensor(2.0))
 
     def forward(self, xyz):
+        self.last_xyz = xyz
         value = xyz[:, 0] * self.gain
         return {"t1_ms": value, "t2_ms": value, "b1": value, "amplitude": value + 3.0}
 
@@ -41,6 +42,22 @@ def test_fingerprint_forward_shares_one_k8_psf_and_keeps_amplitude_per_sample():
     assert torch.allclose(result, expected)
     result.sum().backward()
     assert torch.isfinite(inr.gain.grad) and torch.isfinite(local.grad).all()
+
+
+def test_s640_fingerprint_forward_has_6400_residuals_from_one_shared_k8_call():
+    psf, inr = _PSF(), _INR()
+    forward = TradQuantitativeForward(inr, _Decoder(), psf, protocol=object())
+    batch_size = 640
+    result = forward.forward_fingerprint(
+        torch.zeros((batch_size, 3)),
+        torch.zeros(batch_size, dtype=torch.long),
+        torch.zeros((batch_size, 9)),
+        n_psf_samples=8,
+    )
+    assert psf.calls == 1
+    assert result.shape == (640, 10)
+    assert result.numel() == 6400
+    assert inr.last_xyz.shape == (5120, 3)
 
 
 def test_fingerprint_k1_is_the_full_vector_without_weight_gather():

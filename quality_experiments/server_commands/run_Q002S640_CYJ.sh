@@ -7,8 +7,8 @@ CROPPED_ROOT="${DATA_ROOT}/Code_10w_prepared"
 B6_EXP="${DATA_ROOT}/Code_10w_runs/CYJ_decoder_comparison_20260924_clean_v1"
 B6_MODEL="${B6_EXP}/runs/frozen_mlp_B6/model.pt"
 SIGNAL="${B6_EXP}/inputs/mlp/signal_simulator_approved.pth"
-OUTPUT="${DATA_ROOT}/Code_10w_runs/quality_experiments_v1/CYJ/Q002_B6_roi_same_anchor_mse_v2"
-LOG="${OUTPUT}.log"
+OUTPUT="${DATA_ROOT}/Code_10w_runs/quality_experiments_v1/CYJ/Q002S640_B6_roi_same_anchor_mse_v1"
+LOG="${DATA_ROOT}/Code_10w_runs/quality_experiments_v1/CYJ/Q002S640_B6_roi_same_anchor_mse_v1.log"
 
 source "$(conda info --base)/etc/profile.d/conda.sh"
 conda activate cr_dreme
@@ -20,4 +20,4 @@ for stack in sax 2ch 4ch; do [[ -f "${CROPPED_ROOT}/CYJ/${stack}/observations.np
 [[ ! -e "${OUTPUT}" || -z "$(find "${OUTPUT}" -mindepth 1 -maxdepth 1 -print -quit)" ]] || { echo "Refusing non-empty output: ${OUTPUT}" >&2; exit 1; }
 [[ ! -e "${LOG}" ]] || { echo "Refusing existing log: ${LOG}" >&2; exit 1; }
 sha256sum "${B6_MODEL}" "${SIGNAL}"
-python -m quality_experiments.Q002_B6_roi_same_anchor_mse.run_q002_reconstruction --cropped-prepared-root "${CROPPED_ROOT}" --b6-model "${B6_MODEL}" --signal-simulator "${SIGNAL}" --output "${OUTPUT}" --device cuda:0 --experiment-id Q002_B6_roi_same_anchor_mse --anchor-batch-size 64 2>&1 | tee "${LOG}"
+python -m quality_experiments.Q002_B6_roi_same_anchor_mse.run_q002_reconstruction --cropped-prepared-root "${CROPPED_ROOT}" --b6-model "${B6_MODEL}" --signal-simulator "${SIGNAL}" --output "${OUTPUT}" --device cuda:0 --experiment-id Q002S640_B6_roi_same_anchor_mse --anchor-batch-size 640 2>&1 | tee "${LOG}"
