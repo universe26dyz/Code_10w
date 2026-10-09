@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import random
 import csv
+import hashlib
 import json
+import subprocess
 import time
 from pathlib import Path
 from typing import Any, Mapping
@@ -51,6 +53,38 @@ def q002_training_controls(training: Mapping[str, Any], *, anchor_batch_size: in
         "regularization_application_count_per_optimizer_step": 1,
         "seed": 20260911,
     }
+
+
+def q003_10k_training_plan(training: Mapping[str, Any]) -> dict[str, Any]:
+    """Define the 10k route without moving the approved 4k Stage-B schedule."""
+
+    controls = q002_training_controls(training, anchor_batch_size=640)
+    milestones = [int(float(value) * controls["stage_b_iterations"]) for value in training["scheduler_milestones"] if 0 < float(value) < 1]
+    return {
+        "stages": [
+            {"label": "A", "iterations": controls["stage_a_iterations"], "joint": False, "new_optimizer": True},
+            {"label": "B", "iterations": controls["stage_b_iterations"], "joint": True, "new_optimizer": True},
+            {"label": "B_extension", "iterations": 4000, "joint": True, "new_optimizer": False},
+        ],
+        "stage_b_scheduler_milestones": milestones,
+        "primary_checkpoint_iteration": 6000,
+        "final_checkpoint_iteration": 10000,
+        "extension_lr_policy": "continue_post_6000_optimizer_scheduler_state_no_reset_no_new_milestones",
+    }
+
+
+def q003_10k_training_log_fields() -> list[str]:
+    """Required complete 10k convergence-log schema, with no semantic batch ambiguity."""
+
+    return ["stage", "iteration", "joint_signal_mse", "fingerprint_cosine_loss", "weighted_fingerprint_cosine_loss", "total_data_loss", "pred_norm_clamp_count", "obs_norm_clamp_count", "any_norm_clamp_count", "reg_t1", "reg_t2", "reg_b1", "amplitude_reg_t1", "amplitude_reg_t2", "transformation", "total", "intensity_scale", "lr_encoding", "lr_network", "lr_rigid", "anchor_batch_size", "weights_per_anchor", "signal_residual_count", "training_psf_samples", "data_psf_inr_location_count", "regularization_candidate_count", "regularization_effective_point_count", "regularization_sampling_source", "regularization_application_count"]
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for block in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
 
 
 class JointAnchorSampler:
@@ -147,7 +181,7 @@ def regularization_batch_from_b6_scalar_support(sampler: CachedBalancedSampler, 
     return {"batch": batch, "candidate_count": int(batch["xyz"].shape[0]), "effective_point_count": int(n_points), "sampling_source": "B6 scalar cropped support"}
 
 
-def train_q002_reconstruction(scalar_dataset: Any, joint_dataset: Any, config: Mapping[str, Any], protocol_yaml: str | Path, output_dir: str | Path, *, prepared_inputs: list[str | Path], anchor_batch_size: int = 64, fingerprint_cosine: Mapping[str, Any] | None = None) -> dict[str, Any]:
+def train_q002_reconstruction(scalar_dataset: Any, joint_dataset: Any, config: Mapping[str, Any], protocol_yaml: str | Path, output_dir: str | Path, *, prepared_inputs: list[str | Path], anchor_batch_size: int = 64, fingerprint_cosine: Mapping[str, Any] | None = None, continuation: Mapping[str, Any] | None = None) -> dict[str, Any]:
     """Train fresh same-anchor state; Q003 changes only the shared data objective."""
 
     resolved = normalize_step1_config(_with_protocol_path(config, protocol_yaml))
@@ -162,6 +196,10 @@ def train_q002_reconstruction(scalar_dataset: Any, joint_dataset: Any, config: M
         raise ValueError("Fingerprint cosine is only enabled for the 640-anchor Q003 route.")
     if cosine_enabled and (cosine_weight != 1.0 or cosine_epsilon != 1.0e-8):
         raise ValueError("Q003 requires fingerprint cosine weight=1.0 and epsilon=1e-8.")
+    continuation_enabled = continuation is not None
+    continuation_plan = q003_10k_training_plan(training) if continuation_enabled else None
+    if continuation_enabled and (not cosine_enabled or controls["anchor_batch_size"] != 640 or dict(continuation or {}).get("stage_b_extension_iterations") != 4000):
+        raise ValueError("Q003-10k continuation requires the fixed S640 cosine route and 4000 extension iterations.")
     device = torch.device(training["device"])
     if device.type == "cuda" and not torch.cuda.is_available():
         raise RuntimeError(f"Requested CUDA device is unavailable: {device}")
@@ -185,6 +223,8 @@ def train_q002_reconstruction(scalar_dataset: Any, joint_dataset: Any, config: M
     resolved_record = dict(resolved); resolved_record["q002_sampling"] = controls; resolved_record["q002_joint_stack_weights"] = {int(k): float(v) for k, v in joint_dataset.stack_weights.items()}; resolved_record["q002_intensity_normalization"] = normalization
     if cosine_enabled:
         resolved_record["q003_fingerprint_cosine"] = {"enabled": True, "weight": cosine_weight, "epsilon": cosine_epsilon}
+    if continuation_plan is not None:
+        resolved_record["q003_10k_continuation"] = continuation_plan
     (output / "config_resolved.yaml").write_text(yaml.safe_dump(resolved_record, sort_keys=False))
     started = time.perf_counter(); global_iteration = 0
     fields = ["stage", "iteration", "joint_signal_mse", "reg_t1", "reg_t2", "reg_b1", "amplitude_reg_t1", "amplitude_reg_t2", "transformation", "total", "intensity_scale", "lr_encoding", "lr_network", "lr_rigid", "regularization_candidate_count", "regularization_effective_point_count", "regularization_sampling_source"]
@@ -192,17 +232,16 @@ def train_q002_reconstruction(scalar_dataset: Any, joint_dataset: Any, config: M
         fields += ["anchor_batch_size", "weights_per_anchor", "signal_residual_count", "training_psf_samples", "data_psf_inr_location_count", "regularization_application_count"]
     if cosine_enabled:
         fields[2:2] = ["fingerprint_cosine_loss", "weighted_fingerprint_cosine_loss", "total_data_loss", "pred_norm_clamp_count", "obs_norm_clamp_count", "any_norm_clamp_count"]
+    if continuation_plan is not None:
+        fields = q003_10k_training_log_fields()
     log_handle = (output / "training_log.csv").open("w", newline="", encoding="utf-8"); monitor_handle = (output / "monitor_log.csv").open("w", newline="", encoding="utf-8")
     monitor_fields = ["iteration", "stage", "monitor_mse", "per_weight_mse", "per_stack_mse", "fixed_monitor_anchor_identity_sha256"]
     if cosine_enabled:
         monitor_fields = ["iteration", "stage", "monitor_joint_mse", "monitor_cosine_loss", "monitor_cosine_similarity", "per_weight_mse", "per_stack_mse", "per_stack_cosine", "fixed_monitor_anchor_identity_sha256"]
     writer, monitor_writer = csv.DictWriter(log_handle, fieldnames=fields), csv.DictWriter(monitor_handle, fieldnames=monitor_fields)
     writer.writeheader(); monitor_writer.writeheader()
-    for stage, iterations, joint in (("A", controls["stage_a_iterations"], False), ("B", controls["stage_b_iterations"], True)):
-        model.rigid_psf.axisangle.requires_grad_(joint)
-        optimizer = _optimizer(model, training["learning_rates"], joint)
-        milestones = [int(float(value) * iterations) for value in training["scheduler_milestones"] if 0 < float(value) < 1]
-        scheduler = MultiStepLR(optimizer, milestones=milestones, gamma=float(training["scheduler_gamma"]))
+    def run_iterations(stage: str, iterations: int, *, optimizer: Any, scheduler: Any, joint: bool) -> None:
+        nonlocal global_iteration
         for iteration in range(iterations):
             global_iteration += 1
             batch = sampler.sample(); batch["xyz"] = space.local_to_train(batch["xyz"].to(device)); batch["group_idx"] = batch["group_idx"].to(device); batch["stack_idx"] = batch["stack_idx"].to(device); batch["timing"] = batch["timing"].to(device); batch["observed"] = batch["observed"].to(device)
@@ -239,9 +278,38 @@ def train_q002_reconstruction(scalar_dataset: Any, joint_dataset: Any, config: M
                     monitor_writer.writerow({"iteration": global_iteration, "stage": stage, "monitor_joint_mse": float(monitor_terms["joint_signal_mse"]), "monitor_cosine_loss": float(monitor_terms["fingerprint_cosine_loss"]), "monitor_cosine_similarity": float(1.0 - monitor_terms["fingerprint_cosine_loss"]), "per_weight_mse": json.dumps({weight: float(error[:, weight].mean()) for weight in range(10)}), "per_stack_mse": json.dumps({int(stack): float(error[monitor_batch["stack_idx"] == stack].mean()) for stack in monitor_batch["stack_idx"].unique().tolist()}), "per_stack_cosine": json.dumps({int(stack): float(per_anchor_cosine[monitor_batch["stack_idx"] == stack].mean()) for stack in monitor_batch["stack_idx"].unique().tolist()}), "fixed_monitor_anchor_identity_sha256": monitor["anchor_identity_sha256"]})
                 else:
                     monitor_writer.writerow({"iteration": global_iteration, "stage": stage, "monitor_mse": float(error.mean()), "per_weight_mse": json.dumps({weight: float(error[:, weight].mean()) for weight in range(10)}), "per_stack_mse": json.dumps({int(stack): float(error[monitor_batch["stack_idx"] == stack].mean()) for stack in monitor_batch["stack_idx"].unique().tolist()}), "fixed_monitor_anchor_identity_sha256": monitor["anchor_identity_sha256"]})
+    optimizer = scheduler = None
+    primary_checkpoint = None
+    for stage_spec in (continuation_plan["stages"] if continuation_plan is not None else [{"label": "A", "iterations": controls["stage_a_iterations"], "joint": False, "new_optimizer": True}, {"label": "B", "iterations": controls["stage_b_iterations"], "joint": True, "new_optimizer": True}]):
+        stage, iterations, joint = stage_spec["label"], int(stage_spec["iterations"]), bool(stage_spec["joint"])
+        if stage == "B_extension":
+            if global_iteration != 6000 or optimizer is None or scheduler is None:
+                raise RuntimeError("Q003-10k extension must begin from the in-memory 6000-step Stage-B state.")
+            checkpoint_root = output / "checkpoints"; checkpoint_root.mkdir(exist_ok=False)
+            primary_checkpoint = checkpoint_root / "model_iter_6000.pt"
+            save_checkpoint(primary_checkpoint, model, resolved, protocol, scalar_dataset, space, controls["seed"], normalization, decoder_metadata)
+            continuation_state = {
+                "optimizer_state": optimizer.state_dict(), "scheduler_state": scheduler.state_dict(), "torch_rng_state": torch.get_rng_state(),
+                "torch_cuda_rng_state_all": torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None,
+                "numpy_rng_state": np.random.get_state(), "python_random_state": random.getstate(), "sampler_generator_state": sampler.generator.get_state(),
+                "global_iteration": global_iteration, "stage": "B_extension",
+            }
+            torch.save(continuation_state, checkpoint_root / "continuation_state_iter_6000.pt")
+            primary_manifest = {"role": "primary_cosine_ablation", "global_iteration": 6000, "stage_a_iterations": 2000, "stage_b_standard_iterations": 4000, "extension_iterations_completed": 0, "anchor_batch_size": 640, "weights_per_anchor": 10, "signal_residual_count": 6400, "training_psf_samples": 8, "data_psf_inr_location_count": 5120, "fingerprint_cosine_enabled": True, "fingerprint_cosine_weight": 1.0, "fingerprint_cosine_epsilon": 1.0e-8, "seed": 20260911, "git_sha": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(), "checkpoint_sha256": _sha256(primary_checkpoint), "extension_lr_policy": continuation_plan["extension_lr_policy"], "lr_at_extension_start": {group["name"]: group["lr"] for group in optimizer.param_groups}}
+            (checkpoint_root / "model_iter_6000_manifest.json").write_text(json.dumps(primary_manifest, indent=2) + "\n", encoding="utf-8")
+        if stage_spec["new_optimizer"]:
+            model.rigid_psf.axisangle.requires_grad_(joint)
+            optimizer = _optimizer(model, training["learning_rates"], joint)
+            milestones = [int(float(value) * iterations) for value in training["scheduler_milestones"] if 0 < float(value) < 1]
+            scheduler = MultiStepLR(optimizer, milestones=milestones, gamma=float(training["scheduler_gamma"]))
+        else:
+            model.rigid_psf.axisangle.requires_grad_(joint)
+        run_iterations(stage, iterations, optimizer=optimizer, scheduler=scheduler, joint=joint)
     log_handle.close(); monitor_handle.close()
     save_checkpoint(output / "model.pt", model, resolved, protocol, scalar_dataset, space, controls["seed"], normalization, decoder_metadata)
+    if continuation_plan is not None and global_iteration != continuation_plan["final_checkpoint_iteration"]:
+        raise RuntimeError("Q003-10k final checkpoint must be saved exactly at global iteration 10000.")
     if stack_initialization is not None:
         (output / "stack_initialization_poses.json").write_text(json.dumps({"coordinate_convention": "physical RAS mm; trans_first=true", "stacks": list(stack_initialization.stack_pose_records)}, indent=2) + "\n")
     (output / "timing_profile.csv").write_text("section,milliseconds\noptimization_total,{:.6f}\n".format((time.perf_counter() - started) * 1000.0))
-    return {"model": model, "training_space": space, "protocol": protocol, "decoder_metadata": decoder_metadata, "intensity_normalization": normalization, "controls": controls, "stack_weights": joint_dataset.stack_weights, "output_dir": output, "stack_initialization": stack_initialization, "fixed_monitor": monitor}
+    return {"model": model, "training_space": space, "protocol": protocol, "decoder_metadata": decoder_metadata, "intensity_normalization": normalization, "controls": controls, "stack_weights": joint_dataset.stack_weights, "output_dir": output, "stack_initialization": stack_initialization, "fixed_monitor": monitor, "resolved_config": resolved, "primary_checkpoint": primary_checkpoint, "global_iteration": global_iteration, "continuation_plan": continuation_plan}

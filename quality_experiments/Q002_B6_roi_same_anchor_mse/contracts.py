@@ -10,6 +10,7 @@ from typing import Any, Mapping
 Q002_EXPERIMENT_ID = "Q002_B6_roi_same_anchor_mse"
 Q002S640_EXPERIMENT_ID = "Q002S640_B6_roi_same_anchor_mse"
 Q003S640_EXPERIMENT_ID = "Q003S640_B6_roi_same_anchor_mse_plus_cosine"
+Q003S640_10K_EXPERIMENT_ID = "Q003S640_B6_roi_same_anchor_mse_plus_cosine_10k"
 STACKS = ("sax", "2ch", "4ch")
 
 
@@ -39,7 +40,7 @@ def build_q002_route_config(
     root = Path(cropped_prepared_root)
     if "full_fov" in str(root).lower():
         raise ValueError("Q002 training root must be B6 cropped, not full-FOV.")
-    expected_batch_size = {Q002_EXPERIMENT_ID: 64, Q002S640_EXPERIMENT_ID: 640, Q003S640_EXPERIMENT_ID: 640}.get(experiment_id)
+    expected_batch_size = {Q002_EXPERIMENT_ID: 64, Q002S640_EXPERIMENT_ID: 640, Q003S640_EXPERIMENT_ID: 640, Q003S640_10K_EXPERIMENT_ID: 640}.get(experiment_id)
     if expected_batch_size is None or int(anchor_batch_size) != expected_batch_size:
         raise ValueError("Q002 route experiment_id must use its fixed anchor_batch_size.")
     sampling: dict[str, Any]
@@ -66,10 +67,21 @@ def build_q002_route_config(
             "sampling": sampling,
         },
     }
-    if experiment_id == Q003S640_EXPERIMENT_ID:
+    if experiment_id in (Q003S640_EXPERIMENT_ID, Q003S640_10K_EXPERIMENT_ID):
         route["route"].update({
             "parent_experiment": Q002S640_EXPERIMENT_ID,
             "scientific_change": "add_fingerprint_cosine_only",
             "fingerprint_cosine": {"enabled": True, "weight": 1.0, "epsilon": 1.0e-8},
+        })
+    if experiment_id == Q003S640_10K_EXPERIMENT_ID:
+        route["route"].update({
+            "scientific_change": "add_fingerprint_cosine_only_for_primary_6k",
+            "secondary_change": "continue_same_q003_optimization_to_10k",
+            "continuation": {
+                "stage_b_extension_iterations": 4000,
+                "primary_checkpoint_iteration": 6000,
+                "final_checkpoint_iteration": 10000,
+                "extension_lr_policy": "continue_post_6000_optimizer_scheduler_state_no_reset_no_new_milestones",
+            },
         })
     return route

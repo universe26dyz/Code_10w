@@ -157,8 +157,8 @@ q002:
   anchor_batch_size: 64
   shared_training_psf_samples: 8
 q002_s640:
-  status: CODE_READY_FORMAL_SERVER_RUN_PENDING
-  formal_result: NOT_RUN
+  status: COMPLETED_EXTERNALLY_REPORTED
+  formal_result: POSITIVE_VS_Q002_64_AND_B6_ON_CYJ_CONTROLLED_EVALUATION
   experiment_id: Q002S640_B6_roi_same_anchor_mse
   output_root: Q002S640_B6_roi_same_anchor_mse_v1
   baseline: frozen_mlp_B6
@@ -175,7 +175,7 @@ q002_s640:
   primary_evaluation: Q002_S640_vs_Q002_64_three_way_strict_common_support
   secondary_evaluation: Q002_S640_vs_FrozenMLP_B6_same_three_way_support
 q003_s640:
-  status: READY_FOR_FORMAL_SERVER_RUN_PENDING_Q002S640_REVIEW
+  status: SUPERSEDED_FOR_EXECUTION_BY_Q003_S640_10K
   formal_result: NOT_RUN
   experiment_id: Q003S640_B6_roi_same_anchor_mse_plus_cosine
   parent_experiment: Q002S640_B6_roi_same_anchor_mse
@@ -193,6 +193,29 @@ q003_s640:
   regularization_candidate_count: 640
   regularization_effective_point_count: 256
   regularization_sampling_source: B6 scalar cropped support
+  formal_result: NOT_RUN
+q003_s640_10k:
+  status: READY_FOR_FORMAL_SERVER_RUN
+  formal_result: NOT_RUN
+  experiment_id: Q003S640_B6_roi_same_anchor_mse_plus_cosine_10k
+  parent_experiment: Q002S640_B6_roi_same_anchor_mse
+  primary_checkpoint_role: primary_cosine_ablation_at_6000
+  secondary_checkpoint_role: extended_optimization_at_10000
+  output_root: Q003S640_B6_roi_same_anchor_mse_plus_cosine_10k_v1
+  anchor_batch_size: 640
+  weights_per_anchor: 10
+  signal_residual_count: 6400
+  training_psf_samples: 8
+  data_psf_inr_location_count: 5120
+  stage_a_iterations: 2000
+  stage_b_standard_iterations: 4000
+  stage_b_extension_iterations: 4000
+  seed: 20260911
+  fingerprint_cosine:
+    enabled: true
+    weight: 1.0
+    epsilon: 1.0e-8
+  extension_lr_policy: continue_post_6000_optimizer_scheduler_state_no_reset_no_new_milestones
 q003:
   status: NOT_STARTED
-next_phase: Q002S640_FORMAL_RUN_AND_PROVENANCE_REVIEW_BEFORE_Q003S640
+next_phase: Q003S640_10K_FORMAL_RUN_AND_PROVENANCE_REVIEW
