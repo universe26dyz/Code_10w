@@ -9,6 +9,7 @@ from typing import Any, Mapping
 
 Q002_EXPERIMENT_ID = "Q002_B6_roi_same_anchor_mse"
 Q002S640_EXPERIMENT_ID = "Q002S640_B6_roi_same_anchor_mse"
+Q003S640_EXPERIMENT_ID = "Q003S640_B6_roi_same_anchor_mse_plus_cosine"
 STACKS = ("sax", "2ch", "4ch")
 
 
@@ -38,7 +39,7 @@ def build_q002_route_config(
     root = Path(cropped_prepared_root)
     if "full_fov" in str(root).lower():
         raise ValueError("Q002 training root must be B6 cropped, not full-FOV.")
-    expected_batch_size = {Q002_EXPERIMENT_ID: 64, Q002S640_EXPERIMENT_ID: 640}.get(experiment_id)
+    expected_batch_size = {Q002_EXPERIMENT_ID: 64, Q002S640_EXPERIMENT_ID: 640, Q003S640_EXPERIMENT_ID: 640}.get(experiment_id)
     if expected_batch_size is None or int(anchor_batch_size) != expected_batch_size:
         raise ValueError("Q002 route experiment_id must use its fixed anchor_batch_size.")
     sampling: dict[str, Any]
@@ -53,7 +54,7 @@ def build_q002_route_config(
             "data_psf_inr_location_count": 5120,
             "B6_scalar_batch_size": 640,
         }
-    return {
+    route = {
         "resolved_config": copy.deepcopy(dict(resolved_config)),
         "route": {
             "experiment_id": experiment_id,
@@ -65,3 +66,10 @@ def build_q002_route_config(
             "sampling": sampling,
         },
     }
+    if experiment_id == Q003S640_EXPERIMENT_ID:
+        route["route"].update({
+            "parent_experiment": Q002S640_EXPERIMENT_ID,
+            "scientific_change": "add_fingerprint_cosine_only",
+            "fingerprint_cosine": {"enabled": True, "weight": 1.0, "epsilon": 1.0e-8},
+        })
+    return route

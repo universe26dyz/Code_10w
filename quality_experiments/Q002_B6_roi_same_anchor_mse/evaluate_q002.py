@@ -72,13 +72,13 @@ def _validated_route_checkpoint(run_root: Path, label: str) -> tuple[dict[str, o
     return route, checkpoint
 
 
-def _run_three_way(args: argparse.Namespace, run_root: Path, output: Path, s640_route: dict[str, object], s640_checkpoint: Path) -> Path:
-    """Evaluate B6, immutable Q002-64, and Q002-S640 on exactly one support."""
+def _run_three_way(args: argparse.Namespace, run_root: Path, output: Path, s640_route: dict[str, object], s640_checkpoint: Path, *, comparator_root: Path | None = None, comparator_experiment_id: str = "Q002_B6_roi_same_anchor_mse", candidate_experiment_id: str = "Q002S640_B6_roi_same_anchor_mse", comparator_label: str = "Q002_64", candidate_label: str = "Q002_S640", primary_comparison: str = "Q002_S640_vs_Q002_64", secondary_comparison: str = "Q002_S640_vs_FrozenMLP_B6", fingerprint_cosine_training_objective: bool = False) -> Path:
+    """Evaluate B6 plus two immutable same-anchor routes on exactly one support."""
 
-    q002_64_root = Path(args.q002_64_run_root)
+    q002_64_root = comparator_root if comparator_root is not None else Path(args.q002_64_run_root)
     q002_64_route, q002_64_checkpoint = _validated_route_checkpoint(q002_64_root, "Q002-64")
-    if s640_route["experiment_id"] != "Q002S640_B6_roi_same_anchor_mse" or q002_64_route["experiment_id"] != "Q002_B6_roi_same_anchor_mse":
-        raise ValueError("Three-way evaluation requires immutable Q002-S640 and Q002-64 route manifests.")
+    if s640_route["experiment_id"] != candidate_experiment_id or q002_64_route["experiment_id"] != comparator_experiment_id:
+        raise ValueError("Three-way evaluation route manifests do not match the requested immutable comparator identities.")
     output.mkdir(parents=True); metrics = output / "metrics"; metrics.mkdir()
     map_samples: list[dict[str, object]] = []
     for stack in STACKS:
@@ -93,7 +93,7 @@ def _run_three_way(args: argparse.Namespace, run_root: Path, output: Path, s640_
             reference = native.t1_ms if key == "t1_ms" else native.t2_ms
             for group in range(reference.shape[0]):
                 support = strict_q002_three_way_common_support(reference[group], b6_maps[group], q64_maps[group], s640_maps[group], b6_masks[group], q64_masks[group], s640_masks[group], native.valid_mask[group])
-                for method, prediction in (("FrozenMLP_B6", b6_maps[group]), ("Q002_64", q64_maps[group]), ("Q002_S640", s640_maps[group])):
+                for method, prediction in (("FrozenMLP_B6", b6_maps[group]), (comparator_label, q64_maps[group]), (candidate_label, s640_maps[group])):
                     map_samples.append({"method": method, "stack": stack, "group_idx": group, "parameter": label, "reference": reference[group], "prediction": prediction, "support": support})
     map_rows = [{key: sample[key] for key in ("method", "stack", "group_idx", "parameter")} | agreement_metrics(sample["reference"], sample["prediction"], sample["support"], min_pixels=16) for sample in map_samples]
     write_csv(metrics / "central_no_psf_three_way_per_group_true_pooled.csv", map_rows)
@@ -108,9 +108,9 @@ def _run_three_way(args: argparse.Namespace, run_root: Path, output: Path, s640_
         q002_64 = _load(q002_64_root / "evaluation" / "signal_psf_K8" / f"signal_reprojection_{stack}.npz")
         b6_path = Path(args.b6_d2_root) / "artifacts" / "FrozenMLP" / f"signal_reprojection_{stack}_K8.npz"
         b6 = _load(b6_path if b6_path.is_file() else Path(args.b6_d2_root) / f"signal_reprojection_{stack}_K8.npz")
-        b6_index, q64_index, s640_index = (_signal_identity_index(b6, "B6 K8"), _signal_identity_index(q002_64, "Q002-64 K8"), _signal_identity_index(s640, "Q002-S640 K8"))
+        b6_index, q64_index, s640_index = (_signal_identity_index(b6, "B6 K8"), _signal_identity_index(q002_64, f"{comparator_label} K8"), _signal_identity_index(s640, f"{candidate_label} K8"))
         if set(b6_index) != set(q64_index) or set(b6_index) != set(s640_index):
-            raise ValueError("B6/Q002-64/Q002-S640 K8 identity sets differ.")
+            raise ValueError("B6/comparator/candidate K8 identity sets differ.")
         for s640_row in range(s640["observed"].shape[0]):
             pair = (int(s640["group_idx"][s640_row]), int(s640["weight_idx"][s640_row]))
             b6_row, q64_row = b6_index[pair], q64_index[pair]
@@ -118,36 +118,44 @@ def _run_three_way(args: argparse.Namespace, run_root: Path, output: Path, s640_
                 if not np.array_equal(s640[key][s640_row], b6[key][b6_row], equal_nan=True) or not np.array_equal(s640[key][s640_row], q002_64[key][q64_row], equal_nan=True):
                     raise ValueError(f"Three-way K8 {key} provenance differs for {pair}.")
             support = strict_q002_three_way_common_support(s640["observed"][s640_row], b6["predicted"][b6_row], q002_64["predicted"][q64_row], s640["predicted"][s640_row], b6["masks"][b6_row], q002_64["masks"][q64_row], s640["masks"][s640_row], np.ones_like(s640["masks"][s640_row], bool))
-            for method, prediction in (("FrozenMLP_B6", b6["predicted"][b6_row]), ("Q002_64", q002_64["predicted"][q64_row]), ("Q002_S640", s640["predicted"][s640_row])):
+            for method, prediction in (("FrozenMLP_B6", b6["predicted"][b6_row]), (comparator_label, q002_64["predicted"][q64_row]), (candidate_label, s640["predicted"][s640_row])):
                 row = {"method": method, "stack": stack, "group_idx": pair[0], "weight_idx": pair[1], **signal_agreement_metrics(s640["observed"][s640_row], prediction, support, min_pixels=16)}
                 signal_rows.append(row)
-                signal_samples.append({"method": method, "stack": stack, "group_idx": pair[0], "weight_idx": pair[1], "support_provenance": "observed AND B6_valid AND Q002_64_valid AND Q002_S640_valid AND finite", "reference": s640["observed"][s640_row], "prediction": prediction, "support": support})
+                signal_samples.append({"method": method, "stack": stack, "group_idx": pair[0], "weight_idx": pair[1], "support_provenance": f"observed AND B6_valid AND {comparator_label}_valid AND {candidate_label}_valid AND finite", "reference": s640["observed"][s640_row], "prediction": prediction, "support": support})
         for group in np.unique(s640["group_idx"]):
             rows = np.flatnonzero(s640["group_idx"] == group)
             if rows.size != 10 or not np.array_equal(np.sort(s640["weight_idx"][rows]), np.arange(10)):
-                raise ValueError("Q002-S640 K8 archive lacks one ordered ten-weight fingerprint per group.")
+                raise ValueError("Candidate K8 archive lacks one ordered ten-weight fingerprint per group.")
             ordered = rows[np.argsort(s640["weight_idx"][rows])]
             pairs = [(int(s640["group_idx"][row]), int(s640["weight_idx"][row])) for row in ordered]
             b6_ordered = np.asarray([b6_index[pair] for pair in pairs]); q64_ordered = np.asarray([q64_index[pair] for pair in pairs])
             support = strict_fingerprint_three_way_common_support(b6["predicted"][b6_ordered], q002_64["predicted"][q64_ordered], s640["predicted"][ordered], b6["masks"][b6_ordered], q002_64["masks"][q64_ordered], s640["masks"][ordered]) & np.isfinite(s640["observed"][ordered]).all(axis=0)
-            for method, prediction in (("FrozenMLP_B6", b6["predicted"][b6_ordered]), ("Q002_64", q002_64["predicted"][q64_ordered]), ("Q002_S640", s640["predicted"][ordered])):
+            for method, prediction in (("FrozenMLP_B6", b6["predicted"][b6_ordered]), (comparator_label, q002_64["predicted"][q64_ordered]), (candidate_label, s640["predicted"][ordered])):
                 cosine_rows.append({"method": method, "stack": stack, "group_idx": int(group), "role": "observed_fingerprint_fidelity_three_way_common_support", **fingerprint_cosine_summary(prediction, s640["observed"][ordered], support)})
     write_csv(metrics / "signal_psf_K8_three_way_per_group_common_support.csv", signal_rows)
     signal_pooled = true_pooled_rows(signal_samples, ("method", "stack", "weight_idx", "support_provenance"), domain="signal") + true_pooled_rows(signal_samples, ("method", "stack", "group_idx", "support_provenance"), domain="signal") + true_pooled_rows(signal_samples, ("method", "stack", "support_provenance"), domain="signal") + true_pooled_rows(signal_samples, ("method", "support_provenance"), domain="signal")
     write_csv(metrics / "signal_psf_K8_three_way_true_pooled.csv", signal_pooled)
     write_csv(metrics / "fingerprint_cosine_three_way_read_only.csv", cosine_rows)
     cosine_summary = []
-    for method in ("FrozenMLP_B6", "Q002_64", "Q002_S640"):
+    for method in ("FrozenMLP_B6", comparator_label, candidate_label):
         members = [row for row in cosine_rows if row["method"] == method]
         for scope, selected in (("global_macro_groups", members), *[(f"stack:{stack}:macro_groups", [row for row in members if row["stack"] == stack]) for stack in STACKS]):
             values = np.asarray([row["mean_cosine"] for row in selected], float)
             cosine_summary.append({"method": method, "scope": scope, "macro_group_mean_cosine": float(np.nanmean(values)) if values.size else float("nan"), "macro_group_median_cosine": float(np.nanmedian(values)) if values.size else float("nan"), "support_N": int(sum(row["support_N"] for row in selected)), "near_zero_norm_count": int(sum(row["near_zero_norm_count"] for row in selected))})
     write_csv(metrics / "fingerprint_cosine_three_way_macro_group_summary.csv", cosine_summary)
     evaluation_git_sha = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
-    manifest = {"route": s640_route["route"], "q002_64_route": q002_64_route["route"], "evaluation_git_sha": evaluation_git_sha, "evaluation_git_dirty": bool(subprocess.check_output(["git", "status", "--porcelain"], text=True).strip()), "q002_s640_reconstruction_git_sha": s640_route["reconstruction_git_sha"], "q002_64_reconstruction_git_sha": q002_64_route["reconstruction_git_sha"], "q002_s640_checkpoint_sha256": _sha(s640_checkpoint), "q002_64_checkpoint_sha256": _sha(q002_64_checkpoint), "evaluation": evaluation_plan(_sha(s640_checkpoint)), "common_support": "reference_valid AND B6_valid AND Q002_64_valid AND Q002_S640_valid AND finite", "primary_comparison": "Q002_S640_vs_Q002_64", "secondary_comparison": "Q002_S640_vs_FrozenMLP_B6", "historical_artifacts": "read_only"}
+    manifest = {"route": s640_route["route"], "comparator_route": q002_64_route["route"], "evaluation_git_sha": evaluation_git_sha, "evaluation_git_dirty": bool(subprocess.check_output(["git", "status", "--porcelain"], text=True).strip()), "candidate_reconstruction_git_sha": s640_route["reconstruction_git_sha"], "comparator_reconstruction_git_sha": q002_64_route["reconstruction_git_sha"], "candidate_checkpoint_sha256": _sha(s640_checkpoint), "comparator_checkpoint_sha256": _sha(q002_64_checkpoint), "evaluation": evaluation_plan(_sha(s640_checkpoint), fingerprint_cosine_training_objective=fingerprint_cosine_training_objective), "common_support": f"reference_valid AND B6_valid AND {comparator_label}_valid AND {candidate_label}_valid AND finite", "primary_comparison": primary_comparison, "secondary_comparison": secondary_comparison, "historical_artifacts": "read_only"}
     write_json(output / "evaluation_manifest.json", manifest)
-    (output / "RESULT_SUMMARY.md").write_text("# Q002-S640 three-way evaluation\n\nPrimary comparison: Q002-S640 vs Q002-64. Secondary comparison: Q002-S640 vs FrozenMLP B6. All reported method metrics use one strict three-way common support.\n", encoding="utf-8")
+    (output / "RESULT_SUMMARY.md").write_text(f"# {candidate_label} three-way evaluation\n\nPrimary comparison: {primary_comparison}. Secondary comparison: {secondary_comparison}. All reported method metrics use one strict three-way common support.\n", encoding="utf-8")
     return output
+
+
+def run_q003_s640_three_way(args: argparse.Namespace) -> Path:
+    run_root, output = Path(args.run_root), Path(args.output)
+    if output.exists() and any(output.iterdir()):
+        raise FileExistsError(f"Refusing non-empty Q003 evaluation root: {output}")
+    route, checkpoint = _validated_route_checkpoint(run_root, "Q003-S640")
+    return _run_three_way(args, run_root, output, route, checkpoint, comparator_root=Path(args.q002_s640_run_root), comparator_experiment_id="Q002S640_B6_roi_same_anchor_mse", candidate_experiment_id="Q003S640_B6_roi_same_anchor_mse_plus_cosine", comparator_label="Q002_S640", candidate_label="Q003_S640", primary_comparison="Q003_S640_vs_Q002_S640", secondary_comparison="Q003_S640_vs_FrozenMLP_B6", fingerprint_cosine_training_objective=True)
 
 
 def run(args: argparse.Namespace) -> Path:

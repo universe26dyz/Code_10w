@@ -135,7 +135,7 @@ q001a:
   formal_result: USER_REPORTED_SUCCESS_NO_LOCAL_MANIFEST
   formal_reference_server_root: /data/dengyz/dataset/Code_10w_v1/reference_data/CYJ/Q001_full_fov_native_reference_v2
 q002:
-  status: READY_FOR_FORMAL_SERVER_RERUN
+  status: COMPLETED_EXTERNALLY_REPORTED_NEGATIVE_VS_B6
   code_complete: true
   local_tests_complete: true
   formal_result: NOT_RUN
@@ -150,7 +150,7 @@ q002:
     root_cause: forward_fingerprint_required_BK_1_10_but_approved_FrozenMLP_returns_BK_10
   retry_v2:
     output_root: Q002_B6_roi_same_anchor_mse_v2
-    status: READY_FOR_FORMAL_SERVER_RERUN
+    status: COMPLETED_EXTERNALLY_REPORTED_NEGATIVE_VS_B6
   baseline: frozen_mlp_B6
   training_input: B6_original_cropped_prepared_only
   effective_scalar_budget: 640
@@ -174,6 +174,25 @@ q002_s640:
   regularization_application_count_per_optimizer_step: 1
   primary_evaluation: Q002_S640_vs_Q002_64_three_way_strict_common_support
   secondary_evaluation: Q002_S640_vs_FrozenMLP_B6_same_three_way_support
+q003_s640:
+  status: READY_FOR_FORMAL_SERVER_RUN_PENDING_Q002S640_REVIEW
+  formal_result: NOT_RUN
+  experiment_id: Q003S640_B6_roi_same_anchor_mse_plus_cosine
+  parent_experiment: Q002S640_B6_roi_same_anchor_mse
+  scientific_change: add_fingerprint_cosine_only
+  output_root: Q003S640_B6_roi_same_anchor_mse_plus_cosine_v1
+  anchor_batch_size: 640
+  weights_per_anchor: 10
+  signal_residual_count: 6400
+  training_psf_samples: 8
+  data_psf_inr_location_count: 5120
+  fingerprint_cosine:
+    enabled: true
+    weight: 1.0
+    epsilon: 1.0e-8
+  regularization_candidate_count: 640
+  regularization_effective_point_count: 256
+  regularization_sampling_source: B6 scalar cropped support
 q003:
   status: NOT_STARTED
-next_phase: Q002_64_V2_AND_Q002S640_FORMAL_SERVER_RUNS
+next_phase: Q002S640_FORMAL_RUN_AND_PROVENANCE_REVIEW_BEFORE_Q003S640

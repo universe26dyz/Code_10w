@@ -79,15 +79,61 @@ class JointAnchorSampler:
         return {name: getattr(self.dataset, name)[index] for name in ("xyz", "observed", "group_idx", "stack_idx", "timing", "row_col")} | metadata
 
 
-def joint_vector_mse(prediction: torch.Tensor, observed: torch.Tensor, stack_idx: torch.Tensor, stack_weights: Mapping[int, float]) -> torch.Tensor:
-    if prediction.shape != observed.shape or prediction.ndim != 2 or prediction.shape[1] != 10:
-        raise ValueError("Q002 prediction/observed must be matching [B,10] tensors.")
-    weights = torch.empty_like(stack_idx, dtype=prediction.dtype)
+def _anchor_stack_weights(stack_idx: torch.Tensor, stack_weights: Mapping[int, float], *, dtype: torch.dtype) -> torch.Tensor:
+    weights = torch.empty_like(stack_idx, dtype=dtype)
     for stack, value in stack_weights.items():
         weights[stack_idx == int(stack)] = float(value)
     if not torch.isfinite(weights).all():
         raise ValueError("Q002 stack weights do not cover every sampled anchor.")
+    return weights
+
+
+def joint_vector_mse(prediction: torch.Tensor, observed: torch.Tensor, stack_idx: torch.Tensor, stack_weights: Mapping[int, float]) -> torch.Tensor:
+    if prediction.shape != observed.shape or prediction.ndim != 2 or prediction.shape[1] != 10:
+        raise ValueError("Q002 prediction/observed must be matching [B,10] tensors.")
+    weights = _anchor_stack_weights(stack_idx, stack_weights, dtype=prediction.dtype)
     return (weights * (prediction - observed).pow(2).mean(dim=1)).mean()
+
+
+def joint_fingerprint_objective(prediction: torch.Tensor, observed: torch.Tensor, stack_idx: torch.Tensor, stack_weights: Mapping[int, float], *, cosine_weight: float, cosine_epsilon: float) -> dict[str, Any]:
+    """Shared Q002/Q003 data objective; cosine couples exactly one 10-weight anchor vector."""
+
+    if prediction.shape != observed.shape or prediction.ndim != 2 or prediction.shape[1] != 10:
+        raise ValueError("Q002/Q003 prediction/observed must be matching [B,10] tensors.")
+    if not torch.isfinite(prediction).all() or not torch.isfinite(observed).all():
+        raise ValueError("Q003 fingerprint prediction and observation vectors must be finite.")
+    if cosine_weight < 0.0 or cosine_epsilon <= 0.0:
+        raise ValueError("Q003 cosine weight must be non-negative and epsilon must be positive.")
+    mse = joint_vector_mse(prediction, observed, stack_idx, stack_weights)
+    if cosine_weight == 0.0:
+        return {
+            "joint_signal_mse": mse,
+            "fingerprint_cosine_loss": prediction.new_zeros(()),
+            "weighted_fingerprint_cosine_loss": prediction.new_zeros(()),
+            "total_data_loss": mse,
+            "pred_norm_clamp_count": 0,
+            "obs_norm_clamp_count": 0,
+            "any_norm_clamp_count": 0,
+        }
+    anchor_weights = _anchor_stack_weights(stack_idx, stack_weights, dtype=prediction.dtype)
+    pred_norm_raw = prediction.norm(p=2, dim=-1, keepdim=True)
+    obs_norm_raw = observed.norm(p=2, dim=-1, keepdim=True)
+    pred_clamped = pred_norm_raw < cosine_epsilon
+    obs_clamped = obs_norm_raw < cosine_epsilon
+    pred_unit = prediction / pred_norm_raw.clamp_min(cosine_epsilon)
+    obs_unit = observed / obs_norm_raw.clamp_min(cosine_epsilon)
+    per_anchor_cosine_loss = 1.0 - (pred_unit * obs_unit).sum(dim=-1)
+    cosine = (anchor_weights * per_anchor_cosine_loss).mean()
+    weighted_cosine = float(cosine_weight) * cosine
+    return {
+        "joint_signal_mse": mse,
+        "fingerprint_cosine_loss": cosine,
+        "weighted_fingerprint_cosine_loss": weighted_cosine,
+        "total_data_loss": mse + weighted_cosine,
+        "pred_norm_clamp_count": int(pred_clamped.sum().detach().cpu()),
+        "obs_norm_clamp_count": int(obs_clamped.sum().detach().cpu()),
+        "any_norm_clamp_count": int((pred_clamped | obs_clamped).sum().detach().cpu()),
+    }
 
 
 def regularization_batch_from_b6_scalar_support(sampler: CachedBalancedSampler, *, n_points: int) -> dict[str, Any]:
@@ -100,13 +146,21 @@ def regularization_batch_from_b6_scalar_support(sampler: CachedBalancedSampler, 
     return {"batch": batch, "candidate_count": int(batch["xyz"].shape[0]), "effective_point_count": int(n_points), "sampling_source": "B6 scalar cropped support"}
 
 
-def train_q002_reconstruction(scalar_dataset: Any, joint_dataset: Any, config: Mapping[str, Any], protocol_yaml: str | Path, output_dir: str | Path, *, prepared_inputs: list[str | Path], anchor_batch_size: int = 64) -> dict[str, Any]:
-    """Train fresh Q002 state; only sampler and data MSE differ from scalar B6."""
+def train_q002_reconstruction(scalar_dataset: Any, joint_dataset: Any, config: Mapping[str, Any], protocol_yaml: str | Path, output_dir: str | Path, *, prepared_inputs: list[str | Path], anchor_batch_size: int = 64, fingerprint_cosine: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """Train fresh same-anchor state; Q003 changes only the shared data objective."""
 
     resolved = normalize_step1_config(_with_protocol_path(config, protocol_yaml))
     training, loss_cfg = _require(resolved, "training"), _require(resolved, "loss")
     controls = q002_training_controls(training, anchor_batch_size=anchor_batch_size)
     training_psf_samples = int(controls["training_psf_samples"] if "training_psf_samples" in controls else controls["psf_samples"])
+    cosine_cfg = dict(fingerprint_cosine or {"enabled": False, "weight": 0.0, "epsilon": 1.0e-8})
+    cosine_enabled = bool(cosine_cfg.get("enabled", False))
+    cosine_weight = float(cosine_cfg.get("weight", 0.0))
+    cosine_epsilon = float(cosine_cfg.get("epsilon", 1.0e-8))
+    if (cosine_enabled and controls["anchor_batch_size"] != 640) or (not cosine_enabled and cosine_weight != 0.0):
+        raise ValueError("Fingerprint cosine is only enabled for the 640-anchor Q003 route.")
+    if cosine_enabled and (cosine_weight != 1.0 or cosine_epsilon != 1.0e-8):
+        raise ValueError("Q003 requires fingerprint cosine weight=1.0 and epsilon=1e-8.")
     device = torch.device(training["device"])
     if device.type == "cuda" and not torch.cuda.is_available():
         raise RuntimeError(f"Requested CUDA device is unavailable: {device}")
@@ -133,8 +187,13 @@ def train_q002_reconstruction(scalar_dataset: Any, joint_dataset: Any, config: M
     fields = ["stage", "iteration", "joint_signal_mse", "reg_t1", "reg_t2", "reg_b1", "amplitude_reg_t1", "amplitude_reg_t2", "transformation", "total", "intensity_scale", "lr_encoding", "lr_network", "lr_rigid", "regularization_candidate_count", "regularization_effective_point_count", "regularization_sampling_source"]
     if controls["anchor_batch_size"] == 640:
         fields += ["anchor_batch_size", "weights_per_anchor", "signal_residual_count", "training_psf_samples", "data_psf_inr_location_count", "regularization_application_count"]
+    if cosine_enabled:
+        fields[2:2] = ["fingerprint_cosine_loss", "weighted_fingerprint_cosine_loss", "total_data_loss", "pred_norm_clamp_count", "obs_norm_clamp_count", "any_norm_clamp_count"]
     log_handle = (output / "training_log.csv").open("w", newline="", encoding="utf-8"); monitor_handle = (output / "monitor_log.csv").open("w", newline="", encoding="utf-8")
-    writer, monitor_writer = csv.DictWriter(log_handle, fieldnames=fields), csv.DictWriter(monitor_handle, fieldnames=["iteration", "stage", "monitor_mse", "per_weight_mse", "per_stack_mse", "fixed_monitor_anchor_identity_sha256"])
+    monitor_fields = ["iteration", "stage", "monitor_mse", "per_weight_mse", "per_stack_mse", "fixed_monitor_anchor_identity_sha256"]
+    if cosine_enabled:
+        monitor_fields = ["iteration", "stage", "monitor_joint_mse", "monitor_cosine_loss", "monitor_cosine_similarity", "per_weight_mse", "per_stack_mse", "per_stack_cosine", "fixed_monitor_anchor_identity_sha256"]
+    writer, monitor_writer = csv.DictWriter(log_handle, fieldnames=fields), csv.DictWriter(monitor_handle, fieldnames=monitor_fields)
     writer.writeheader(); monitor_writer.writeheader()
     for stage, iterations, joint in (("A", controls["stage_a_iterations"], False), ("B", controls["stage_b_iterations"], True)):
         model.rigid_psf.axisangle.requires_grad_(joint)
@@ -145,7 +204,8 @@ def train_q002_reconstruction(scalar_dataset: Any, joint_dataset: Any, config: M
             global_iteration += 1
             batch = sampler.sample(); batch["xyz"] = space.local_to_train(batch["xyz"].to(device)); batch["group_idx"] = batch["group_idx"].to(device); batch["stack_idx"] = batch["stack_idx"].to(device); batch["timing"] = batch["timing"].to(device); batch["observed"] = batch["observed"].to(device)
             prediction = model.forward_fingerprint(batch, training_psf_samples)
-            data = joint_vector_mse(prediction, batch["observed"] / model.intensity_scale, batch["stack_idx"], joint_dataset.stack_weights)
+            data_terms = joint_fingerprint_objective(prediction, batch["observed"] / model.intensity_scale, batch["stack_idx"], joint_dataset.stack_weights, cosine_weight=cosine_weight, cosine_epsilon=cosine_epsilon)
+            data = data_terms["total_data_loss"]
             regularization_cfg = _require(resolved, "spatial_regularization")
             regularization_batch = regularization_batch_from_b6_scalar_support(regularization_sampler, n_points=int(regularization_cfg["n_points"]))
             scalar_regularization = regularization_batch["batch"]
@@ -156,7 +216,9 @@ def train_q002_reconstruction(scalar_dataset: Any, joint_dataset: Any, config: M
             if joint: total = total + float(_require(loss_cfg, "transformation")) * model.rigid_psf.transformation_loss(space.spatial_scaling)
             optimizer.zero_grad(set_to_none=True); total.backward(); _assert_finite_gradients(model, stage, iteration + 1); optimizer.step(); _assert_finite_parameters(model, stage, iteration + 1); scheduler.step()
             lrs = {group["name"]: group["lr"] for group in optimizer.param_groups}
-            row = {"stage": stage, "iteration": global_iteration, "joint_signal_mse": float(data.detach()), "reg_t1": float(regularization["t1"].detach()), "reg_t2": float(regularization["t2"].detach()), "reg_b1": float(regularization["b1"].detach()), "amplitude_reg_t1": float(regularization["amplitude_t1"].detach()), "amplitude_reg_t2": float(regularization["amplitude_t2"].detach()), "transformation": float(model.rigid_psf.transformation_loss(space.spatial_scaling).detach()), "total": float(total.detach()), "intensity_scale": float(model.intensity_scale.detach()), "lr_encoding": lrs["encoding"], "lr_network": lrs["network"], "lr_rigid": lrs.get("rigid", ""), "regularization_candidate_count": regularization_batch["candidate_count"], "regularization_effective_point_count": regularization_batch["effective_point_count"], "regularization_sampling_source": regularization_batch["sampling_source"]}
+            row = {"stage": stage, "iteration": global_iteration, "joint_signal_mse": float(data_terms["joint_signal_mse"].detach()), "reg_t1": float(regularization["t1"].detach()), "reg_t2": float(regularization["t2"].detach()), "reg_b1": float(regularization["b1"].detach()), "amplitude_reg_t1": float(regularization["amplitude_t1"].detach()), "amplitude_reg_t2": float(regularization["amplitude_t2"].detach()), "transformation": float(model.rigid_psf.transformation_loss(space.spatial_scaling).detach()), "total": float(total.detach()), "intensity_scale": float(model.intensity_scale.detach()), "lr_encoding": lrs["encoding"], "lr_network": lrs["network"], "lr_rigid": lrs.get("rigid", ""), "regularization_candidate_count": regularization_batch["candidate_count"], "regularization_effective_point_count": regularization_batch["effective_point_count"], "regularization_sampling_source": regularization_batch["sampling_source"]}
+            if cosine_enabled:
+                row.update({"fingerprint_cosine_loss": float(data_terms["fingerprint_cosine_loss"].detach()), "weighted_fingerprint_cosine_loss": float(data_terms["weighted_fingerprint_cosine_loss"].detach()), "total_data_loss": float(data_terms["total_data_loss"].detach()), "pred_norm_clamp_count": data_terms["pred_norm_clamp_count"], "obs_norm_clamp_count": data_terms["obs_norm_clamp_count"], "any_norm_clamp_count": data_terms["any_norm_clamp_count"]})
             if controls["anchor_batch_size"] == 640:
                 row.update({"anchor_batch_size": batch["anchor_batch_size"], "weights_per_anchor": batch["weights_per_anchor"], "signal_residual_count": batch["signal_residual_count"], "training_psf_samples": batch["training_psf_samples"], "data_psf_inr_location_count": batch["data_psf_inr_location_count"], "regularization_application_count": 1})
             writer.writerow(row)
@@ -164,8 +226,16 @@ def train_q002_reconstruction(scalar_dataset: Any, joint_dataset: Any, config: M
                 monitor_batch = {key: value.to(device) for key, value in monitor.items() if key in {"xyz", "observed", "group_idx", "stack_idx", "timing"}}
                 monitor_batch["xyz"] = space.local_to_train(monitor_batch["xyz"])
                 with torch.random.fork_rng(devices=[device.index or 0] if device.type == "cuda" else []), torch.no_grad(): prediction_monitor = model.forward_fingerprint(monitor_batch, training_psf_samples)
-                error = (prediction_monitor - monitor_batch["observed"] / model.intensity_scale).pow(2)
-                monitor_writer.writerow({"iteration": global_iteration, "stage": stage, "monitor_mse": float(error.mean()), "per_weight_mse": json.dumps({weight: float(error[:, weight].mean()) for weight in range(10)}), "per_stack_mse": json.dumps({int(stack): float(error[monitor_batch["stack_idx"] == stack].mean()) for stack in monitor_batch["stack_idx"].unique().tolist()}), "fixed_monitor_anchor_identity_sha256": monitor["anchor_identity_sha256"]})
+                observed_monitor = monitor_batch["observed"] / model.intensity_scale
+                error = (prediction_monitor - observed_monitor).pow(2)
+                if cosine_enabled:
+                    monitor_terms = joint_fingerprint_objective(prediction_monitor, observed_monitor, monitor_batch["stack_idx"], joint_dataset.stack_weights, cosine_weight=cosine_weight, cosine_epsilon=cosine_epsilon)
+                    pred_unit = prediction_monitor / prediction_monitor.norm(p=2, dim=-1, keepdim=True).clamp_min(cosine_epsilon)
+                    obs_unit = observed_monitor / observed_monitor.norm(p=2, dim=-1, keepdim=True).clamp_min(cosine_epsilon)
+                    per_anchor_cosine = (pred_unit * obs_unit).sum(dim=-1)
+                    monitor_writer.writerow({"iteration": global_iteration, "stage": stage, "monitor_joint_mse": float(monitor_terms["joint_signal_mse"]), "monitor_cosine_loss": float(monitor_terms["fingerprint_cosine_loss"]), "monitor_cosine_similarity": float(1.0 - monitor_terms["fingerprint_cosine_loss"]), "per_weight_mse": json.dumps({weight: float(error[:, weight].mean()) for weight in range(10)}), "per_stack_mse": json.dumps({int(stack): float(error[monitor_batch["stack_idx"] == stack].mean()) for stack in monitor_batch["stack_idx"].unique().tolist()}), "per_stack_cosine": json.dumps({int(stack): float(per_anchor_cosine[monitor_batch["stack_idx"] == stack].mean()) for stack in monitor_batch["stack_idx"].unique().tolist()}), "fixed_monitor_anchor_identity_sha256": monitor["anchor_identity_sha256"]})
+                else:
+                    monitor_writer.writerow({"iteration": global_iteration, "stage": stage, "monitor_mse": float(error.mean()), "per_weight_mse": json.dumps({weight: float(error[:, weight].mean()) for weight in range(10)}), "per_stack_mse": json.dumps({int(stack): float(error[monitor_batch["stack_idx"] == stack].mean()) for stack in monitor_batch["stack_idx"].unique().tolist()}), "fixed_monitor_anchor_identity_sha256": monitor["anchor_identity_sha256"]})
     log_handle.close(); monitor_handle.close()
     save_checkpoint(output / "model.pt", model, resolved, protocol, scalar_dataset, space, controls["seed"], normalization, decoder_metadata)
     if stack_initialization is not None:
