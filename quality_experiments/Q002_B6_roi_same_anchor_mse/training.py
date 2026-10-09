@@ -27,7 +27,7 @@ from trad.modules.module_07_objective_training.experiment_infrastructure import 
 from trad.modules.module_06_rigid_psf.hb1_stack_adapter import initialize_group_poses_from_hb1
 
 
-def q002_training_controls(training: Mapping[str, Any], *, anchor_batch_size: int = 64) -> dict[str, int]:
+def q002_training_controls(training: Mapping[str, Any], *, anchor_batch_size: int = 64, training_psf_samples: int = 8) -> dict[str, int]:
     """Validate the scientific controls that Q002 is not allowed to tune."""
 
     expected = {"stage_a_iterations": 2000, "stage_b_iterations": 4000, "batch_size": 640, "psf_samples": 8, "seed": 20260911}
@@ -36,6 +36,8 @@ def q002_training_controls(training: Mapping[str, Any], *, anchor_batch_size: in
             raise ValueError(f"Q002 requires B6 training.{key}={value}, got {training.get(key)!r}.")
     if anchor_batch_size not in (64, 640):
         raise ValueError("Q002 route anchor_batch_size must be exactly 64 or 640.")
+    if training_psf_samples not in (1, 8):
+        raise ValueError("Q002/Q004 training_psf_samples must be exactly 1 or 8.")
     if anchor_batch_size == 64:
         # Retain the original Q002-64 manifest contract verbatim.
         return {"stage_a_iterations": 2000, "stage_b_iterations": 4000, "effective_scalar_budget": 640, "anchor_batch_size": 64, "weights_per_anchor": 10, "psf_samples": 8, "seed": 20260911}
@@ -45,8 +47,8 @@ def q002_training_controls(training: Mapping[str, Any], *, anchor_batch_size: in
         "anchor_batch_size": 640,
         "weights_per_anchor": 10,
         "signal_residual_count": 6400,
-        "training_psf_samples": 8,
-        "data_psf_inr_location_count": 5120,
+        "training_psf_samples": int(training_psf_samples),
+        "data_psf_inr_location_count": 640 * int(training_psf_samples),
         "B6_scalar_batch_size": 640,
         "regularization_candidate_count": 640,
         "regularization_effective_point_count": 256,
@@ -90,9 +92,12 @@ def _sha256(path: Path) -> str:
 class JointAnchorSampler:
     """Uniform-with-replacement anchor sampler; B6 inverse stack weights remain in the loss."""
 
-    def __init__(self, dataset: Any, *, seed: int, anchor_batch_size: int = 64) -> None:
+    def __init__(self, dataset: Any, *, seed: int, anchor_batch_size: int = 64, training_psf_samples: int = 8) -> None:
         self.dataset = dataset
         self.anchor_batch_size = int(anchor_batch_size)
+        self.training_psf_samples = int(training_psf_samples)
+        if self.training_psf_samples not in (1, 8):
+            raise ValueError("Q002/Q004 sampler training_psf_samples must be exactly 1 or 8.")
         self.generator = torch.Generator(device=dataset.xyz.device).manual_seed(int(seed))
 
     def sample(self, anchor_batch_size: int | None = None) -> dict[str, Any]:
@@ -105,8 +110,8 @@ class JointAnchorSampler:
             "anchor_batch_size": requested,
             "weights_per_anchor": 10,
             "signal_residual_count": requested * 10,
-            "training_psf_samples": 8,
-            "data_psf_inr_location_count": requested * 8,
+            "training_psf_samples": self.training_psf_samples,
+            "data_psf_inr_location_count": requested * self.training_psf_samples,
         }
         if requested == 64:
             metadata["effective_scalar_budget"] = 640
@@ -181,12 +186,12 @@ def regularization_batch_from_b6_scalar_support(sampler: CachedBalancedSampler, 
     return {"batch": batch, "candidate_count": int(batch["xyz"].shape[0]), "effective_point_count": int(n_points), "sampling_source": "B6 scalar cropped support"}
 
 
-def train_q002_reconstruction(scalar_dataset: Any, joint_dataset: Any, config: Mapping[str, Any], protocol_yaml: str | Path, output_dir: str | Path, *, prepared_inputs: list[str | Path], anchor_batch_size: int = 64, fingerprint_cosine: Mapping[str, Any] | None = None, continuation: Mapping[str, Any] | None = None) -> dict[str, Any]:
+def train_q002_reconstruction(scalar_dataset: Any, joint_dataset: Any, config: Mapping[str, Any], protocol_yaml: str | Path, output_dir: str | Path, *, prepared_inputs: list[str | Path], anchor_batch_size: int = 64, fingerprint_cosine: Mapping[str, Any] | None = None, continuation: Mapping[str, Any] | None = None, training_psf_samples: int = 8) -> dict[str, Any]:
     """Train fresh same-anchor state; Q003 changes only the shared data objective."""
 
     resolved = normalize_step1_config(_with_protocol_path(config, protocol_yaml))
     training, loss_cfg = _require(resolved, "training"), _require(resolved, "loss")
-    controls = q002_training_controls(training, anchor_batch_size=anchor_batch_size)
+    controls = q002_training_controls(training, anchor_batch_size=anchor_batch_size, training_psf_samples=training_psf_samples)
     training_psf_samples = int(controls["training_psf_samples"] if "training_psf_samples" in controls else controls["psf_samples"])
     cosine_cfg = dict(fingerprint_cosine or {"enabled": False, "weight": 0.0, "epsilon": 1.0e-8})
     cosine_enabled = bool(cosine_cfg.get("enabled", False))
@@ -216,7 +221,7 @@ def train_q002_reconstruction(scalar_dataset: Any, joint_dataset: Any, config: M
     if output.exists() and any(output.iterdir()):
         raise FileExistsError(f"Q002 output_dir must be absent or empty: {output}")
     output.mkdir(parents=True, exist_ok=True)
-    sampler = JointAnchorSampler(joint_dataset, seed=controls["seed"], anchor_batch_size=controls["anchor_batch_size"])
+    sampler = JointAnchorSampler(joint_dataset, seed=controls["seed"], anchor_batch_size=controls["anchor_batch_size"], training_psf_samples=training_psf_samples)
     regularization_sampler = CachedBalancedSampler(scalar_dataset)
     monitor = joint_dataset.fixed_monitor(seed=controls["seed"], samples_per_stack=int(training.get("monitor_samples_per_weight_per_stack", 1)))
     (output / "fixed_monitor.json").write_text(json.dumps({"seed": monitor["seed"], "samples_per_stack": monitor["samples_per_stack"], "anchor_identity_sha256": monitor["anchor_identity_sha256"]}, indent=2) + "\n")

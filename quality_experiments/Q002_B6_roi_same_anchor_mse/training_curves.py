@@ -28,19 +28,19 @@ def _series(rows: list[dict[str, str]], key: str) -> tuple[np.ndarray, np.ndarra
     return np.asarray([point[0] for point in points], int), np.asarray([point[1] for point in points], float)
 
 
-def _mark_stages(ax: Any) -> None:
-    for iteration, label in ((2000, "A→B"), (6000, "primary / extension"), (10000, "final")):
+def _mark_stages(ax: Any, boundaries: tuple[tuple[int, str], ...] = ((2000, "A→B"), (6000, "primary / extension"), (10000, "final"))) -> None:
+    for iteration, label in boundaries:
         ax.axvline(iteration, color="black", linewidth=0.8, alpha=0.55)
         ax.text(iteration, 0.99, label, transform=ax.get_xaxis_transform(), rotation=90, va="top", ha="right", fontsize=7)
 
 
-def _plot(path: Path, rows: list[dict[str, str]], columns: list[str], *, title: str, monitor: bool = False) -> None:
+def _plot(path: Path, rows: list[dict[str, str]], columns: list[str], *, title: str, monitor: bool = False, boundaries: tuple[tuple[int, str], ...] = ((2000, "A→B"), (6000, "primary / extension"), (10000, "final"))) -> None:
     figure, axis = plt.subplots(figsize=(10, 5))
     for column in columns:
         x, y = _series(rows, column)
         if y.size:
             axis.plot(x, y, linewidth=0.65, alpha=0.7, label=column)
-    _mark_stages(axis)
+    _mark_stages(axis, boundaries)
     axis.set(title=title, xlabel="optimizer iteration")
     axis.legend(fontsize=8)
     figure.tight_layout()
@@ -74,6 +74,26 @@ def generate_convergence_artifacts(training_log: str | Path, monitor_log: str | 
     summary = {key: _window_summary(training_rows, key) for key in ("joint_signal_mse", "weighted_fingerprint_cosine_loss", "total_data_loss", "total")}
     summary.update({key: _window_summary(monitor_rows, key) for key in ("monitor_joint_mse", "monitor_cosine_similarity")})
     manifest = {"source_training_log": str(Path(training_log)), "source_monitor_log": str(Path(monitor_log)), "smoothing": {"method": "none", "window": None}, "stage_boundaries": BOUNDARIES, "primary_checkpoint_iteration": 6000, "final_checkpoint_iteration": 10000, "descriptive_only": True}
+    (output / "convergence_plot_manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    (output / "convergence_summary.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+    return {"output_dir": output, "summary": summary, "manifest": manifest}
+
+
+def generate_q004_convergence_artifacts(training_log: str | Path, monitor_log: str | Path, output_dir: str | Path) -> dict[str, Any]:
+    """Render Q004's descriptive 6k curves after training has completed."""
+
+    output = Path(output_dir)
+    output.mkdir(parents=True, exist_ok=False)
+    training_rows, monitor_rows = _read_rows(training_log), _read_rows(monitor_log)
+    q004_boundaries = ((2000, "A→B"), (6000, "final"))
+    _plot(output / "data_loss_curve", training_rows, ["joint_signal_mse"], title="Q004-S640-K1 joint MSE", boundaries=q004_boundaries)
+    _plot(output / "total_loss_curve", training_rows, ["total"], title="Q004-S640-K1 total objective", boundaries=q004_boundaries)
+    _plot(output / "regularization_curves", training_rows, ["reg_t1", "reg_t2", "reg_b1", "amplitude_reg_t1", "amplitude_reg_t2", "transformation"], title="Q004-S640-K1 regularization", boundaries=q004_boundaries)
+    _plot(output / "monitor_convergence", monitor_rows, ["monitor_mse"], title="Q004-S640-K1 fixed monitor", boundaries=q004_boundaries)
+    _plot(output / "learning_rates", training_rows, ["lr_encoding", "lr_network", "lr_rigid"], title="Q004-S640-K1 learning rates", boundaries=q004_boundaries)
+    summary = {key: _window_summary(training_rows, key) for key in ("joint_signal_mse", "total")}
+    summary["monitor_mse"] = _window_summary(monitor_rows, "monitor_mse")
+    manifest = {"source_training_log": str(Path(training_log)), "source_monitor_log": str(Path(monitor_log)), "smoothing": {"method": "none", "window": None}, "stage_boundaries": {"stage_a_to_b": 2000, "final_checkpoint": 6000}, "final_checkpoint_iteration": 6000, "descriptive_only": True}
     (output / "convergence_plot_manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     (output / "convergence_summary.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
     return {"output_dir": output, "summary": summary, "manifest": manifest}

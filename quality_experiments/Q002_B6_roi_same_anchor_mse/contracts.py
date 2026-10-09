@@ -11,6 +11,7 @@ Q002_EXPERIMENT_ID = "Q002_B6_roi_same_anchor_mse"
 Q002S640_EXPERIMENT_ID = "Q002S640_B6_roi_same_anchor_mse"
 Q003S640_EXPERIMENT_ID = "Q003S640_B6_roi_same_anchor_mse_plus_cosine"
 Q003S640_10K_EXPERIMENT_ID = "Q003S640_B6_roi_same_anchor_mse_plus_cosine_10k"
+Q004S640_K1_EXPERIMENT_ID = "Q004S640_K1_B6_roi_same_anchor_mse"
 STACKS = ("sax", "2ch", "4ch")
 
 
@@ -40,12 +41,21 @@ def build_q002_route_config(
     root = Path(cropped_prepared_root)
     if "full_fov" in str(root).lower():
         raise ValueError("Q002 training root must be B6 cropped, not full-FOV.")
-    expected_batch_size = {Q002_EXPERIMENT_ID: 64, Q002S640_EXPERIMENT_ID: 640, Q003S640_EXPERIMENT_ID: 640, Q003S640_10K_EXPERIMENT_ID: 640}.get(experiment_id)
+    expected_batch_size = {Q002_EXPERIMENT_ID: 64, Q002S640_EXPERIMENT_ID: 640, Q003S640_EXPERIMENT_ID: 640, Q003S640_10K_EXPERIMENT_ID: 640, Q004S640_K1_EXPERIMENT_ID: 640}.get(experiment_id)
     if expected_batch_size is None or int(anchor_batch_size) != expected_batch_size:
         raise ValueError("Q002 route experiment_id must use its fixed anchor_batch_size.")
     sampling: dict[str, Any]
     if experiment_id == Q002_EXPERIMENT_ID:
         sampling = {"effective_scalar_budget": 640, "anchor_batch_size": 64, "weights_per_anchor": 10, "shared_training_psf_samples": 8}
+    elif experiment_id == Q004S640_K1_EXPERIMENT_ID:
+        sampling = {
+            "anchor_batch_size": 640,
+            "weights_per_anchor": 10,
+            "signal_residual_count": 6400,
+            "shared_training_psf_samples": 1,
+            "data_psf_inr_location_count": 640,
+            "B6_scalar_batch_size": 640,
+        }
     else:
         sampling = {
             "anchor_batch_size": 640,
@@ -83,5 +93,12 @@ def build_q002_route_config(
                 "final_checkpoint_iteration": 10000,
                 "extension_lr_policy": "continue_post_6000_optimizer_scheduler_state_no_reset_no_new_milestones",
             },
+        })
+    if experiment_id == Q004S640_K1_EXPERIMENT_ID:
+        route["route"].update({
+            "parent_experiment": Q002S640_EXPERIMENT_ID,
+            "scientific_change": "training_psf_samples_8_to_central_1_only",
+            "training_psf_semantics": "central_local_coordinate_no_gaussian_draw",
+            "loss": "MSE_only",
         })
     return route

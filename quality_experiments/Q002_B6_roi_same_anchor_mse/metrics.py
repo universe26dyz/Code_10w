@@ -23,6 +23,15 @@ def strict_q002_three_way_common_support(reference: np.ndarray, b6: np.ndarray, 
     return np.asarray(reference_mask, bool) & np.asarray(b6_mask, bool) & np.asarray(q002_64_mask, bool) & np.asarray(q002_s640_mask, bool) & np.isfinite(reference) & np.isfinite(b6) & np.isfinite(q002_64) & np.isfinite(q002_s640)
 
 
+def strict_q004_three_way_common_support(reference: np.ndarray, b6: np.ndarray, q002_s640: np.ndarray, q004_k1: np.ndarray, reference_mask: np.ndarray, b6_mask: np.ndarray, q002_s640_mask: np.ndarray, q004_k1_mask: np.ndarray) -> np.ndarray:
+    """Fair Q004 support: reference, B6, Q002-S640, and Q004-K1 only."""
+
+    values = (reference, b6, q002_s640, q004_k1, reference_mask, b6_mask, q002_s640_mask, q004_k1_mask)
+    if len({item.shape for item in values}) != 1:
+        raise ValueError("Q004 strict common support requires identical native-plane shapes.")
+    return np.asarray(reference_mask, bool) & np.asarray(b6_mask, bool) & np.asarray(q002_s640_mask, bool) & np.asarray(q004_k1_mask, bool) & np.isfinite(reference) & np.isfinite(b6) & np.isfinite(q002_s640) & np.isfinite(q004_k1)
+
+
 def strict_q003_four_way_common_support(reference: np.ndarray, b6: np.ndarray, q002_s640: np.ndarray, q003_6000: np.ndarray, q003_10000: np.ndarray, reference_mask: np.ndarray, b6_mask: np.ndarray, q002_s640_mask: np.ndarray, q003_6000_mask: np.ndarray, q003_10000_mask: np.ndarray) -> np.ndarray:
     """Fair map support shared by reference, B6, Q002-S640, and both Q003 checkpoints."""
 
@@ -72,4 +81,4 @@ def fingerprint_cosine_summary(predicted: np.ndarray, observed: np.ndarray, supp
     return {"mean_cosine": float(values.mean()) if values.size else float("nan"), "median_cosine": float(np.median(values)) if values.size else float("nan"), "support_N": int(values.size), "near_zero_norm_count": int((near_zero & np.asarray(support, bool)).sum())}
 
 
-__all__ = ["strict_q002_common_support", "strict_q002_three_way_common_support", "strict_q003_four_way_common_support", "strict_fingerprint_common_support", "strict_fingerprint_three_way_common_support", "strict_fingerprint_four_way_common_support", "fingerprint_cosine_summary", "true_pooled_rows"]
+__all__ = ["strict_q002_common_support", "strict_q002_three_way_common_support", "strict_q004_three_way_common_support", "strict_q003_four_way_common_support", "strict_fingerprint_common_support", "strict_fingerprint_three_way_common_support", "strict_fingerprint_four_way_common_support", "fingerprint_cosine_summary", "true_pooled_rows"]

@@ -195,8 +195,8 @@ q003_s640:
   regularization_sampling_source: B6 scalar cropped support
   formal_result: NOT_RUN
 q003_s640_10k:
-  status: READY_FOR_FORMAL_SERVER_RUN
-  formal_result: NOT_RUN
+  status: COMPLETED_EXTERNALLY_REPORTED
+  formal_result: SIGNAL_AND_FINGERPRINT_FIDELITY_IMPROVED_MAP_AGREEMENT_NOT_IMPROVED_OVERALL
   experiment_id: Q003S640_B6_roi_same_anchor_mse_plus_cosine_10k
   parent_experiment: Q002S640_B6_roi_same_anchor_mse
   primary_checkpoint_role: primary_cosine_ablation_at_6000
@@ -216,6 +216,26 @@ q003_s640_10k:
     weight: 1.0
     epsilon: 1.0e-8
   extension_lr_policy: continue_post_6000_optimizer_scheduler_state_no_reset_no_new_milestones
+q004_s640_k1:
+  status: CODE_READY_FORMAL_SERVER_RUN_PENDING
+  formal_result: NOT_RUN
+  experiment_id: Q004S640_K1_B6_roi_same_anchor_mse
+  parent_experiment: Q002S640_B6_roi_same_anchor_mse
+  scientific_change: training_psf_samples_8_to_central_1_only
+  output_root: Q004S640_K1_B6_roi_same_anchor_mse_v1
+  anchor_batch_size: 640
+  weights_per_anchor: 10
+  signal_residual_count: 6400
+  training_psf_samples: 1
+  data_psf_inr_location_count: 640
+  loss: MSE_only
+  fingerprint_cosine_enabled: false
+  stage_a_iterations: 2000
+  stage_b_iterations: 4000
+  seed: 20260911
+  regularization_candidate_count: 640
+  regularization_effective_point_count: 256
+  regularization_application_count_per_optimizer_step: 1
 q003:
   status: NOT_STARTED
-next_phase: Q003S640_10K_FORMAL_RUN_AND_PROVENANCE_REVIEW
+next_phase: Q004S640_K1_FORMAL_RUN_AND_PROVENANCE_REVIEW

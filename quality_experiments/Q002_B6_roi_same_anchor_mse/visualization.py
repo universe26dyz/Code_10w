@@ -34,7 +34,7 @@ def visualization_display_contract() -> dict[str, object]:
     }
 
 
-def render_map_montages(records: Iterable[dict[str, Any]], output_dir: str | Path) -> list[Path]:
+def render_map_montages(records: Iterable[dict[str, Any]], output_dir: str | Path, *, methods: tuple[str, ...] | None = None) -> list[Path]:
     """Render all native groups with one parameter range per method and fixed residual ranges."""
 
     output = Path(output_dir)
@@ -46,12 +46,12 @@ def render_map_montages(records: Iterable[dict[str, Any]], output_dir: str | Pat
         parameter = str(record["parameter"])
         reference = np.asarray(record["reference"])
         predictions = record["predictions"]
-        methods = ("FrozenMLP_B6", "Q002_S640", "Q003_S640_6000", "Q003_S640_10000")
-        figure, axes = plt.subplots(2, 5, figsize=(15, 6))
+        display_methods = methods or tuple(predictions)
+        figure, axes = plt.subplots(2, len(display_methods) + 1, figsize=(3 * (len(display_methods) + 1), 6))
         map_range, residual_range = contract["map_display_ranges"][parameter], contract["absolute_residual_ranges"][parameter]
         axes[0, 0].imshow(reference, cmap=colorbars.mapping[parameter], vmin=map_range[0], vmax=map_range[1], origin="lower"); axes[0, 0].set_title("Reference")
         axes[1, 0].axis("off")
-        for column, method in enumerate(methods, start=1):
+        for column, method in enumerate(display_methods, start=1):
             axes[0, column].imshow(predictions[method], cmap=colorbars.mapping[parameter], vmin=map_range[0], vmax=map_range[1], origin="lower"); axes[0, column].set_title(method)
             axes[1, column].imshow(np.abs(predictions[method] - reference), cmap=colorbars.residual, vmin=residual_range[0], vmax=residual_range[1], origin="lower"); axes[1, column].set_title("|residual|")
         for axis in axes.flat: axis.set_axis_off()

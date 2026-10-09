@@ -343,3 +343,11 @@
 - The unrun original Q003-S640 6k route is superseded for execution by this immutable 10k route. Its first 6000 steps remain the primary cosine-ablation checkpoint: 2000 Stage-A + the approved 4000 Stage-B schedule. The secondary continuation runs a further 4000 Stage-B updates without resetting optimizer, scheduler, sampler, model, poses, normalization, or seed.
 - `checkpoints/model_iter_6000.pt` is the primary checkpoint; `model.pt` is the 10000-step secondary extended-optimization checkpoint. The route preserves 640 anchors, 10 ordered weights, 6400 signal residuals, K8/5120 data locations, cosine weight 1.0/epsilon 1e-8, B6 scalar regularization 640 -> 256 once per step, and all B6/Q002-S640 controls.
 - Post-training-only artifacts include closed-CSV convergence curves and summaries, checkpoint-specific native-plane exports, strict B6/Q002-S640/Q003-6000/Q003-10000 common-support evaluation, and deterministic SCMR-range visualizations. Commands are `run_Q003S640_10K_CYJ.sh` then `evaluate_Q003S640_10K_CYJ.sh`; neither has been run locally.
+
+## Q004S640_K1_B6_ROI_SAME_ANCHOR_MSE
+
+- Date: 2026-10-09
+- Status: `CODE_READY_FORMAL_SERVER_RUN_PENDING`; formal result: `NOT_RUN`; PUSH PERFORMED: NO.
+- Immutable context: Q002-64 is the completed negative result; Q002-S640 is the completed positive controlled-map result; Q003-S640-10k is externally reported complete with improved signal/fingerprint fidelity but no overall map-agreement improvement. These routes and their artifacts remain read-only.
+- Single Q004 scientific change: training PSF K8 becomes central K1. Q004 retains Q002-S640's MSE-only joint-vector objective, 640 anchors, 10 ordered weights, 6400 residuals, B6 cropped inputs/initialization/normalization/stack weights, Stage A/B 2000/4000, seed 20260911, optimizer/scheduler, amplitude/B1/rigid model, and independent scalar regularization 640 -> 256 once per optimizer step.
+- K1 means the exact local central coordinate with no Gaussian draw or neighborhood averaging: 640 data PSF/INR locations per optimizer step. Q004 exports both central K1 and posthoc K8 signal reprojections. The evaluator writes all B6/Q002/Q004 derived central-K1 comparator products only under the new Q004 evaluation root and uses strict three-way supports.
