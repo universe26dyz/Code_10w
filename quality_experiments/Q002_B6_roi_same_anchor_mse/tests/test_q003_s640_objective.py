@@ -58,6 +58,13 @@ def test_q003_rejects_nonfinite_fingerprints_and_has_immutable_cosine_route():
     assert route["route"]["fingerprint_cosine"] == {"enabled": True, "weight": 1.0, "epsilon": 1.0e-8}
 
 
+def test_unknown_stack_id_hard_fails_instead_of_using_uninitialized_weight():
+    from quality_experiments.Q002_B6_roi_same_anchor_mse.training import joint_vector_mse
+
+    with pytest.raises(ValueError, match="stack weights"):
+        joint_vector_mse(torch.ones((1, 10)), torch.zeros((1, 10)), torch.tensor([99]), {0: 1.0})
+
+
 def test_q003_cli_and_server_scripts_are_dedicated_and_immutable():
     from pathlib import Path
 
@@ -71,6 +78,9 @@ def test_q003_cli_and_server_scripts_are_dedicated_and_immutable():
     evaluate = (scripts / "evaluate_Q003S640_CYJ.sh").read_text()
     assert "Q003S640_B6_roi_same_anchor_mse_plus_cosine_v1" in run
     assert "--experiment-id Q003S640_B6_roi_same_anchor_mse_plus_cosine" in run
+    assert "PARENT_Q002_S640" in run
+    assert "q002_route_manifest.json" in run
+    assert "Q002-S640 parent checkpoint SHA256 mismatch" in run
     assert "Q002S640_B6_roi_same_anchor_mse_v1" in evaluate
     assert "rm -rf" not in run + evaluate
     assert "git status --porcelain" in run and "git status --porcelain" in evaluate

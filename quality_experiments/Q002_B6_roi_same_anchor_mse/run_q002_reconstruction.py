@@ -42,8 +42,8 @@ def run(args: argparse.Namespace) -> Path:
         cropped_prepared_root=args.cropped_prepared_root,
         experiment_id=args.experiment_id,
         anchor_batch_size=args.anchor_batch_size,
-        fingerprint_cosine=route["route"].get("fingerprint_cosine"),
     )
+    fingerprint_cosine = route["route"].get("fingerprint_cosine")
     resolved = route["resolved_config"]; resolved["training"] = dict(resolved["training"]); resolved["training"]["device"] = args.device
     scalar = QuantPointDataset(inputs, device=args.device); joint = JointAnchorDataset(inputs, scalar)
     result = train_q002_reconstruction(
@@ -54,6 +54,7 @@ def run(args: argparse.Namespace) -> Path:
         output,
         prepared_inputs=inputs,
         anchor_batch_size=args.anchor_batch_size,
+        fingerprint_cosine=fingerprint_cosine,
     )
     export = resolved["export"]; export_config = {"bbox": resolved.get("bbox", {}), **export}
     raw_paths = export_quantitative_outputs(result["model"], result["training_space"], output, float(export["output_resolution_mm"]), int(export["output_batch_size"]), dataset=scalar, export_config=export_config)

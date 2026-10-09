@@ -80,7 +80,7 @@ class JointAnchorSampler:
 
 
 def _anchor_stack_weights(stack_idx: torch.Tensor, stack_weights: Mapping[int, float], *, dtype: torch.dtype) -> torch.Tensor:
-    weights = torch.empty_like(stack_idx, dtype=dtype)
+    weights = torch.full(stack_idx.shape, float("nan"), dtype=dtype, device=stack_idx.device)
     for stack, value in stack_weights.items():
         weights[stack_idx == int(stack)] = float(value)
     if not torch.isfinite(weights).all():
@@ -123,6 +123,7 @@ def joint_fingerprint_objective(prediction: torch.Tensor, observed: torch.Tensor
     pred_unit = prediction / pred_norm_raw.clamp_min(cosine_epsilon)
     obs_unit = observed / obs_norm_raw.clamp_min(cosine_epsilon)
     per_anchor_cosine_loss = 1.0 - (pred_unit * obs_unit).sum(dim=-1)
+    # This base cosine loss is already anchor-stack-weighted, before lambda_cos.
     cosine = (anchor_weights * per_anchor_cosine_loss).mean()
     weighted_cosine = float(cosine_weight) * cosine
     return {
@@ -182,6 +183,8 @@ def train_q002_reconstruction(scalar_dataset: Any, joint_dataset: Any, config: M
     monitor = joint_dataset.fixed_monitor(seed=controls["seed"], samples_per_stack=int(training.get("monitor_samples_per_weight_per_stack", 1)))
     (output / "fixed_monitor.json").write_text(json.dumps({"seed": monitor["seed"], "samples_per_stack": monitor["samples_per_stack"], "anchor_identity_sha256": monitor["anchor_identity_sha256"]}, indent=2) + "\n")
     resolved_record = dict(resolved); resolved_record["q002_sampling"] = controls; resolved_record["q002_joint_stack_weights"] = {int(k): float(v) for k, v in joint_dataset.stack_weights.items()}; resolved_record["q002_intensity_normalization"] = normalization
+    if cosine_enabled:
+        resolved_record["q003_fingerprint_cosine"] = {"enabled": True, "weight": cosine_weight, "epsilon": cosine_epsilon}
     (output / "config_resolved.yaml").write_text(yaml.safe_dump(resolved_record, sort_keys=False))
     started = time.perf_counter(); global_iteration = 0
     fields = ["stage", "iteration", "joint_signal_mse", "reg_t1", "reg_t2", "reg_b1", "amplitude_reg_t1", "amplitude_reg_t2", "transformation", "total", "intensity_scale", "lr_encoding", "lr_network", "lr_rigid", "regularization_candidate_count", "regularization_effective_point_count", "regularization_sampling_source"]
