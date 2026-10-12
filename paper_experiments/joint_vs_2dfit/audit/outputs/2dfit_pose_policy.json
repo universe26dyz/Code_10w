@@ -1,0 +1,19 @@
+{
+  "audit_type": "2dfit_pose_policy",
+  "evidence_files": [
+    "/home/universe/SVR/multimap_postprogramming/MultiMapCode/method_repositories/2D_fit_first/python/evaluation/geometry/validate_registered_geometry.py",
+    "/home/universe/SVR/multimap_postprogramming/MultiMapCode/method_repositories/2D_fit_first/EVALUATION_PIPELINE_GUIDE.md",
+    "/home/universe/SVR/multimap_postprogramming/MultiMapCode/method_repositories/2D_fit_first/EVALUATION_CODE_IMPLEMENTATION_SUMMARY.md"
+  ],
+  "evidence_hashes": {
+    "/home/universe/SVR/multimap_postprogramming/MultiMapCode/method_repositories/2D_fit_first/EVALUATION_CODE_IMPLEMENTATION_SUMMARY.md": "2127a71b10c0b69d7ea2b16c7d2b39c63fec4db07de3d917bb7030b2440eb63a",
+    "/home/universe/SVR/multimap_postprogramming/MultiMapCode/method_repositories/2D_fit_first/EVALUATION_PIPELINE_GUIDE.md": "28297f0b359478a5c83fb2b8e28e91dfdfd2465d05af6275ed52cca4aa8d0ef3",
+    "/home/universe/SVR/multimap_postprogramming/MultiMapCode/method_repositories/2D_fit_first/python/evaluation/geometry/validate_registered_geometry.py": "bde485b6f1b746ad05dc053a7afec33ed43c94bb8dac593aab00c4a402d92abd"
+  },
+  "pose_optimizer": "NeSVoR stack registration (independent T1/T2 runs)",
+  "pose_transfer_rule": "native ROI membership is mapped separately to each parameter's final affine; no T1-to-T2 pose transfer",
+  "shared_final_pose": false,
+  "t1_reconstruction": "independent NeSVoR T1 reconstruction with its own registered/final poses",
+  "t2_reconstruction": "independent NeSVoR T2 reconstruction with its own registered/final poses",
+  "unresolved_reason": null
+}

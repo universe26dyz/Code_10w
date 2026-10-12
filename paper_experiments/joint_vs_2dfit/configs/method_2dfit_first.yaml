@@ -1,0 +1,4 @@
+method: 2dfit_first_baseline
+dictionary_contract: native 10-weight HHZ dictionary matching before 3D reconstruction
+pose_policy: unresolved_until_phase0_audit_manifest
+historical_pose_sharing_claim: prohibited_until_audited

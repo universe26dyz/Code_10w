@@ -1,0 +1,9 @@
+method: current_joint_signal_domain
+protocol_yaml: mlp/configs/protocol_hhz_v1.yaml
+decoder: null # Phase 0 must resolve this through approved B6/current provenance.
+parameter_ranges:
+  t1_ms: [t2_ms, 2500]
+  t2_ms: [5, 200]
+  b1: [0.1, 1.2]
+  amplitude: positive
+prepared_observation_contract: all spatial groups include weights 0..9

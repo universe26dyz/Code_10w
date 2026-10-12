@@ -1,0 +1,104 @@
+{
+  "audit_type": "current_joint_method",
+  "current_reconstruction": {
+    "key_config": "mlp/configs/recon_server_train_example.yaml",
+    "reusable_modules": [
+      "mlp/modules/module_04_quantitative_inr/quantitative_inr.py",
+      "mlp/modules/module_05_signal_decoder/checkpoint_loader.py",
+      "trad/modules/module_03_dataset_geometry/quantitative_point_dataset.py",
+      "quality_experiments/Q002_B6_roi_same_anchor_mse/"
+    ]
+  },
+  "expected_observation_schema": {
+    "acquisition_time_ms": "[Nobs]",
+    "affine_lps_rc": "[Nobs,4,4]",
+    "group_idx": "[Nobs]",
+    "images": "[Nobs,H,W]",
+    "masks": "[Nobs,H,W]",
+    "pixel_spacing_rc_mm": "[Nobs,2]",
+    "slice_thickness_mm": "[Nobs]",
+    "stack_idx": "[Nobs]",
+    "timing9_ms": "[Nobs,9]",
+    "tr_ms": "[Nobs]",
+    "vps": "[Nobs]",
+    "weight_idx": "[Nobs]"
+  },
+  "git": {
+    "dirty_status": "A  \"Joint_vs_2Dfit_\\345\\256\\214\\346\\225\\264\\345\\256\\236\\351\\252\\214\\346\\211\\247\\350\\241\\214\\346\\226\\271\\346\\241\\210.md\"\n?? \"et --hard HEAD@{0}\"\n?? \"git reset --hard HEAD@{1}\"\n?? paper_experiments/",
+    "recent_commits": [
+      "e71a2e0 Add S640 central-K1 PSF ablation",
+      "82873bb Add Q003 S640 10k continuation and convergence QC",
+      "347b27a Fix Q003 S640 objective wiring",
+      "fde192c Add S640 same-anchor fingerprint cosine objective",
+      "c0879c0 Add S640 same-anchor MSE reconstruction"
+    ],
+    "sha": "e71a2e07f129b19e8702888891df09aa374b5370"
+  },
+  "hhz_protocol": {
+    "dicom_fields": {
+      "tr_ms": "RepetitionTime",
+      "vps": "EchoTrainLength"
+    },
+    "flip_angle_degrees": [
+      45,
+      45,
+      45
+    ],
+    "inversion_times_ms": [
+      50,
+      150
+    ],
+    "known_difference": {
+      "dyz_legacy_inversion_times_ms": [
+        10,
+        100
+      ],
+      "v1_decision": "HHZ_TI_50_150_is_required; never inherit DYZ silently"
+    },
+    "num_images": 10,
+    "preprocessing": {
+      "mind_reference_weight": 0,
+      "mind_register_weights": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9
+      ],
+      "output_data": "Mag_crop_is_MIND_mag_reg",
+      "post_mind_geometry": "all_10_weights_use_hb1_geometry",
+      "sort_key": "AcquisitionTime"
+    },
+    "protocol_version": "hhz_v1",
+    "ramp_up_pulses": 10,
+    "scientific_authority": "MultiMapCode_hhz",
+    "t2prep_ms": [
+      35,
+      45,
+      55
+    ],
+    "v1_exclusions": [
+      "EPG",
+      "NeSVoR_deformable",
+      "low_rank",
+      "extra_models"
+    ]
+  },
+  "inr_ranges": {
+    "amplitude": "> 0",
+    "b1": "[0.1, 1.2]",
+    "t1_ms": "(t2_ms, 2500]",
+    "t2_ms": "[5, 200]"
+  },
+  "reference_path_config": {
+    "reference_data": {
+      "myocardium_mask_root": "/data/dengyz/dataset/Code_10w_v1/reference_data/CYJ/myocardium_masks_v2",
+      "native_reference_root": "/data/dengyz/dataset/Code_10w_v1/reference_data/CYJ/native_reference_2d"
+    }
+  },
+  "repo_root": "/home/universe/SVR/multimap_postprogramming/Code_10w"
+}
