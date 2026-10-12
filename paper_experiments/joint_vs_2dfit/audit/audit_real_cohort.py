@@ -94,7 +94,16 @@ def _native_evidence(subject: str, stack: str, roots: list[Path], bundle_root: P
     return found
 
 
-def _mask_evidence(subject: str, roots: list[Path], bundle_root: Path | None) -> tuple[list[dict[str, str]], str | None]:
+def _legacy_roi_compatibility(path: str | Path | None) -> tuple[dict[str, str], dict[str, str] | None]:
+    if path is None:
+        return {}, None
+    report = Path(path)
+    value = json.loads(report.read_text(encoding="utf-8"))
+    statuses = {subject: entry.get("compatibility", {}).get("status") for subject, entry in value.get("subjects", {}).items()}
+    return statuses, _record(report, "Phase-0.6 legacy ROI compatibility audit")
+
+
+def _mask_evidence(subject: str, roots: list[Path], bundle_root: Path | None, legacy_roi_compatibility: dict[str, str]) -> tuple[list[dict[str, str]], str | None]:
     if bundle_root is not None and bundle_root.is_dir():
         manifest, mask = bundle_root / "manifest.json", bundle_root / "sax_myocardium_masks.npz"
         if manifest.is_file() and mask.is_file():
@@ -110,6 +119,8 @@ def _mask_evidence(subject: str, roots: list[Path], bundle_root: Path | None) ->
         roi = subject_root / "data" / "roi"
         pending = list(roi.rglob("ROI_MANUAL_STEP_REQUIRED.md")) if roi.is_dir() else []
         if pending:
+            if legacy_roi_compatibility.get(subject) in {"reusable_exact", "reusable_with_deterministic_transform"}:
+                return ([_record(pending[0], "ROI status: verified compatible pending explicit migration")], "legacy ROI is verified compatible; explicit migration is required before a current myocardium-mask bundle is available")
             return ([_record(pending[0], "ROI status: manual annotation required")], "manual myocardium ROI annotation and compatible mask export are required; legacy evaluation masks are not reusable")
         direct = [roi / "LV_myocardium_full.nii.gz", roi / "LV_myocardium_core.nii.gz"]
         if all(path.is_file() for path in direct):
@@ -132,18 +143,19 @@ def _compatible(row: dict[str, Any], decoder: dict[str, float | str]) -> tuple[b
     return True, None
 
 
-def audit_cohort(prepared_root: str | Path, *, preprocessed_root: str | Path | None, native_reference_root: str | Path | None, myocardium_mask_root: str | Path | None, decoder_manifest: str | Path | None = None, reference_search_roots: list[str | Path] | None = None) -> dict[str, Any]:
+def audit_cohort(prepared_root: str | Path, *, preprocessed_root: str | Path | None, native_reference_root: str | Path | None, myocardium_mask_root: str | Path | None, decoder_manifest: str | Path | None = None, reference_search_roots: list[str | Path] | None = None, legacy_roi_compatibility_report: str | Path | None = None) -> dict[str, Any]:
     prepared = Path(prepared_root)
     if not prepared.is_dir():
         raise FileNotFoundError(f"Prepared root does not exist: {prepared}")
     decoder = None if decoder_manifest is None else _decoder_contract(decoder_manifest)
     roots = [Path(path) for path in (reference_search_roots or [])]
+    legacy_roi_compatibility, compatibility_record = _legacy_roi_compatibility(legacy_roi_compatibility_report)
     subjects = sorted(path.name for path in prepared.iterdir() if path.is_dir())
     rows: list[dict[str, Any]] = []
     evidence: dict[str, dict[str, Any]] = {}
     for subject in subjects:
         native = {stack: _native_evidence(subject, stack, roots, Path(native_reference_root) if native_reference_root else None) for stack in STACKS}
-        masks, mask_reason = _mask_evidence(subject, roots, Path(myocardium_mask_root) if myocardium_mask_root else None)
+        masks, mask_reason = _mask_evidence(subject, roots, Path(myocardium_mask_root) if myocardium_mask_root else None, legacy_roi_compatibility)
         evidence[subject] = {"native_reference_evidence": native, "myocardium_mask_evidence": masks, "myocardium_mask_reason": mask_reason}
         for stack in STACKS:
             observation = prepared / subject / stack / "observations.npz"
@@ -164,7 +176,7 @@ def audit_cohort(prepared_root: str | Path, *, preprocessed_root: str | Path | N
         if not masks_ok: reasons.append(evidence[subject]["myocardium_mask_reason"])
         for row in current: row["quantitative_evaluation_eligible"] = quantitative_ok
         summary.append({"subject": subject, "prepared_input_eligible": prepared_ok, "decoder_compatible": decoder_ok, "reconstruction_eligible_current": reconstruction_ok, "native_reference_available": native_ok, "myocardium_mask_available": masks_ok, "quantitative_evaluation_eligible": quantitative_ok, "reasons": sorted(set(reasons)), **evidence[subject]})
-    return {"audit_type": "real_cohort_inventory_phase0_5", "prepared_root": str(prepared.resolve()), "preprocessed_root": None if preprocessed_root is None else str(Path(preprocessed_root).resolve()), "decoder_contract": decoder, "reference_search_roots": [str(path.resolve()) for path in roots], "rows": rows, "subject_summary": summary}
+    return {"audit_type": "real_cohort_inventory_phase0_5", "prepared_root": str(prepared.resolve()), "preprocessed_root": None if preprocessed_root is None else str(Path(preprocessed_root).resolve()), "decoder_contract": decoder, "reference_search_roots": [str(path.resolve()) for path in roots], "legacy_roi_compatibility_report": compatibility_record, "rows": rows, "subject_summary": summary}
 
 
 def _write_csv(path: str | Path, rows: list[dict[str, Any]]) -> Path:
@@ -181,10 +193,10 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--prepared-root", required=True); parser.add_argument("--preprocessed-root")
     parser.add_argument("--native-reference-root"); parser.add_argument("--myocardium-mask-root")
-    parser.add_argument("--decoder-manifest", required=True); parser.add_argument("--reference-search-root", action="append", default=[])
+    parser.add_argument("--decoder-manifest", required=True); parser.add_argument("--reference-search-root", action="append", default=[]); parser.add_argument("--legacy-roi-compatibility-report")
     parser.add_argument("--output-json", required=True); parser.add_argument("--output-csv", required=True)
     args = parser.parse_args()
-    report = audit_cohort(args.prepared_root, preprocessed_root=args.preprocessed_root, native_reference_root=args.native_reference_root, myocardium_mask_root=args.myocardium_mask_root, decoder_manifest=args.decoder_manifest, reference_search_roots=args.reference_search_root)
+    report = audit_cohort(args.prepared_root, preprocessed_root=args.preprocessed_root, native_reference_root=args.native_reference_root, myocardium_mask_root=args.myocardium_mask_root, decoder_manifest=args.decoder_manifest, reference_search_roots=args.reference_search_root, legacy_roi_compatibility_report=args.legacy_roi_compatibility_report)
     write_json(args.output_json, json_safe(report)); _write_csv(args.output_csv, report["rows"])
     print(Path(args.output_json)); print(Path(args.output_csv))
 

@@ -26,6 +26,15 @@ def _load(name: str):
     return module
 
 
+def _load_reference(name: str):
+    path = ROOT / "reference" / f"{name}.py"
+    spec = importlib.util.spec_from_file_location(name, path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def _write_observations(path: Path, *, groups: int = 2, tr_ms: float = 2.61, vps: int = 87) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     count = groups * 10
@@ -184,6 +193,99 @@ def test_manual_roi_marker_rejects_legacy_mask_reuse(tmp_path: Path) -> None:
     assert subject["myocardium_mask_available"] is False
     assert subject["quantitative_evaluation_eligible"] is False
     assert "legacy evaluation masks are not reusable" in subject["reasons"][0]
+
+
+def test_verified_legacy_roi_marker_becomes_migration_pending_not_incompatible(tmp_path: Path) -> None:
+    module = _load("audit_real_cohort")
+    _write_observations(tmp_path / "prepared" / "DYZ" / "sax" / "observations.npz")
+    old_root = tmp_path / "MultiMapCode"
+    roi = old_root / "subjects" / "DYZ" / "data" / "roi" / "20260823_v5_newdata_v1"
+    roi.mkdir(parents=True)
+    (roi / "ROI_MANUAL_STEP_REQUIRED.md").write_text("manual annotation required", encoding="utf-8")
+    compatibility = tmp_path / "legacy_roi_compatibility.json"
+    compatibility.write_text(json.dumps({"subjects": {"DYZ": {"compatibility": {"status": "reusable_with_deterministic_transform"}}}}), encoding="utf-8")
+    report = module.audit_cohort(tmp_path / "prepared", preprocessed_root=None, native_reference_root=None, myocardium_mask_root=None, decoder_manifest=_approved_decoder_manifest(tmp_path / "decoder.json"), reference_search_roots=[old_root], legacy_roi_compatibility_report=compatibility)
+    subject = report["subject_summary"][0]
+
+    assert subject["myocardium_mask_available"] is False
+    assert "verified compatible" in subject["reasons"][0]
+
+
+def test_identical_roi_geometry_is_reusable_exact() -> None:
+    module = _load("audit_legacy_roi_compatibility")
+
+    result = module.classify_compatibility(
+        uid_match=True,
+        raw_pixels_match=True,
+        geometry_class="IDENTICAL_GRID",
+        deterministic_crop=False,
+        marker_text=None,
+    )
+
+    assert result["status"] == "reusable_exact"
+
+
+def test_exact_geometry_plus_crop_offset_is_reusable_with_deterministic_transform() -> None:
+    module = _load("audit_legacy_roi_compatibility")
+
+    result = module.classify_compatibility(
+        uid_match=True,
+        raw_pixels_match=True,
+        geometry_class="EXACT_REORIENTABLE_GRID",
+        deterministic_crop=True,
+        marker_text=None,
+    )
+
+    assert result["status"] == "reusable_with_deterministic_transform"
+
+
+def test_uid_or_geometry_mismatch_is_incompatible() -> None:
+    module = _load("audit_legacy_roi_compatibility")
+
+    uid_mismatch = module.classify_compatibility(
+        uid_match=False,
+        raw_pixels_match=True,
+        geometry_class="IDENTICAL_GRID",
+        deterministic_crop=False,
+        marker_text=None,
+    )
+    geometry_mismatch = module.classify_compatibility(
+        uid_match=True,
+        raw_pixels_match=True,
+        geometry_class="NON_EQUIVALENT_GRID",
+        deterministic_crop=False,
+        marker_text=None,
+    )
+
+    assert uid_mismatch["status"] == "incompatible"
+    assert geometry_mismatch["status"] == "incompatible"
+
+
+def test_marker_alone_does_not_make_compatible_roi_incompatible() -> None:
+    module = _load("audit_legacy_roi_compatibility")
+
+    result = module.classify_compatibility(
+        uid_match=True,
+        raw_pixels_match=True,
+        geometry_class="IDENTICAL_GRID",
+        deterministic_crop=False,
+        marker_text="manual annotation was pending when this note was written",
+    )
+
+    assert result["status"] == "reusable_exact"
+
+
+def test_migration_refuses_existing_destination_and_unverified_subject(tmp_path: Path) -> None:
+    module = _load_reference("migrate_verified_legacy_roi")
+    destination = tmp_path / "existing"
+    destination.mkdir()
+    report = {"subjects": {"S1": {"compatibility": {"status": "unresolved_manual_review"}}}}
+
+    with pytest.raises(ValueError, match="not verified"):
+        module.validate_migration_request(report, "S1", tmp_path / "new")
+    report["subjects"]["S1"]["compatibility"]["status"] = "reusable_exact"
+    with pytest.raises(FileExistsError, match="overwrite"):
+        module.validate_migration_request(report, "S1", destination)
 
 
 def test_pose_audit_requires_independent_t1_t2_artifact_chain(tmp_path: Path) -> None:
