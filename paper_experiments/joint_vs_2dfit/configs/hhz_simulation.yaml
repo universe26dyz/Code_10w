@@ -1,0 +1,21 @@
+protocol:
+  tr_ms: 2.61
+  vps: 87
+  fa_deg: [45.0, 45.0, 45.0]
+  ti_ms: [50.0, 150.0]
+  t2prep_ms: [35.0, 45.0, 55.0]
+  m0: 1.0
+  pd_scaling: false
+timing_selection:
+  rule: coordinate median reference; MAD robust scaling; nearest actual observed group
+  source_subject: CYJ
+  source_stack: sax
+  source_group_idx: 5
+  source_manifest: /home/universe/SVR/data/Code_10w_v1/Code_10w_prepared/CYJ/sax/manifest.json
+  source_manifest_sha256: 569a625f53a0f331c18abe0b0e5f8b6310b8d820fd2502ead089c134ceced240
+  timing9_ms: [642.9299999925495, 568.9300000074506, 558.9299999925495, 406.93000000745064, 590.9300000000001, 565.9300000074506, 580.9299999925495, 606.9299999850989, 591.9300000149012]
+  decoder_domain_check: true
+signal_generation:
+  simulator: trad/modules/module_05_signal_decoder/trad_signal_simulator.py
+  normalize: false
+  cache_piecewise_constant_fingerprints: true

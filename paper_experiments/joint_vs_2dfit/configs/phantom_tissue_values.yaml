@@ -1,0 +1,25 @@
+primary:
+  m0: 1.0
+  pd_scaling: false
+  lv_myocardium:
+    t1_ms: 1410.0
+    t2_ms: 50.0
+    b1: 1.0
+    score: true
+context:
+  blood:
+    t1_ms: 1500.0
+    t2_ms: 120.0
+  muscle:
+    t1_ms: 1000.0
+    t2_ms: 50.0
+  fat:
+    t1_ms: 350.0
+    t2_ms: 70.0
+  bone:
+    t1_ms: 250.0
+    t2_ms: 20.0
+  air:
+    t1_ms: 1171.0
+    t2_ms: 61.0
+b1: 1.0

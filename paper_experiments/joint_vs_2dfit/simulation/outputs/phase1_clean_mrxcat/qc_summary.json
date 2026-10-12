@@ -1,0 +1,182 @@
+{
+  "stacks": {
+    "sax": {
+      "result": {
+        "schema_fields": [
+          "images",
+          "masks",
+          "group_idx",
+          "weight_idx",
+          "stack_idx",
+          "acquisition_time_ms",
+          "timing9_ms",
+          "affine_lps_rc",
+          "pixel_spacing_rc_mm",
+          "slice_thickness_mm",
+          "tr_ms",
+          "vps"
+        ],
+        "paths": [
+          "/home/universe/SVR/multimap_postprogramming/Code_10w/paper_experiments/joint_vs_2dfit/simulation/outputs/phase1_clean_mrxcat/sax/observations.npz",
+          "/home/universe/SVR/multimap_postprogramming/Code_10w/paper_experiments/joint_vs_2dfit/simulation/outputs/phase1_clean_mrxcat/sax/manifest.json",
+          "/home/universe/SVR/multimap_postprogramming/Code_10w/paper_experiments/joint_vs_2dfit/simulation/outputs/phase1_clean_mrxcat/sax/qc_summary.json",
+          "/home/universe/SVR/multimap_postprogramming/Code_10w/paper_experiments/joint_vs_2dfit/simulation/outputs/phase1_clean_mrxcat/sax/synthetic_source_manifest.json"
+        ],
+        "qc": {
+          "finite_images": true,
+          "finite_masks": true,
+          "nonempty_mask_fraction": 0.8154236835070837,
+          "group_ids_contiguous": true,
+          "weights_per_group": [
+            10
+          ],
+          "image_sha256": "b3230521d9e944c7bb034e49c646dbdfbe4f73890abcb28a79ea569d08d97bad"
+        }
+      },
+      "convergence_max_abs": 0.027390360832214355,
+      "group_count": 12,
+      "image_shape": [
+        120,
+        129,
+        145
+      ]
+    },
+    "2ch": {
+      "result": {
+        "schema_fields": [
+          "images",
+          "masks",
+          "group_idx",
+          "weight_idx",
+          "stack_idx",
+          "acquisition_time_ms",
+          "timing9_ms",
+          "affine_lps_rc",
+          "pixel_spacing_rc_mm",
+          "slice_thickness_mm",
+          "tr_ms",
+          "vps"
+        ],
+        "paths": [
+          "/home/universe/SVR/multimap_postprogramming/Code_10w/paper_experiments/joint_vs_2dfit/simulation/outputs/phase1_clean_mrxcat/2ch/observations.npz",
+          "/home/universe/SVR/multimap_postprogramming/Code_10w/paper_experiments/joint_vs_2dfit/simulation/outputs/phase1_clean_mrxcat/2ch/manifest.json",
+          "/home/universe/SVR/multimap_postprogramming/Code_10w/paper_experiments/joint_vs_2dfit/simulation/outputs/phase1_clean_mrxcat/2ch/qc_summary.json",
+          "/home/universe/SVR/multimap_postprogramming/Code_10w/paper_experiments/joint_vs_2dfit/simulation/outputs/phase1_clean_mrxcat/2ch/synthetic_source_manifest.json"
+        ],
+        "qc": {
+          "finite_images": true,
+          "finite_masks": true,
+          "nonempty_mask_fraction": 0.7235498529804865,
+          "group_ids_contiguous": true,
+          "weights_per_group": [
+            10
+          ],
+          "image_sha256": "a58ba3f728bc2b49de1c789af9acbf4c375a05565b66c1b6a98a480e4f870c0d"
+        }
+      },
+      "convergence_max_abs": 0.03081415593624115,
+      "group_count": 16,
+      "image_shape": [
+        160,
+        145,
+        129
+      ]
+    },
+    "4ch": {
+      "result": {
+        "schema_fields": [
+          "images",
+          "masks",
+          "group_idx",
+          "weight_idx",
+          "stack_idx",
+          "acquisition_time_ms",
+          "timing9_ms",
+          "affine_lps_rc",
+          "pixel_spacing_rc_mm",
+          "slice_thickness_mm",
+          "tr_ms",
+          "vps"
+        ],
+        "paths": [
+          "/home/universe/SVR/multimap_postprogramming/Code_10w/paper_experiments/joint_vs_2dfit/simulation/outputs/phase1_clean_mrxcat/4ch/observations.npz",
+          "/home/universe/SVR/multimap_postprogramming/Code_10w/paper_experiments/joint_vs_2dfit/simulation/outputs/phase1_clean_mrxcat/4ch/manifest.json",
+          "/home/universe/SVR/multimap_postprogramming/Code_10w/paper_experiments/joint_vs_2dfit/simulation/outputs/phase1_clean_mrxcat/4ch/qc_summary.json",
+          "/home/universe/SVR/multimap_postprogramming/Code_10w/paper_experiments/joint_vs_2dfit/simulation/outputs/phase1_clean_mrxcat/4ch/synthetic_source_manifest.json"
+        ],
+        "qc": {
+          "finite_images": true,
+          "finite_masks": true,
+          "nonempty_mask_fraction": 0.862999198075381,
+          "group_ids_contiguous": true,
+          "weights_per_group": [
+            10
+          ],
+          "image_sha256": "96779d8b6dbdf526d1a36ca3b3b819fafabc5d4de6beb387f6fd981bf60807ec"
+        }
+      },
+      "convergence_max_abs": 0.01930822990834713,
+      "group_count": 10,
+      "image_shape": [
+        100,
+        129,
+        145
+      ]
+    }
+  },
+  "timing_selection": {
+    "selection_rule": "coordinate median reference; MAD robust scaling; nearest actual observed group",
+    "candidate_count": 155,
+    "coordinate_median_ms": [
+      618.9299999925495,
+      588.9299999925495,
+      601.9300000000001,
+      433.9299999850989,
+      580.9299999850989,
+      602.9299999850989,
+      568.9299999701977,
+      606.9299999850989,
+      568.9300000000001
+    ],
+    "robust_scale_ms": [
+      174.94679998895384,
+      145.29480000000007,
+      164.56859996686137,
+      143.81219996686139,
+      145.29480005523115,
+      169.01639995581516,
+      170.4989999779076,
+      231.28559997790762,
+      185.32500000000007
+    ],
+    "selected_distance": 0.46292951583180153,
+    "timing9_ms": [
+      642.9299999925495,
+      568.9300000074506,
+      558.9299999925495,
+      406.93000000745064,
+      590.9300000000001,
+      565.9300000074506,
+      580.9299999925495,
+      606.9299999850989,
+      591.9300000149012
+    ],
+    "tr_ms": 2.61,
+    "vps": 87,
+    "source": {
+      "subject_id": "CYJ",
+      "stack_name": "sax",
+      "group_idx": 5,
+      "tr_ms": 2.61,
+      "vps": 87,
+      "manifest_path": "/home/universe/SVR/data/Code_10w_v1/Code_10w_prepared/CYJ/sax/manifest.json",
+      "manifest_sha256": "569a625f53a0f331c18abe0b0e5f8b6310b8d820fd2502ead089c134ceced240"
+    },
+    "decoder_domain_check": true,
+    "approved_decoder_protocol": {
+      "tr_ms": 2.61,
+      "vps": 87
+    }
+  },
+  "source_manifest": "/home/universe/SVR/multimap_postprogramming/Code_10w/paper_experiments/joint_vs_2dfit/simulation/outputs/phase1_clean_mrxcat/synthetic_source_manifest.json"
+}
