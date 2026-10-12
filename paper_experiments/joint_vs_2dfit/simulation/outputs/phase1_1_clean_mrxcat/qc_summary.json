@@ -1,0 +1,86 @@
+{
+  "stacks": {
+    "sax": {
+      "group_count": 12,
+      "image_shape": [
+        120,
+        129,
+        145
+      ],
+      "foreground_mask_fraction": 0.24529983070480263
+    },
+    "2ch": {
+      "group_count": 16,
+      "image_shape": [
+        160,
+        145,
+        129
+      ],
+      "foreground_mask_fraction": 0.21089280940924887
+    },
+    "4ch": {
+      "group_count": 10,
+      "image_shape": [
+        100,
+        129,
+        145
+      ],
+      "foreground_mask_fraction": 0.27568564554931835
+    }
+  },
+  "timing_selection": {
+    "selection_rule": "coordinate median reference; MAD robust scaling; nearest actual observed group",
+    "candidate_count": 155,
+    "coordinate_median_ms": [
+      618.9299999925495,
+      588.9299999925495,
+      601.9300000000001,
+      433.9299999850989,
+      580.9299999850989,
+      602.9299999850989,
+      568.9299999701977,
+      606.9299999850989,
+      568.9300000000001
+    ],
+    "robust_scale_ms": [
+      174.94679998895384,
+      145.29480000000007,
+      164.56859996686137,
+      143.81219996686139,
+      145.29480005523115,
+      169.01639995581516,
+      170.4989999779076,
+      231.28559997790762,
+      185.32500000000007
+    ],
+    "selected_distance": 0.46292951583180153,
+    "timing9_ms": [
+      642.9299999925495,
+      568.9300000074506,
+      558.9299999925495,
+      406.93000000745064,
+      590.9300000000001,
+      565.9300000074506,
+      580.9299999925495,
+      606.9299999850989,
+      591.9300000149012
+    ],
+    "tr_ms": 2.61,
+    "vps": 87,
+    "source": {
+      "subject_id": "CYJ",
+      "stack_name": "sax",
+      "group_idx": 5,
+      "tr_ms": 2.61,
+      "vps": 87,
+      "manifest_path": "/home/universe/SVR/data/Code_10w_v1/Code_10w_prepared/CYJ/sax/manifest.json",
+      "manifest_sha256": "569a625f53a0f331c18abe0b0e5f8b6310b8d820fd2502ead089c134ceced240"
+    },
+    "decoder_domain_check": true,
+    "approved_decoder_protocol": {
+      "tr_ms": 2.61,
+      "vps": 87
+    }
+  },
+  "source_manifest": "paper_experiments/joint_vs_2dfit/simulation/outputs/phase1_1_clean_mrxcat/synthetic_source_manifest.json"
+}

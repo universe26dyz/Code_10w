@@ -1,0 +1,77 @@
+{
+  "phase": "1.1",
+  "stack": "4ch",
+  "signal_field": "paper_experiments/joint_vs_2dfit/simulation/outputs/phase1_1_clean_mrxcat/clean_signal_field.npz",
+  "global_alignment": {
+    "method": "single_rigid_rotation_source_sax_normal_to_mesh_lv_long_axis_plus_single_translation",
+    "rotation_matrix": [
+      [
+        -0.735631656081809,
+        0.24032567791743822,
+        -0.6333163783638152
+      ],
+      [
+        0.5981714811610289,
+        0.6691990297424114,
+        -0.4408668026937798
+      ],
+      [
+        0.3178630926923669,
+        -0.7031473722665391,
+        -0.6360399572186524
+      ]
+    ],
+    "translation_mm": [
+      44.74551029533187,
+      -9.079956735273745,
+      -36.72916948875488
+    ],
+    "source_anchor_mm": [
+      30.829702576374995,
+      -6.6410078733750035,
+      31.48282319399999
+    ],
+    "anatomy_center_mm": [
+      0.5316128474472261,
+      -8.962395508096142,
+      -42.28427116311161
+    ],
+    "source_sax_normal": [
+      0.4927397970060705,
+      -0.4221388064424785,
+      -0.7609246483993907
+    ],
+    "mesh_lv_long_axis": [
+      0.017980254809524625,
+      0.3477144313449075,
+      0.9374280690652869
+    ],
+    "sax_normal_dot_lv_long_axis": 1.0,
+    "stack_plane_normals": {
+      "sax": [
+        0.01798025480952461,
+        0.3477144313449075,
+        0.937428069065287
+      ],
+      "2ch": [
+        -0.5558081813431762,
+        0.7828396610991012,
+        -0.27971294314392287
+      ],
+      "4ch": [
+        -0.8284638607661413,
+        -0.49378910765707973,
+        0.2642346467889563
+      ]
+    },
+    "max_pairwise_center_distance_error_mm": 4.618527782440651e-14,
+    "2ch_4ch_plane_normal_dot": -5.566656543498638e-07
+  },
+  "spatial_integration": {
+    "inplane_samples_row_col": [
+      6,
+      6
+    ],
+    "thickness_samples": 9
+  }
+}

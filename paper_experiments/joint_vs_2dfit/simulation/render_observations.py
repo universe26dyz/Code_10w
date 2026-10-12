@@ -57,15 +57,22 @@ def integrate_signal_volume(
     slice_offsets = ((np.arange(thickness_samples, dtype=float) + 0.5) / thickness_samples - 0.5)
     rr, cc = np.meshgrid(np.arange(rows, dtype=float), np.arange(cols, dtype=float), indexing="ij")
     base = affine[:3, 3][None, None, :] + rr[..., None] * row_vec + cc[..., None] * col_vec
-    accum = np.zeros((rows, cols, signal_volume.shape[-1]), dtype=np.float64)
-    count = 0
-    for ro in row_offsets:
-        for co in col_offsets:
-            for so in slice_offsets:
-                points = base + ro * row_vec + co * col_vec + so * slice_vec
-                accum += _sample(signal_volume, points.reshape(-1, 3), origin, spacing).reshape(rows, cols, -1)
-                count += 1
-    return (accum / count).astype(np.float32)
+    offsets = np.asarray([[ro, co, so] for ro in row_offsets for co in col_offsets for so in slice_offsets], dtype=float)
+    base = base.reshape(-1, 3)
+    accum = np.zeros((base.shape[0], signal_volume.shape[-1]), dtype=np.float64)
+    # Batching offsets avoids thousands of tiny interpolation calls for the
+    # required 6x6x9 convergence reference without changing quadrature nodes.
+    for start in range(0, len(offsets), 12):
+        current = offsets[start : start + 12]
+        displacements = current[:, 0, None] * row_vec + current[:, 1, None] * col_vec + current[:, 2, None] * slice_vec
+        points = (base[None, :, :] + displacements[:, None, :]).reshape(-1, 3)
+        coords = ((points - origin[None, :]) / spacing[None, :]).T
+        n_offsets = len(current)
+        for weight in range(signal_volume.shape[-1]):
+            sampled = map_coordinates(signal_volume[..., weight], coords, order=1, mode="constant", cval=0.0, prefilter=False)
+            accum[:, weight] += sampled.reshape(n_offsets, -1).sum(axis=0)
+    count = len(offsets)
+    return (accum.reshape(rows, cols, -1) / count).astype(np.float32)
 
 
 def foreground_mask(images: np.ndarray) -> np.ndarray:

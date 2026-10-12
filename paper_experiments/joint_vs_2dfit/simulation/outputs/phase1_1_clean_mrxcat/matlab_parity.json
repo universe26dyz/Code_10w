@@ -1,0 +1,6 @@
+{
+  "status": "unresolved_external_gate",
+  "returncode": 1,
+  "reason": "MATLAB exited without stderr",
+  "stdout": ""
+}

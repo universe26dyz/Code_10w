@@ -28,7 +28,7 @@ def matlab_parity(
     if timing9_ms.shape != (9,):
         raise ValueError("timing9_ms must contain nine values")
     root = Path(__file__).resolve().parents[3]
-    utility = root / "trad/modules/module_01_preprocess_matlab/hhz_original/Utility"
+    exporter_dir = root / "trad/modules/module_05_signal_decoder"
     rng = np.random.default_rng(20261012)
     t1 = np.linspace(550.0, 1850.0, cases)
     t2 = np.linspace(20.0, 130.0, cases)
@@ -36,21 +36,11 @@ def matlab_parity(
     with tempfile.TemporaryDirectory(prefix="phase1_hhz_parity_") as td:
         td = Path(td)
         mat_out = td / "reference.mat"
-        script = td / "run_reference.m"
-        timing_literal = "[" + ";".join(f"{x:.12g}" for x in timing9_ms) + "]"
-        t1_literal = "[" + ";".join(f"{x:.12g}" for x in t1) + "]"
-        t2_literal = "[" + ";".join(f"{x:.12g}" for x in t2) + "]"
-        b1_literal = "[" + ";".join(f"{x:.12g}" for x in b1) + "]"
-        script.write_text(
-            "addpath('" + str(utility).replace("'", "''") + "');\n"
-            f"T1={t1_literal}; T2={t2_literal}; B1={b1_literal};\n"
-            f"timing9_ms={timing_literal}; TR={float(tr_ms):.12g}; n_ex={int(vps)}; FA=[45,45,45];\n"
-            "PP_delay=zeros(10,2); PP_delay(1,1)=50; PP_delay(5,1)=150; PP_delay(8,2)=35; PP_delay(9,2)=45; PP_delay(10,2)=55;\n"
-            "signal_raw=zeros(numel(T1),10);\n"
-            "for k=1:numel(T1), signal_raw(k,:)=sim_T1T2_10HB_bssfp(n_ex,TR,[T1(k),T2(k),B1(k)],10,PP_delay,[0;timing9_ms],FA); end\n"
-            f"save('{str(mat_out).replace(chr(39), chr(39)*2)}','T1','T2','B1','timing9_ms','n_ex','TR','FA','signal_raw');\n"
-        )
-        proc = subprocess.run([matlab, "-batch", f"run('{script.as_posix()}')"], text=True, capture_output=True, timeout=180)
+        config = td / "phase1_hhz_parity_config.json"
+        config.write_text(json.dumps({"T1": t1.tolist(), "T2": t2.tolist(), "B1": b1.tolist(), "timing9_ms": np.repeat(timing9_ms[None, :], cases, axis=0).tolist(), "n_ex": int(vps), "TR": float(tr_ms), "FA": [45, 45, 45]}))
+        quote = lambda value: str(value).replace("'", "''")
+        command = f"addpath('{quote(exporter_dir)}'); export_matlab_signal_reference('{quote(mat_out)}','{quote(config)}');"
+        proc = subprocess.run([matlab, "-batch", command], text=True, capture_output=True, timeout=180)
         if proc.returncode != 0:
             return {"status": "unresolved_external_gate", "returncode": int(proc.returncode), "reason": proc.stderr[-2000:] or "MATLAB exited without stderr", "stdout": proc.stdout[-2000:]}
         mat = loadmat(mat_out)
@@ -72,3 +62,25 @@ def matlab_parity(
     if result["status"] == "fail":
         raise AssertionError(json.dumps(result))
     return result
+
+
+def main() -> None:
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Run the original MATLAB HHZ parity gate for a selected Phase-1 timing template.")
+    parser.add_argument("--timing-selection", required=True, help="timing_selection.json containing timing9_ms")
+    parser.add_argument("--output-json", required=True, help="refuse-overwrite parity result path")
+    parser.add_argument("--matlab-bin", default="matlab")
+    args = parser.parse_args()
+    output = Path(args.output_json)
+    if output.exists():
+        raise FileExistsError(f"refusing to overwrite {output}")
+    selection = json.loads(Path(args.timing_selection).read_text())
+    result = matlab_parity(np.asarray(selection["timing9_ms"], dtype=float), tr_ms=float(selection["tr_ms"]), vps=int(selection["vps"]), matlab_bin=args.matlab_bin)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps(result, indent=2) + "\n")
+    print(json.dumps(result, indent=2))
+
+
+if __name__ == "__main__":
+    main()

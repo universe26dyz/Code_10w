@@ -1,0 +1,10 @@
+{
+  "finite_images": true,
+  "finite_masks": true,
+  "nonempty_mask_fraction": 0.24529983070480263,
+  "group_ids_contiguous": true,
+  "weights_per_group": [
+    10
+  ],
+  "image_sha256": "8089e1bc3518e17de317da1d4ab86618ef778868069db1e9dd29796e2e490e3e"
+}

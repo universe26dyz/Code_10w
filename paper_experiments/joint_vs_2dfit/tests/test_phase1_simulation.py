@@ -28,8 +28,9 @@ def test_gt_values_within_contract_and_primary_myocardium() -> None:
     assert maps.t2_ms[0, 1] == pytest.approx(50.0)
     assert maps.b1[0, 1] == pytest.approx(1.0)
     assert maps.myocardium_mask[0, 1]
-    assert np.all((maps.t1_ms > 0) & (maps.t1_ms <= 2500))
-    assert np.all((maps.t2_ms >= 5) & (maps.t2_ms <= 200))
+    assert maps.signal_support_mask.tolist() == [[False, True, True, True]]
+    assert np.all((maps.t1_ms[maps.signal_support_mask] > 0) & (maps.t1_ms[maps.signal_support_mask] <= 2500))
+    assert np.all((maps.t2_ms[maps.signal_support_mask] >= 5) & (maps.t2_ms[maps.signal_support_mask] <= 200))
     assert np.all((maps.b1 >= 0.1) & (maps.b1 <= 1.2))
 
 
