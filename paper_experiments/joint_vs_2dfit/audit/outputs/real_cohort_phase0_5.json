@@ -1,0 +1,1373 @@
+{
+  "audit_type": "real_cohort_inventory_phase0_5",
+  "decoder_contract": {
+    "manifest": "/home/universe/SVR/multimap_postprogramming/Code_10w/paper_experiments/joint_vs_2dfit/audit/outputs/approved_decoder.json",
+    "manifest_sha256": "e3cdd5a9f531c0a52a7f372ca21f1c63b649291adc95896defe04ae9f47c65e4",
+    "tr_ms": 2.61,
+    "vps": 87
+  },
+  "prepared_root": "/home/universe/SVR/data/Code_10w_v1/Code_10w_prepared",
+  "preprocessed_root": "/home/universe/SVR/data/Code_10w_v1/Code_10w_preprocessed",
+  "reference_search_roots": [
+    "/home/universe/SVR/data/Code_10w_v1",
+    "/home/universe/SVR/multimap_postprogramming/MultiMapCode"
+  ],
+  "rows": [
+    {
+      "decoder_compatible": true,
+      "decoder_incompatibility_reason": null,
+      "exclusion_reason": null,
+      "exists": true,
+      "group_count": 14,
+      "image_hw": [
+        145,
+        129
+      ],
+      "inter_group_gap_mm": [
+        7.999982467970928,
+        8.000011763547155
+      ],
+      "myocardium_mask_available": true,
+      "native_reference_available": true,
+      "pixel_spacing_rc_mm": [
+        1.25,
+        1.25
+      ],
+      "prepared_input_eligible": true,
+      "quantitative_evaluation_eligible": true,
+      "reconstruction_eligible_current": true,
+      "slice_thickness_mm": [
+        8.0,
+        8.0
+      ],
+      "stack": "sax",
+      "subject": "CYJ",
+      "timing9_max_ms": [
+        689.9300000149012,
+        689.9299999850989,
+        628.9300000000001,
+        519.9300000000001,
+        701.9300000074506,
+        727.9299999850989,
+        682.9300000074506,
+        663.9300000149012,
+        672.9300000149012
+      ],
+      "timing9_min_ms": [
+        551.9299999776483,
+        502.93000001490117,
+        509.93,
+        350.9300000074506,
+        484.93,
+        492.93,
+        453.92999998509885,
+        460.9300000074506,
+        534.9299999776483
+      ],
+      "tr_ms": [
+        2.61,
+        2.61
+      ],
+      "vps": [
+        87.0,
+        87.0
+      ],
+      "weights_per_group": [
+        10
+      ]
+    },
+    {
+      "decoder_compatible": true,
+      "decoder_incompatibility_reason": null,
+      "exclusion_reason": null,
+      "exists": true,
+      "group_count": 15,
+      "image_hw": [
+        145,
+        129
+      ],
+      "inter_group_gap_mm": [
+        7.999996121832365,
+        8.00000251203144
+      ],
+      "myocardium_mask_available": false,
+      "native_reference_available": true,
+      "pixel_spacing_rc_mm": [
+        1.25,
+        1.25
+      ],
+      "prepared_input_eligible": true,
+      "quantitative_evaluation_eligible": true,
+      "reconstruction_eligible_current": true,
+      "slice_thickness_mm": [
+        8.0,
+        8.0
+      ],
+      "stack": "2ch",
+      "subject": "CYJ",
+      "timing9_max_ms": [
+        734.9299999925495,
+        704.9300000000001,
+        1292.9299999925495,
+        537.9300000074506,
+        703.9300000149012,
+        1322.929999985099,
+        721.9300000000001,
+        707.9300000074506,
+        678.9300000149012
+      ],
+      "timing9_min_ms": [
+        560.9300000074506,
+        553.9299999850989,
+        550.9299999925495,
+        395.9300000149012,
+        546.9300000074506,
+        551.9299999850989,
+        541.9300000000001,
+        568.9299999850989,
+        565.9300000000001
+      ],
+      "tr_ms": [
+        2.61,
+        2.61
+      ],
+      "vps": [
+        87.0,
+        87.0
+      ],
+      "weights_per_group": [
+        10
+      ]
+    },
+    {
+      "decoder_compatible": true,
+      "decoder_incompatibility_reason": null,
+      "exclusion_reason": null,
+      "exists": true,
+      "group_count": 12,
+      "image_hw": [
+        129,
+        145
+      ],
+      "inter_group_gap_mm": [
+        7.999992838305678,
+        8.000007542560514
+      ],
+      "myocardium_mask_available": false,
+      "native_reference_available": true,
+      "pixel_spacing_rc_mm": [
+        1.25,
+        1.25
+      ],
+      "prepared_input_eligible": true,
+      "quantitative_evaluation_eligible": true,
+      "reconstruction_eligible_current": true,
+      "slice_thickness_mm": [
+        8.0,
+        8.0
+      ],
+      "stack": "4ch",
+      "subject": "CYJ",
+      "timing9_max_ms": [
+        772.9300000000001,
+        720.9300000074506,
+        696.9299999925495,
+        540.9300000000001,
+        1252.9300000074506,
+        727.9299999850989,
+        708.9300000223518,
+        673.9300000000001,
+        694.9300000074506
+      ],
+      "timing9_min_ms": [
+        623.9300000223518,
+        624.9299999850989,
+        579.9300000000001,
+        375.93000000000006,
+        533.9299999925495,
+        564.9300000223518,
+        542.9299999925495,
+        553.9300000000001,
+        555.9299999850989
+      ],
+      "tr_ms": [
+        2.61,
+        2.61
+      ],
+      "vps": [
+        87.0,
+        87.0
+      ],
+      "weights_per_group": [
+        10
+      ]
+    },
+    {
+      "decoder_compatible": false,
+      "decoder_incompatibility_reason": "VPS mismatch: observations=[85.0, 85.0], approved_decoder=87",
+      "exclusion_reason": null,
+      "exists": true,
+      "group_count": 14,
+      "image_hw": [
+        145,
+        129
+      ],
+      "inter_group_gap_mm": [
+        7.99999257601775,
+        8.000010264726598
+      ],
+      "myocardium_mask_available": true,
+      "native_reference_available": true,
+      "pixel_spacing_rc_mm": [
+        1.25,
+        1.25
+      ],
+      "prepared_input_eligible": true,
+      "quantitative_evaluation_eligible": false,
+      "reconstruction_eligible_current": false,
+      "slice_thickness_mm": [
+        8.0,
+        8.0
+      ],
+      "stack": "sax",
+      "subject": "DYL",
+      "timing9_max_ms": [
+        788.1500000149011,
+        784.15,
+        785.1500000149011,
+        672.1500000298023,
+        781.1499999850988,
+        815.1500000149011,
+        821.15,
+        809.15,
+        762.1500000298023
+      ],
+      "timing9_min_ms": [
+        705.15,
+        694.1499999850988,
+        695.1500000149011,
+        548.1499999850988,
+        679.1500000149011,
+        698.1499999850988,
+        676.15,
+        692.15,
+        673.1499999850988
+      ],
+      "tr_ms": [
+        2.61,
+        2.61
+      ],
+      "vps": [
+        85.0,
+        85.0
+      ],
+      "weights_per_group": [
+        10
+      ]
+    },
+    {
+      "decoder_compatible": false,
+      "decoder_incompatibility_reason": "VPS mismatch: observations=[85.0, 85.0], approved_decoder=87",
+      "exclusion_reason": null,
+      "exists": true,
+      "group_count": 12,
+      "image_hw": [
+        145,
+        129
+      ],
+      "inter_group_gap_mm": [
+        7.999996639746368,
+        8.000002683004602
+      ],
+      "myocardium_mask_available": false,
+      "native_reference_available": true,
+      "pixel_spacing_rc_mm": [
+        1.25,
+        1.25
+      ],
+      "prepared_input_eligible": true,
+      "quantitative_evaluation_eligible": false,
+      "reconstruction_eligible_current": false,
+      "slice_thickness_mm": [
+        8.0,
+        8.0
+      ],
+      "stack": "2ch",
+      "subject": "DYL",
+      "timing9_max_ms": [
+        834.1499999850988,
+        824.15,
+        824.15,
+        636.15,
+        823.1500000149011,
+        838.15,
+        862.1499999701977,
+        832.1500000149011,
+        812.1500000149011
+      ],
+      "timing9_min_ms": [
+        707.1500000149011,
+        681.1499999850988,
+        693.1499999850988,
+        543.1500000149011,
+        671.1500000149011,
+        703.1499999850988,
+        660.1500000149011,
+        663.1500000298023,
+        674.15
+      ],
+      "tr_ms": [
+        2.61,
+        2.61
+      ],
+      "vps": [
+        85.0,
+        85.0
+      ],
+      "weights_per_group": [
+        10
+      ]
+    },
+    {
+      "decoder_compatible": false,
+      "decoder_incompatibility_reason": "VPS mismatch: observations=[85.0, 85.0], approved_decoder=87",
+      "exclusion_reason": null,
+      "exists": true,
+      "group_count": 10,
+      "image_hw": [
+        129,
+        145
+      ],
+      "inter_group_gap_mm": [
+        7.99999394171005,
+        8.000007275614244
+      ],
+      "myocardium_mask_available": false,
+      "native_reference_available": true,
+      "pixel_spacing_rc_mm": [
+        1.25,
+        1.25
+      ],
+      "prepared_input_eligible": true,
+      "quantitative_evaluation_eligible": false,
+      "reconstruction_eligible_current": false,
+      "slice_thickness_mm": [
+        8.0,
+        8.0
+      ],
+      "stack": "4ch",
+      "subject": "DYL",
+      "timing9_max_ms": [
+        818.1499999701977,
+        806.1500000298023,
+        780.1499999701977,
+        752.1499999701977,
+        755.1500000149011,
+        846.15,
+        828.1499999850988,
+        783.1500000149011,
+        839.1500000149011
+      ],
+      "timing9_min_ms": [
+        594.15,
+        702.15,
+        594.1500000298023,
+        542.1500000149011,
+        594.15,
+        596.15,
+        559.1499999850988,
+        549.1499999850988,
+        649.1500000149011
+      ],
+      "tr_ms": [
+        2.61,
+        2.61
+      ],
+      "vps": [
+        85.0,
+        85.0
+      ],
+      "weights_per_group": [
+        10
+      ]
+    },
+    {
+      "decoder_compatible": true,
+      "decoder_incompatibility_reason": null,
+      "exclusion_reason": null,
+      "exists": true,
+      "group_count": 12,
+      "image_hw": [
+        129,
+        145
+      ],
+      "inter_group_gap_mm": [
+        7.999995872693257,
+        8.000008715749523
+      ],
+      "myocardium_mask_available": false,
+      "native_reference_available": true,
+      "pixel_spacing_rc_mm": [
+        1.25,
+        1.25
+      ],
+      "prepared_input_eligible": true,
+      "quantitative_evaluation_eligible": false,
+      "reconstruction_eligible_current": true,
+      "slice_thickness_mm": [
+        8.0,
+        8.0
+      ],
+      "stack": "sax",
+      "subject": "DYZ",
+      "timing9_max_ms": [
+        518.9300000149012,
+        494.93,
+        932.9299999701977,
+        906.9300000000001,
+        491.93000001490117,
+        489.93000001490117,
+        1012.9300000000001,
+        458.93,
+        463.9299999850989
+      ],
+      "timing9_min_ms": [
+        418.9299999701977,
+        408.93000002980233,
+        439.93000001490117,
+        301.93,
+        415.93,
+        449.93,
+        412.92999998509885,
+        367.92999998509885,
+        404.93000001490117
+      ],
+      "tr_ms": [
+        2.61,
+        2.61
+      ],
+      "vps": [
+        87.0,
+        87.0
+      ],
+      "weights_per_group": [
+        10
+      ]
+    },
+    {
+      "decoder_compatible": true,
+      "decoder_incompatibility_reason": null,
+      "exclusion_reason": null,
+      "exists": true,
+      "group_count": 16,
+      "image_hw": [
+        145,
+        129
+      ],
+      "inter_group_gap_mm": [
+        7.9999906939237055,
+        8.000008001478113
+      ],
+      "myocardium_mask_available": false,
+      "native_reference_available": true,
+      "pixel_spacing_rc_mm": [
+        1.25,
+        1.25
+      ],
+      "prepared_input_eligible": true,
+      "quantitative_evaluation_eligible": false,
+      "reconstruction_eligible_current": true,
+      "slice_thickness_mm": [
+        8.0,
+        8.0
+      ],
+      "stack": "2ch",
+      "subject": "DYZ",
+      "timing9_max_ms": [
+        516.9300000149012,
+        514.9300000000001,
+        510.93000001490117,
+        355.93000001490117,
+        519.9300000000001,
+        519.9300000000001,
+        480.9299999850989,
+        462.92999998509885,
+        466.9300000149012
+      ],
+      "timing9_min_ms": [
+        468.93,
+        456.93000001490117,
+        455.93000002980233,
+        303.9299999701977,
+        458.93000001490117,
+        444.93000001490117,
+        427.93,
+        412.92999998509885,
+        399.93
+      ],
+      "tr_ms": [
+        2.61,
+        2.61
+      ],
+      "vps": [
+        87.0,
+        87.0
+      ],
+      "weights_per_group": [
+        10
+      ]
+    },
+    {
+      "decoder_compatible": true,
+      "decoder_incompatibility_reason": null,
+      "exclusion_reason": null,
+      "exists": true,
+      "group_count": 10,
+      "image_hw": [
+        129,
+        145
+      ],
+      "inter_group_gap_mm": [
+        7.999990982190181,
+        8.000006005821726
+      ],
+      "myocardium_mask_available": false,
+      "native_reference_available": true,
+      "pixel_spacing_rc_mm": [
+        1.25,
+        1.25
+      ],
+      "prepared_input_eligible": true,
+      "quantitative_evaluation_eligible": false,
+      "reconstruction_eligible_current": true,
+      "slice_thickness_mm": [
+        8.0,
+        8.0
+      ],
+      "stack": "4ch",
+      "subject": "DYZ",
+      "timing9_max_ms": [
+        532.9299999701977,
+        520.9299999850989,
+        522.9300000000001,
+        373.9299999850989,
+        512.9300000000001,
+        524.9299999701977,
+        503.9300000149012,
+        465.93000001490117,
+        457.9300000149012
+      ],
+      "timing9_min_ms": [
+        460.93,
+        451.93,
+        439.92999998509885,
+        314.93000001490117,
+        453.93000001490117,
+        443.93,
+        410.93000001490117,
+        408.92999998509885,
+        391.93000002980233
+      ],
+      "tr_ms": [
+        2.61,
+        2.61
+      ],
+      "vps": [
+        87.0,
+        87.0
+      ],
+      "weights_per_group": [
+        10
+      ]
+    },
+    {
+      "decoder_compatible": true,
+      "decoder_incompatibility_reason": null,
+      "exclusion_reason": null,
+      "exists": true,
+      "group_count": 12,
+      "image_hw": [
+        145,
+        129
+      ],
+      "inter_group_gap_mm": [
+        7.999986851680215,
+        8.000005782522255
+      ],
+      "myocardium_mask_available": true,
+      "native_reference_available": true,
+      "pixel_spacing_rc_mm": [
+        1.25,
+        1.25
+      ],
+      "prepared_input_eligible": true,
+      "quantitative_evaluation_eligible": true,
+      "reconstruction_eligible_current": true,
+      "slice_thickness_mm": [
+        8.0,
+        8.0
+      ],
+      "stack": "sax",
+      "subject": "HHZ",
+      "timing9_max_ms": [
+        1197.9300000149012,
+        654.9300000074506,
+        648.9299999925495,
+        479.9299999925495,
+        606.9299999701977,
+        658.9300000000001,
+        971.9299999925495,
+        640.9300000000001,
+        560.9300000223518
+      ],
+      "timing9_min_ms": [
+        564.9300000149012,
+        495.93,
+        486.92999997764827,
+        336.9300000074506,
+        492.93,
+        483.93000001490117,
+        465.93,
+        483.9299999925495,
+        475.93000000000006
+      ],
+      "tr_ms": [
+        2.61,
+        2.61
+      ],
+      "vps": [
+        87.0,
+        87.0
+      ],
+      "weights_per_group": [
+        10
+      ]
+    },
+    {
+      "decoder_compatible": true,
+      "decoder_incompatibility_reason": null,
+      "exclusion_reason": null,
+      "exists": true,
+      "group_count": 16,
+      "image_hw": [
+        145,
+        129
+      ],
+      "inter_group_gap_mm": [
+        7.999994026807238,
+        8.000007149265466
+      ],
+      "myocardium_mask_available": false,
+      "native_reference_available": true,
+      "pixel_spacing_rc_mm": [
+        1.25,
+        1.25
+      ],
+      "prepared_input_eligible": true,
+      "quantitative_evaluation_eligible": true,
+      "reconstruction_eligible_current": true,
+      "slice_thickness_mm": [
+        8.0,
+        8.0
+      ],
+      "stack": "2ch",
+      "subject": "HHZ",
+      "timing9_max_ms": [
+        680.9299999925495,
+        702.9299999925495,
+        920.9299999850989,
+        692.9300000074506,
+        988.9299999850989,
+        1066.9299999925495,
+        675.9299999925495,
+        804.9299999925495,
+        719.9300000074506
+      ],
+      "timing9_min_ms": [
+        438.93,
+        436.9299999925494,
+        433.9299999925494,
+        288.9299999925494,
+        437.9300000074506,
+        436.9299999925494,
+        406.93,
+        392.9300000074506,
+        383.93
+      ],
+      "tr_ms": [
+        2.61,
+        2.61
+      ],
+      "vps": [
+        87.0,
+        87.0
+      ],
+      "weights_per_group": [
+        10
+      ]
+    },
+    {
+      "decoder_compatible": true,
+      "decoder_incompatibility_reason": null,
+      "exclusion_reason": null,
+      "exists": true,
+      "group_count": 10,
+      "image_hw": [
+        129,
+        145
+      ],
+      "inter_group_gap_mm": [
+        7.999990774485826,
+        8.000007277597623
+      ],
+      "myocardium_mask_available": false,
+      "native_reference_available": true,
+      "pixel_spacing_rc_mm": [
+        1.25,
+        1.25
+      ],
+      "prepared_input_eligible": true,
+      "quantitative_evaluation_eligible": true,
+      "reconstruction_eligible_current": true,
+      "slice_thickness_mm": [
+        8.0,
+        8.0
+      ],
+      "stack": "4ch",
+      "subject": "HHZ",
+      "timing9_max_ms": [
+        677.9299999925495,
+        588.9299999925495,
+        791.9300000000001,
+        730.9299999850989,
+        777.9300000074506,
+        826.9300000000001,
+        640.9300000223518,
+        803.9300000000001,
+        696.9299999925495
+      ],
+      "timing9_min_ms": [
+        486.92999997764827,
+        486.92999997764827,
+        486.92999997764827,
+        337.9299999925494,
+        483.93000001490117,
+        487.93,
+        451.9300000074506,
+        444.93,
+        434.9300000074506
+      ],
+      "tr_ms": [
+        2.61,
+        2.61
+      ],
+      "vps": [
+        87.0,
+        87.0
+      ],
+      "weights_per_group": [
+        10
+      ]
+    },
+    {
+      "decoder_compatible": true,
+      "decoder_incompatibility_reason": null,
+      "exclusion_reason": null,
+      "exists": true,
+      "group_count": 12,
+      "image_hw": [
+        129,
+        145
+      ],
+      "inter_group_gap_mm": [
+        7.999995338461515,
+        8.000009560956931
+      ],
+      "myocardium_mask_available": true,
+      "native_reference_available": true,
+      "pixel_spacing_rc_mm": [
+        1.25,
+        1.25
+      ],
+      "prepared_input_eligible": true,
+      "quantitative_evaluation_eligible": true,
+      "reconstruction_eligible_current": true,
+      "slice_thickness_mm": [
+        8.0,
+        8.0
+      ],
+      "stack": "sax",
+      "subject": "HJL",
+      "timing9_max_ms": [
+        944.9299999850989,
+        920.9300000149012,
+        953.9300000074506,
+        806.9299999776483,
+        941.9299999925495,
+        965.9300000000001,
+        931.9299999925495,
+        1096.9299999776483,
+        920.9300000074506
+      ],
+      "timing9_min_ms": [
+        801.9299999776483,
+        800.9300000223518,
+        800.9299999925495,
+        671.9300000000001,
+        789.9299999925495,
+        749.9300000149012,
+        683.9299999925495,
+        769.9300000149012,
+        667.9300000149012
+      ],
+      "tr_ms": [
+        2.61,
+        2.61
+      ],
+      "vps": [
+        87.0,
+        87.0
+      ],
+      "weights_per_group": [
+        10
+      ]
+    },
+    {
+      "decoder_compatible": true,
+      "decoder_incompatibility_reason": null,
+      "exclusion_reason": null,
+      "exists": true,
+      "group_count": 16,
+      "image_hw": [
+        145,
+        129
+      ],
+      "inter_group_gap_mm": [
+        7.999989802586292,
+        8.00000985078075
+      ],
+      "myocardium_mask_available": false,
+      "native_reference_available": true,
+      "pixel_spacing_rc_mm": [
+        1.25,
+        1.25
+      ],
+      "prepared_input_eligible": true,
+      "quantitative_evaluation_eligible": true,
+      "reconstruction_eligible_current": true,
+      "slice_thickness_mm": [
+        8.0,
+        8.0
+      ],
+      "stack": "2ch",
+      "subject": "HJL",
+      "timing9_max_ms": [
+        1053.929999985099,
+        1020.9299999925495,
+        1008.9300000074506,
+        880.9300000000001,
+        1001.9299999925495,
+        998.9299999925495,
+        991.9300000149012,
+        952.9300000074506,
+        946.9299999925495
+      ],
+      "timing9_min_ms": [
+        910.9299999701977,
+        815.9300000074506,
+        811.9299999925495,
+        706.9300000074506,
+        870.9299999925495,
+        857.9299999925495,
+        841.9299999925495,
+        815.9299999925495,
+        719.9300000074506
+      ],
+      "tr_ms": [
+        2.61,
+        2.61
+      ],
+      "vps": [
+        87.0,
+        87.0
+      ],
+      "weights_per_group": [
+        10
+      ]
+    },
+    {
+      "decoder_compatible": true,
+      "decoder_incompatibility_reason": null,
+      "exclusion_reason": null,
+      "exists": true,
+      "group_count": 10,
+      "image_hw": [
+        129,
+        145
+      ],
+      "inter_group_gap_mm": [
+        7.999996691841529,
+        8.000009752459166
+      ],
+      "myocardium_mask_available": false,
+      "native_reference_available": true,
+      "pixel_spacing_rc_mm": [
+        1.25,
+        1.25
+      ],
+      "prepared_input_eligible": true,
+      "quantitative_evaluation_eligible": true,
+      "reconstruction_eligible_current": true,
+      "slice_thickness_mm": [
+        8.0,
+        8.0
+      ],
+      "stack": "4ch",
+      "subject": "HJL",
+      "timing9_max_ms": [
+        1084.9300000074506,
+        1789.9300000223518,
+        1022.9300000000001,
+        897.9299999925495,
+        1041.93,
+        1042.9299999925495,
+        1013.9299999776483,
+        1010.9300000000001,
+        1002.9300000074506
+      ],
+      "timing9_min_ms": [
+        960.9299999925495,
+        920.9299999925495,
+        884.9299999925495,
+        734.9299999925495,
+        847.9299999776483,
+        876.9300000223518,
+        886.9300000074506,
+        866.9300000298024,
+        833.9300000074506
+      ],
+      "tr_ms": [
+        2.61,
+        2.61
+      ],
+      "vps": [
+        87.0,
+        87.0
+      ],
+      "weights_per_group": [
+        10
+      ]
+    }
+  ],
+  "subject_summary": [
+    {
+      "decoder_compatible": true,
+      "myocardium_mask_available": true,
+      "myocardium_mask_evidence": [
+        {
+          "path": "/home/universe/SVR/data/Code_10w_v1/Code_10w_runs/CYJ_decoder_comparison_20260924_clean_v1/inputs/reference/myocardium_masks_v2/sax_myocardium_masks.npz",
+          "provenance": "Phase-0 Code_10w myocardium-mask bundle",
+          "sha256": "2415992f546aa154f1702ae6bfe8465aa187e608bb3db4b8eedec44d108a0169"
+        },
+        {
+          "path": "/home/universe/SVR/data/Code_10w_v1/Code_10w_runs/CYJ_decoder_comparison_20260924_clean_v1/inputs/reference/myocardium_masks_v2/manifest.json",
+          "provenance": "Phase-0 Code_10w myocardium-mask provenance",
+          "sha256": "6c890d78599b80f96e53b3f5b8c093be892e76be726e69f8a8d68d932eb0398a"
+        }
+      ],
+      "myocardium_mask_reason": null,
+      "native_reference_available": true,
+      "native_reference_evidence": {
+        "2ch": [
+          {
+            "path": "/home/universe/SVR/data/Code_10w_v1/Code_10w_runs/CYJ_decoder_comparison_20260924_clean_v1/inputs/reference/native_reference_2d/2ch.npz",
+            "provenance": "Phase-0 Code_10w native-reference bundle",
+            "sha256": "5d85e515f32cf74037f5e8578fdfe79769ebd0ea557addeaa6750e09df34d8d9"
+          },
+          {
+            "path": "/home/universe/SVR/data/Code_10w_v1/Code_10w_runs/CYJ_decoder_comparison_20260924_clean_v1/inputs/reference/native_reference_2d/native_reference_manifest.json",
+            "provenance": "Phase-0 Code_10w native-reference provenance",
+            "sha256": "d188f208cc28bcc1a7f39f9b9b52dba9996c104292e182e3c0768fa7b6c35def"
+          },
+          {
+            "path": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/subjects/CYJ/results/2D_fit_first/experiments/20260822_v5_full_pipeline_v1/fitting_qc/NIfTI_Slices/2ch_T1_stack_r0100.nii.gz",
+            "provenance": "2D-fit-first v5 fitting_qc native map",
+            "sha256": "dfb08837d6f2034f41e6b78293d9d644709703907edc39a9adb061329b41d249"
+          },
+          {
+            "path": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/subjects/CYJ/results/2D_fit_first/experiments/20260822_v5_full_pipeline_v1/fitting_qc/NIfTI_Slices/2ch_T2_stack_r0100.nii.gz",
+            "provenance": "2D-fit-first v5 fitting_qc native map",
+            "sha256": "92e7614253906270b21c43d7efebeaf36f73ef3d18e2e043c1402b65dffb1679"
+          },
+          {
+            "path": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/subjects/CYJ/results/2D_fit_first/experiments/20260822_v5_full_pipeline_v1/config.yaml",
+            "provenance": "2D-fit-first v5 experiment provenance",
+            "sha256": "45b984b92acb54d8f8af7942d9f2b3b5f096558aa35fd73aef18722c83d6d268"
+          }
+        ],
+        "4ch": [
+          {
+            "path": "/home/universe/SVR/data/Code_10w_v1/Code_10w_runs/CYJ_decoder_comparison_20260924_clean_v1/inputs/reference/native_reference_2d/4ch.npz",
+            "provenance": "Phase-0 Code_10w native-reference bundle",
+            "sha256": "65de8e06e52af53df7a1c845907076c60cce3f3ecd7ab869faa148f9cd61aa94"
+          },
+          {
+            "path": "/home/universe/SVR/data/Code_10w_v1/Code_10w_runs/CYJ_decoder_comparison_20260924_clean_v1/inputs/reference/native_reference_2d/native_reference_manifest.json",
+            "provenance": "Phase-0 Code_10w native-reference provenance",
+            "sha256": "d188f208cc28bcc1a7f39f9b9b52dba9996c104292e182e3c0768fa7b6c35def"
+          },
+          {
+            "path": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/subjects/CYJ/results/2D_fit_first/experiments/20260822_v5_full_pipeline_v1/fitting_qc/NIfTI_Slices/4ch_T1_stack_r0100.nii.gz",
+            "provenance": "2D-fit-first v5 fitting_qc native map",
+            "sha256": "38f8eead61494eeb9244eace937afa9604925657a95b846c23a166556d389ad0"
+          },
+          {
+            "path": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/subjects/CYJ/results/2D_fit_first/experiments/20260822_v5_full_pipeline_v1/fitting_qc/NIfTI_Slices/4ch_T2_stack_r0100.nii.gz",
+            "provenance": "2D-fit-first v5 fitting_qc native map",
+            "sha256": "3cb2dbf453e0ccb4aa7cae447cfb609391e7cdd822537aea75a053bddd449034"
+          },
+          {
+            "path": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/subjects/CYJ/results/2D_fit_first/experiments/20260822_v5_full_pipeline_v1/config.yaml",
+            "provenance": "2D-fit-first v5 experiment provenance",
+            "sha256": "45b984b92acb54d8f8af7942d9f2b3b5f096558aa35fd73aef18722c83d6d268"
+          }
+        ],
+        "sax": [
+          {
+            "path": "/home/universe/SVR/data/Code_10w_v1/Code_10w_runs/CYJ_decoder_comparison_20260924_clean_v1/inputs/reference/native_reference_2d/sax.npz",
+            "provenance": "Phase-0 Code_10w native-reference bundle",
+            "sha256": "244ea8cbf1b93087c8bf5046a35df2f50a6f70de9d58b9278aaa2f9c81a6aa66"
+          },
+          {
+            "path": "/home/universe/SVR/data/Code_10w_v1/Code_10w_runs/CYJ_decoder_comparison_20260924_clean_v1/inputs/reference/native_reference_2d/native_reference_manifest.json",
+            "provenance": "Phase-0 Code_10w native-reference provenance",
+            "sha256": "d188f208cc28bcc1a7f39f9b9b52dba9996c104292e182e3c0768fa7b6c35def"
+          },
+          {
+            "path": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/subjects/CYJ/results/2D_fit_first/experiments/20260822_v5_full_pipeline_v1/fitting_qc/NIfTI_Slices/sax_T1_stack_r0100.nii.gz",
+            "provenance": "2D-fit-first v5 fitting_qc native map",
+            "sha256": "da07df69081a16d74d30bfa670a745b1cbb5d450fb49e82a996f50d079ff7cc1"
+          },
+          {
+            "path": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/subjects/CYJ/results/2D_fit_first/experiments/20260822_v5_full_pipeline_v1/fitting_qc/NIfTI_Slices/sax_T2_stack_r0100.nii.gz",
+            "provenance": "2D-fit-first v5 fitting_qc native map",
+            "sha256": "102cd652ccf7c1cf820be684539b9b03ea59d28efc4986872d32b66a577bb435"
+          },
+          {
+            "path": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/subjects/CYJ/results/2D_fit_first/experiments/20260822_v5_full_pipeline_v1/config.yaml",
+            "provenance": "2D-fit-first v5 experiment provenance",
+            "sha256": "45b984b92acb54d8f8af7942d9f2b3b5f096558aa35fd73aef18722c83d6d268"
+          }
+        ]
+      },
+      "prepared_input_eligible": true,
+      "quantitative_evaluation_eligible": true,
+      "reasons": [],
+      "reconstruction_eligible_current": true,
+      "subject": "CYJ"
+    },
+    {
+      "decoder_compatible": false,
+      "myocardium_mask_available": true,
+      "myocardium_mask_evidence": [
+        {
+          "path": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/subjects/DYL/data/roi/LV_myocardium_full.nii.gz",
+          "provenance": "subject SAX ROI mask",
+          "sha256": "2ce48228e8a309e06c6a4286b19034110f4fe4bef0031c6104e764e5365ce1e1"
+        },
+        {
+          "path": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/subjects/DYL/data/roi/LV_myocardium_core.nii.gz",
+          "provenance": "subject SAX ROI mask",
+          "sha256": "2ce48228e8a309e06c6a4286b19034110f4fe4bef0031c6104e764e5365ce1e1"
+        }
+      ],
+      "myocardium_mask_reason": null,
+      "native_reference_available": true,
+      "native_reference_evidence": {
+        "2ch": [
+          {
+            "path": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/subjects/DYL/results/2D_fit_first/experiments/20260822_v5_full_pipeline_v1/fitting_qc/NIfTI_Slices/2ch_T1_stack_r0100.nii.gz",
+            "provenance": "2D-fit-first v5 fitting_qc native map",
+            "sha256": "596c644bb47ff077b77f24a5b97d73e2970335ac97b168be379157fce92826d7"
+          },
+          {
+            "path": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/subjects/DYL/results/2D_fit_first/experiments/20260822_v5_full_pipeline_v1/fitting_qc/NIfTI_Slices/2ch_T2_stack_r0100.nii.gz",
+            "provenance": "2D-fit-first v5 fitting_qc native map",
+            "sha256": "b2ad800cf6d517d8430e9f16d89b315924b3eaf73bb1f0a2cc207a6e5decd7ed"
+          },
+          {
+            "path": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/subjects/DYL/results/2D_fit_first/experiments/20260822_v5_full_pipeline_v1/config.yaml",
+            "provenance": "2D-fit-first v5 experiment provenance",
+            "sha256": "453f58b74711eb50c41b7d4c5beb04bde07da00ee480223b820d2c4982a50dcf"
+          }
+        ],
+        "4ch": [
+          {
+            "path": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/subjects/DYL/results/2D_fit_first/experiments/20260822_v5_full_pipeline_v1/fitting_qc/NIfTI_Slices/4ch_T1_stack_r0100.nii.gz",
+            "provenance": "2D-fit-first v5 fitting_qc native map",
+            "sha256": "409db812b8b6a7e27451b04e92a677e4d264a798fc7ffb4e687e0621fc8f41d4"
+          },
+          {
+            "path": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/subjects/DYL/results/2D_fit_first/experiments/20260822_v5_full_pipeline_v1/fitting_qc/NIfTI_Slices/4ch_T2_stack_r0100.nii.gz",
+            "provenance": "2D-fit-first v5 fitting_qc native map",
+            "sha256": "2088879dfc4b3bf9eb67278e5aceaaa1a9c3cce9ec8465e16dff4d4c807a09a0"
+          },
+          {
+            "path": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/subjects/DYL/results/2D_fit_first/experiments/20260822_v5_full_pipeline_v1/config.yaml",
+            "provenance": "2D-fit-first v5 experiment provenance",
+            "sha256": "453f58b74711eb50c41b7d4c5beb04bde07da00ee480223b820d2c4982a50dcf"
+          }
+        ],
+        "sax": [
+          {
+            "path": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/subjects/DYL/results/2D_fit_first/experiments/20260822_v5_full_pipeline_v1/fitting_qc/NIfTI_Slices/sax_T1_stack_r0100.nii.gz",
+            "provenance": "2D-fit-first v5 fitting_qc native map",
+            "sha256": "a1f8a02a114b4e3e4d9060b9924b113a80d45090915594081b5dddf23d4e5f4a"
+          },
+          {
+            "path": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/subjects/DYL/results/2D_fit_first/experiments/20260822_v5_full_pipeline_v1/fitting_qc/NIfTI_Slices/sax_T2_stack_r0100.nii.gz",
+            "provenance": "2D-fit-first v5 fitting_qc native map",
+            "sha256": "36bee5f7c8145dd3768c3ef7d4707ae4099bac62d2ff4d384932e942295b1fbc"
+          },
+          {
+            "path": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/subjects/DYL/results/2D_fit_first/experiments/20260822_v5_full_pipeline_v1/config.yaml",
+            "provenance": "2D-fit-first v5 experiment provenance",
+            "sha256": "453f58b74711eb50c41b7d4c5beb04bde07da00ee480223b820d2c4982a50dcf"
+          }
+        ]
+      },
+      "prepared_input_eligible": true,
+      "quantitative_evaluation_eligible": false,
+      "reasons": [
+        "VPS mismatch: observations=[85.0, 85.0], approved_decoder=87"
+      ],
+      "reconstruction_eligible_current": false,
+      "subject": "DYL"
+    },
+    {
+      "decoder_compatible": true,
+      "myocardium_mask_available": false,
+      "myocardium_mask_evidence": [
+        {
+          "path": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/subjects/DYZ/data/roi/20260823_v5_newdata_v1/ROI_MANUAL_STEP_REQUIRED.md",
+          "provenance": "ROI status: manual annotation required",
+          "sha256": "8773e4e7fb7297944d1b131947a69bac15f790cd72bd19aec3c8014e04d3b38c"
+        }
+      ],
+      "myocardium_mask_reason": "manual myocardium ROI annotation and compatible mask export are required; legacy evaluation masks are not reusable",
+      "native_reference_available": true,
+      "native_reference_evidence": {
+        "2ch": [
+          {
+            "path": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/subjects/DYZ/results/2D_fit_first/experiments/20260822_v5_full_pipeline_v1/fitting_qc/NIfTI_Slices/2ch_T1_stack_r0100.nii.gz",
+            "provenance": "2D-fit-first v5 fitting_qc native map",
+            "sha256": "562a9cc0c2a452331e26ccafc35c56198de9cb56196350b3b4d8ef81b39b3cbb"
+          },
+          {
+            "path": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/subjects/DYZ/results/2D_fit_first/experiments/20260822_v5_full_pipeline_v1/fitting_qc/NIfTI_Slices/2ch_T2_stack_r0100.nii.gz",
+            "provenance": "2D-fit-first v5 fitting_qc native map",
+            "sha256": "c63d2b69074c6d7a8ffd015b78a36af144f03b7c9d24cf2b9497152d3f97d0d1"
+          },
+          {
+            "path": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/subjects/DYZ/results/2D_fit_first/experiments/20260822_v5_full_pipeline_v1/config.yaml",
+            "provenance": "2D-fit-first v5 experiment provenance",
+            "sha256": "16ecd484245b3b74b5f018a058cefdd6283011f060242e8fe333935084ab722e"
+          }
+        ],
+        "4ch": [
+          {
+            "path": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/subjects/DYZ/results/2D_fit_first/experiments/20260822_v5_full_pipeline_v1/fitting_qc/NIfTI_Slices/4ch_T1_stack_r0100.nii.gz",
+            "provenance": "2D-fit-first v5 fitting_qc native map",
+            "sha256": "b6f1c35dd6a2e7d5aa04d38c58d07436a9f49e97ab12122e1e13ee30180f46cf"
+          },
+          {
+            "path": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/subjects/DYZ/results/2D_fit_first/experiments/20260822_v5_full_pipeline_v1/fitting_qc/NIfTI_Slices/4ch_T2_stack_r0100.nii.gz",
+            "provenance": "2D-fit-first v5 fitting_qc native map",
+            "sha256": "0ecdb7dcce74bdd1c37f1f5273182876c303a1cb1364f770eecb3daa95983171"
+          },
+          {
+            "path": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/subjects/DYZ/results/2D_fit_first/experiments/20260822_v5_full_pipeline_v1/config.yaml",
+            "provenance": "2D-fit-first v5 experiment provenance",
+            "sha256": "16ecd484245b3b74b5f018a058cefdd6283011f060242e8fe333935084ab722e"
+          }
+        ],
+        "sax": [
+          {
+            "path": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/subjects/DYZ/results/2D_fit_first/experiments/20260822_v5_full_pipeline_v1/fitting_qc/NIfTI_Slices/sax_T1_stack_r0100.nii.gz",
+            "provenance": "2D-fit-first v5 fitting_qc native map",
+            "sha256": "b6a417e8b51280a02e141f7becafc3862960c9455768cf74f8eeccb3ae46f0c0"
+          },
+          {
+            "path": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/subjects/DYZ/results/2D_fit_first/experiments/20260822_v5_full_pipeline_v1/fitting_qc/NIfTI_Slices/sax_T2_stack_r0100.nii.gz",
+            "provenance": "2D-fit-first v5 fitting_qc native map",
+            "sha256": "29d0ec8109b676447d18d184e08cce2c6de1758ad091f10bafe8c77db4c33257"
+          },
+          {
+            "path": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/subjects/DYZ/results/2D_fit_first/experiments/20260822_v5_full_pipeline_v1/config.yaml",
+            "provenance": "2D-fit-first v5 experiment provenance",
+            "sha256": "16ecd484245b3b74b5f018a058cefdd6283011f060242e8fe333935084ab722e"
+          }
+        ]
+      },
+      "prepared_input_eligible": true,
+      "quantitative_evaluation_eligible": false,
+      "reasons": [
+        "manual myocardium ROI annotation and compatible mask export are required; legacy evaluation masks are not reusable"
+      ],
+      "reconstruction_eligible_current": true,
+      "subject": "DYZ"
+    },
+    {
+      "decoder_compatible": true,
+      "myocardium_mask_available": true,
+      "myocardium_mask_evidence": [
+        {
+          "path": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/subjects/HHZ/results/2D_fit_first/evaluations/20260823_dual_full_v1/nesvor_v5_128_w1/masks/native_sax/myocardium_full.nii.gz",
+          "provenance": "2D-fit-first formal evaluation native SAX mask",
+          "sha256": "8783748999b631aa6192a1a5272f663ff21ba81b081fbeaa09fa44b0421bbcdd"
+        },
+        {
+          "path": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/subjects/HHZ/results/2D_fit_first/evaluations/20260823_dual_full_v1/nesvor_v5_128_w1/masks/native_sax/myocardium_core.nii.gz",
+          "provenance": "2D-fit-first formal evaluation native SAX mask",
+          "sha256": "8783748999b631aa6192a1a5272f663ff21ba81b081fbeaa09fa44b0421bbcdd"
+        }
+      ],
+      "myocardium_mask_reason": null,
+      "native_reference_available": true,
+      "native_reference_evidence": {
+        "2ch": [
+          {
+            "path": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/subjects/HHZ/results/2D_fit_first/experiments/20260822_v5_full_pipeline_v1/fitting_qc/NIfTI_Slices/2ch_T1_stack_r0100.nii.gz",
+            "provenance": "2D-fit-first v5 fitting_qc native map",
+            "sha256": "1123b386026ba93108e1ef07242ac1212e0fb547e269f32f0b39f68f9e186ccc"
+          },
+          {
+            "path": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/subjects/HHZ/results/2D_fit_first/experiments/20260822_v5_full_pipeline_v1/fitting_qc/NIfTI_Slices/2ch_T2_stack_r0100.nii.gz",
+            "provenance": "2D-fit-first v5 fitting_qc native map",
+            "sha256": "2e43fc95bc25b9dd6006ea06777836db95a442ba8f46763c7a4405ce68c408c5"
+          },
+          {
+            "path": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/subjects/HHZ/results/2D_fit_first/experiments/20260822_v5_full_pipeline_v1/config.yaml",
+            "provenance": "2D-fit-first v5 experiment provenance",
+            "sha256": "47a3bdad34028cffa26b29179c074591fc5d7b0cf116ec17dd1e69cde3b943ee"
+          }
+        ],
+        "4ch": [
+          {
+            "path": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/subjects/HHZ/results/2D_fit_first/experiments/20260822_v5_full_pipeline_v1/fitting_qc/NIfTI_Slices/4ch_T1_stack_r0100.nii.gz",
+            "provenance": "2D-fit-first v5 fitting_qc native map",
+            "sha256": "4b0194477bd7e0bd7106d65d33482889c94a27bd2c22477f785807a0ec360e5d"
+          },
+          {
+            "path": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/subjects/HHZ/results/2D_fit_first/experiments/20260822_v5_full_pipeline_v1/fitting_qc/NIfTI_Slices/4ch_T2_stack_r0100.nii.gz",
+            "provenance": "2D-fit-first v5 fitting_qc native map",
+            "sha256": "23e08c4a6c3205251dcbccabdbcaa1a329321298cb49dcdcdf6de357056dee0a"
+          },
+          {
+            "path": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/subjects/HHZ/results/2D_fit_first/experiments/20260822_v5_full_pipeline_v1/config.yaml",
+            "provenance": "2D-fit-first v5 experiment provenance",
+            "sha256": "47a3bdad34028cffa26b29179c074591fc5d7b0cf116ec17dd1e69cde3b943ee"
+          }
+        ],
+        "sax": [
+          {
+            "path": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/subjects/HHZ/results/2D_fit_first/experiments/20260822_v5_full_pipeline_v1/fitting_qc/NIfTI_Slices/sax_T1_stack_r0100.nii.gz",
+            "provenance": "2D-fit-first v5 fitting_qc native map",
+            "sha256": "985998c0fe71f033678b7e5b248012282783c87b1a7e483e3dbc5ab32d22305f"
+          },
+          {
+            "path": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/subjects/HHZ/results/2D_fit_first/experiments/20260822_v5_full_pipeline_v1/fitting_qc/NIfTI_Slices/sax_T2_stack_r0100.nii.gz",
+            "provenance": "2D-fit-first v5 fitting_qc native map",
+            "sha256": "d6e016b12aa05d5b602d3589a7621ee77d9d77c7053bdfc07fbf92e1945606c9"
+          },
+          {
+            "path": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/subjects/HHZ/results/2D_fit_first/experiments/20260822_v5_full_pipeline_v1/config.yaml",
+            "provenance": "2D-fit-first v5 experiment provenance",
+            "sha256": "47a3bdad34028cffa26b29179c074591fc5d7b0cf116ec17dd1e69cde3b943ee"
+          }
+        ]
+      },
+      "prepared_input_eligible": true,
+      "quantitative_evaluation_eligible": true,
+      "reasons": [],
+      "reconstruction_eligible_current": true,
+      "subject": "HHZ"
+    },
+    {
+      "decoder_compatible": true,
+      "myocardium_mask_available": true,
+      "myocardium_mask_evidence": [
+        {
+          "path": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/subjects/HJL/results/2D_fit_first/evaluations/20260823_dual_full_v1/nesvor_v5_128_w1/masks/native_sax/myocardium_full.nii.gz",
+          "provenance": "2D-fit-first formal evaluation native SAX mask",
+          "sha256": "26cb011f44d3746c4ffdb89dc1650b34d4e623d9b2f62d2038d6b25739ddbbb2"
+        },
+        {
+          "path": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/subjects/HJL/results/2D_fit_first/evaluations/20260823_dual_full_v1/nesvor_v5_128_w1/masks/native_sax/myocardium_core.nii.gz",
+          "provenance": "2D-fit-first formal evaluation native SAX mask",
+          "sha256": "26cb011f44d3746c4ffdb89dc1650b34d4e623d9b2f62d2038d6b25739ddbbb2"
+        }
+      ],
+      "myocardium_mask_reason": null,
+      "native_reference_available": true,
+      "native_reference_evidence": {
+        "2ch": [
+          {
+            "path": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/subjects/HJL/results/2D_fit_first/experiments/20260822_v5_full_pipeline_v1/fitting_qc/NIfTI_Slices/2ch_T1_stack_r0100.nii.gz",
+            "provenance": "2D-fit-first v5 fitting_qc native map",
+            "sha256": "9c83b124beb05c79533f225f29cd0fd5a3bda7d32cf41e9c4bc37f538e71f494"
+          },
+          {
+            "path": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/subjects/HJL/results/2D_fit_first/experiments/20260822_v5_full_pipeline_v1/fitting_qc/NIfTI_Slices/2ch_T2_stack_r0100.nii.gz",
+            "provenance": "2D-fit-first v5 fitting_qc native map",
+            "sha256": "c208923c1292874ad769d11455f611762cc09ba88466e5ec196fbe8cf051f7b2"
+          },
+          {
+            "path": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/subjects/HJL/results/2D_fit_first/experiments/20260822_v5_full_pipeline_v1/config.yaml",
+            "provenance": "2D-fit-first v5 experiment provenance",
+            "sha256": "fa083bf4249befc57dd5684ed0d2a66c29ccdd6532a173b8b7c321efa3bbef78"
+          }
+        ],
+        "4ch": [
+          {
+            "path": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/subjects/HJL/results/2D_fit_first/experiments/20260822_v5_full_pipeline_v1/fitting_qc/NIfTI_Slices/4ch_T1_stack_r0100.nii.gz",
+            "provenance": "2D-fit-first v5 fitting_qc native map",
+            "sha256": "f7ea8fd49c4409c015b2cbb2f4ccf2460ad27ee67d03f17eadcda771503ee244"
+          },
+          {
+            "path": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/subjects/HJL/results/2D_fit_first/experiments/20260822_v5_full_pipeline_v1/fitting_qc/NIfTI_Slices/4ch_T2_stack_r0100.nii.gz",
+            "provenance": "2D-fit-first v5 fitting_qc native map",
+            "sha256": "2250985781d0a0f9b6e73a6172fee05bc5785406408823b95a29d67a2086149b"
+          },
+          {
+            "path": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/subjects/HJL/results/2D_fit_first/experiments/20260822_v5_full_pipeline_v1/config.yaml",
+            "provenance": "2D-fit-first v5 experiment provenance",
+            "sha256": "fa083bf4249befc57dd5684ed0d2a66c29ccdd6532a173b8b7c321efa3bbef78"
+          }
+        ],
+        "sax": [
+          {
+            "path": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/subjects/HJL/results/2D_fit_first/experiments/20260822_v5_full_pipeline_v1/fitting_qc/NIfTI_Slices/sax_T1_stack_r0100.nii.gz",
+            "provenance": "2D-fit-first v5 fitting_qc native map",
+            "sha256": "d6d4c230e43a530227e5443275b4476cbfab5e6b57c4d1a20d9ce058556ed45f"
+          },
+          {
+            "path": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/subjects/HJL/results/2D_fit_first/experiments/20260822_v5_full_pipeline_v1/fitting_qc/NIfTI_Slices/sax_T2_stack_r0100.nii.gz",
+            "provenance": "2D-fit-first v5 fitting_qc native map",
+            "sha256": "d1494412e3107e40760efa4b98d4c571ac9b4eed7616af2c080f3f178dd8953f"
+          },
+          {
+            "path": "/home/universe/SVR/multimap_postprogramming/MultiMapCode/subjects/HJL/results/2D_fit_first/experiments/20260822_v5_full_pipeline_v1/config.yaml",
+            "provenance": "2D-fit-first v5 experiment provenance",
+            "sha256": "fa083bf4249befc57dd5684ed0d2a66c29ccdd6532a173b8b7c321efa3bbef78"
+          }
+        ]
+      },
+      "prepared_input_eligible": true,
+      "quantitative_evaluation_eligible": true,
+      "reasons": [],
+      "reconstruction_eligible_current": true,
+      "subject": "HJL"
+    }
+  ]
+}

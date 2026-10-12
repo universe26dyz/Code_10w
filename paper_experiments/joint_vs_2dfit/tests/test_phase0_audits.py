@@ -26,7 +26,7 @@ def _load(name: str):
     return module
 
 
-def _write_observations(path: Path, *, groups: int = 2) -> None:
+def _write_observations(path: Path, *, groups: int = 2, tr_ms: float = 2.61, vps: int = 87) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     count = groups * 10
     images = np.zeros((count, 3, 4), dtype=np.float32)
@@ -42,8 +42,8 @@ def _write_observations(path: Path, *, groups: int = 2) -> None:
         affine_lps_rc=np.tile(np.eye(4), (count, 1, 1)),
         pixel_spacing_rc_mm=np.tile([1.2, 1.3], (count, 1)),
         slice_thickness_mm=np.full(count, 8.0),
-        tr_ms=np.full(count, 2.61),
-        vps=np.full(count, 87),
+        tr_ms=np.full(count, tr_ms),
+        vps=np.full(count, vps),
     )
 
 
@@ -98,7 +98,7 @@ def test_cohort_audit_counts_complete_ten_weight_groups(tmp_path: Path) -> None:
     row = module.inspect_observations(tmp_path / "prepared" / "S1" / "sax" / "observations.npz")
     assert row["group_count"] == 2
     assert row["weights_per_group"] == [10]
-    assert row["eligible_full_data"] is True
+    assert row["prepared_input_eligible"] is True
 
 
 def test_current_audit_output_schema(tmp_path: Path) -> None:
@@ -117,3 +117,86 @@ def test_audits_do_not_modify_existing_runs(tmp_path: Path) -> None:
     _write_observations(tmp_path / "prepared" / "S1" / "sax" / "observations.npz")
     module.audit_cohort(tmp_path / "prepared", preprocessed_root=None, native_reference_root=None, myocardium_mask_root=None)
     assert run_file.read_text(encoding="utf-8") == "preserve"
+
+
+def _approved_decoder_manifest(path: Path, *, tr_ms: float = 2.61, vps: int = 87) -> Path:
+    path.write_text(json.dumps({"approved_for_paper": True, "protocol_hhz_v1": {"tr_ms": tr_ms, "vps": vps}}), encoding="utf-8")
+    return path
+
+
+def test_vps_mismatch_is_not_decoder_compatible(tmp_path: Path) -> None:
+    module = _load("audit_real_cohort")
+    _write_observations(tmp_path / "prepared" / "DYL" / "sax" / "observations.npz", vps=85)
+    report = module.audit_cohort(tmp_path / "prepared", preprocessed_root=None, native_reference_root=None, myocardium_mask_root=None, decoder_manifest=_approved_decoder_manifest(tmp_path / "decoder.json"), reference_search_roots=[])
+    row = report["rows"][0]
+    assert row["prepared_input_eligible"] is True
+    assert row["decoder_compatible"] is False
+    assert row["reconstruction_eligible_current"] is False
+    assert "VPS" in row["decoder_incompatibility_reason"]
+
+
+def test_vps_match_is_decoder_compatible(tmp_path: Path) -> None:
+    module = _load("audit_real_cohort")
+    _write_observations(tmp_path / "prepared" / "CYJ" / "sax" / "observations.npz", vps=87)
+    report = module.audit_cohort(tmp_path / "prepared", preprocessed_root=None, native_reference_root=None, myocardium_mask_root=None, decoder_manifest=_approved_decoder_manifest(tmp_path / "decoder.json"), reference_search_roots=[])
+    row = report["rows"][0]
+    assert row["decoder_compatible"] is True
+    assert row["reconstruction_eligible_current"] is True
+
+
+def test_evaluation_eligibility_is_not_prepared_eligibility(tmp_path: Path) -> None:
+    module = _load("audit_real_cohort")
+    _write_observations(tmp_path / "prepared" / "CYJ" / "sax" / "observations.npz")
+    report = module.audit_cohort(tmp_path / "prepared", preprocessed_root=None, native_reference_root=None, myocardium_mask_root=None, decoder_manifest=_approved_decoder_manifest(tmp_path / "decoder.json"), reference_search_roots=[])
+    row = report["rows"][0]
+    assert row["prepared_input_eligible"] is True
+    assert row["quantitative_evaluation_eligible"] is False
+
+
+def test_missing_reference_or_mask_keeps_evaluation_ineligible(tmp_path: Path) -> None:
+    module = _load("audit_real_cohort")
+    _write_observations(tmp_path / "prepared" / "CYJ" / "sax" / "observations.npz")
+    old_root = tmp_path / "MultiMapCode"
+    native = old_root / "subjects" / "CYJ" / "results" / "2D_fit_first" / "experiments" / "20260822_v5_full_pipeline_v1" / "fitting_qc" / "NIfTI_Slices"
+    native.mkdir(parents=True)
+    for parameter in ("T1", "T2"):
+        (native / f"sax_{parameter}_stack_r0100.nii.gz").write_bytes(b"native")
+    report = module.audit_cohort(tmp_path / "prepared", preprocessed_root=None, native_reference_root=None, myocardium_mask_root=None, decoder_manifest=_approved_decoder_manifest(tmp_path / "decoder.json"), reference_search_roots=[old_root])
+    row = report["rows"][0]
+    assert row["native_reference_available"] is True
+    assert row["myocardium_mask_available"] is False
+    assert row["quantitative_evaluation_eligible"] is False
+
+
+def test_manual_roi_marker_rejects_legacy_mask_reuse(tmp_path: Path) -> None:
+    module = _load("audit_real_cohort")
+    _write_observations(tmp_path / "prepared" / "DYZ" / "sax" / "observations.npz")
+    old_root = tmp_path / "MultiMapCode"
+    roi = old_root / "subjects" / "DYZ" / "data" / "roi" / "20260823_v5_newdata_v1"
+    roi.mkdir(parents=True)
+    (roi / "ROI_MANUAL_STEP_REQUIRED.md").write_text("manual annotation required", encoding="utf-8")
+    legacy = old_root / "subjects" / "DYZ" / "results" / "2D_fit_first" / "evaluations" / "20260823_dual_full_v1" / "nesvor_v5_128_w1" / "masks" / "native_sax"
+    legacy.mkdir(parents=True)
+    for name in ("myocardium_full.nii.gz", "myocardium_core.nii.gz"):
+        (legacy / name).write_bytes(b"legacy-mask")
+    report = module.audit_cohort(tmp_path / "prepared", preprocessed_root=None, native_reference_root=None, myocardium_mask_root=None, decoder_manifest=_approved_decoder_manifest(tmp_path / "decoder.json"), reference_search_roots=[old_root])
+    subject = report["subject_summary"][0]
+    assert subject["myocardium_mask_available"] is False
+    assert subject["quantitative_evaluation_eligible"] is False
+    assert "legacy evaluation masks are not reusable" in subject["reasons"][0]
+
+
+def test_pose_audit_requires_independent_t1_t2_artifact_chain(tmp_path: Path) -> None:
+    module = _load("audit_2dfit_pose_policy")
+    old_root = tmp_path / "MultiMapCode"
+    base = old_root / "subjects" / "CYJ" / "results" / "2D_fit_first" / "experiments" / "20260822_v5_full_pipeline_v1" / "output" / "nesvor_v5_128_w1"
+    for parameter in ("T1", "T2"):
+        result = base / parameter / "result.json"
+        result.parent.mkdir(parents=True, exist_ok=True)
+        result.write_text(json.dumps({"registration": "stack", "no_transformation_optimization": False}), encoding="utf-8")
+        (result.parent / "registered_slices").mkdir()
+        (result.parent / "registered_slices" / "0.nii.gz").write_bytes(parameter.encode())
+    report = module.audit_pose_policy(old_root)
+    assert report["shared_final_pose"] is False
+    assert set(report["artifact_chain"]) == {"T1", "T2"}
+    assert report["artifact_chain"]["T1"]["final_pose_artifact"].endswith("T1/registered_slices/0.nii.gz")
