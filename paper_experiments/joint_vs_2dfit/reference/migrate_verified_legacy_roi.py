@@ -38,6 +38,20 @@ def validate_migration_request(report: dict[str, Any], subject_id: str, destinat
     return entry
 
 
+def _bundle_audit_entry(entry: dict[str, Any]) -> dict[str, Any]:
+    """Adapt the Phase-0.6 subject record to build_native_bundle's contract."""
+
+    legacy = entry["legacy_roi"]
+    if legacy.get("status") != "PASS":
+        raise ValueError("legacy ROI audit did not pass")
+    return {
+        "status": "PASS",
+        "source_directory": legacy["source_directory"],
+        "composite_reference": legacy["composite_reference"],
+        "manual_masks": legacy["manual_masks"],
+    }
+
+
 def _round_trip_check(legacy_roi: dict[str, Any]) -> dict[str, bool]:
     composite = nib.load(legacy_roi["composite_reference"]["path"])
     result: dict[str, bool] = {}
@@ -60,7 +74,7 @@ def migrate_verified_legacy_roi(*, compatibility_report: Path, subject_id: str, 
     round_trip = _round_trip_check(legacy_roi)
     with tempfile.TemporaryDirectory(prefix="phase0_6_legacy_roi_") as temporary:
         audit_path = Path(temporary) / "legacy_roi_geometry.json"
-        audit_path.write_text(json.dumps({subject_id: legacy_roi}), encoding="utf-8")
+        audit_path.write_text(json.dumps({subject_id: _bundle_audit_entry(entry)}), encoding="utf-8")
         output = build_bundle(
             subject_id=subject_id,
             audit_json=audit_path,

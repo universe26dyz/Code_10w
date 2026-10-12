@@ -1,0 +1,22 @@
+{
+  "phase": "2_clean_full_preparation",
+  "compatibility_report": {
+    "path": "paper_experiments/joint_vs_2dfit/audit/outputs/legacy_roi_compatibility.json",
+    "sha256": "dbd293ebab27a14f5582fda33b6cdaa0f8a27c63e530876a05a5fe4174badb1d"
+  },
+  "bundle_schema": "exact_native_myocardium_bundle/v2",
+  "migrated": {
+    "CYJ": {
+      "destination": "/home/universe/SVR/data/Code_10w_v1/reference_data/phase2_clean/CYJ/myocardium_masks_v1",
+      "manifest_sha256": "bbcd1c18b27dfcf96cdaed4663ae1171159c7d79aa3edf3faa2f35fee0f11dda",
+      "status": "PASS",
+      "transform": "Phase-0.6 verified deterministic exact reorientation plus integer crop; nearest-neighbor only"
+    }
+  },
+  "pending_native_reference_transfer": {
+    "DYZ": "verified reusable legacy SAX ROI; current native_reference_2d bundle was not present locally",
+    "HHZ": "verified reusable legacy SAX ROI; current native_reference_2d bundle was not present locally",
+    "HJL": "verified reusable legacy SAX ROI; current native_reference_2d bundle was not present locally"
+  },
+  "primary_real_endpoint": "SAX native-reference agreement/consistency only; native references are not 3-D ground truth"
+}

@@ -1,0 +1,67 @@
+{
+  "approved_decoder": {
+    "manifest": "/home/universe/SVR/multimap_postprogramming/Code_10w/paper_experiments/joint_vs_2dfit/audit/outputs/approved_decoder.json",
+    "sha256": "f83280d4f73bfc9e0540b9606ee20bf83395339ad4e54dd0fb7be93ed9c9a7a9"
+  },
+  "b6_source_model": {
+    "path": "/home/universe/SVR/data/Code_10w_v1/Code_10w_runs/CYJ_decoder_comparison_20260924_clean_v1/runs/frozen_mlp_B6/model.pt",
+    "sha256": "15981fbe93d2c70e14755ea756a02856c9383481e7d92d239619268a628a29b5"
+  },
+  "baseline": {
+    "dictionary_grid": "frozen current HHZ/TRAD grid; normalized cosine matching, no interpolation/refinement",
+    "inference_samples": 128,
+    "n_iter": 10000,
+    "n_samples": 256,
+    "output_resolution_mm": 1.0,
+    "pixel_variance_weight": 1.0,
+    "registration": "stack",
+    "slice_thickness_mm": 8.0,
+    "t1_t2_independent": true,
+    "t1_to_t2_pose_reuse": false,
+    "transformation_optimization": true
+  },
+  "code_commit": "08fb95fef28671d23ac0cb26b38a1c4aa98897a6",
+  "excluded": {
+    "DYL": "VPS=85 incompatible with approved VPS=87 decoder"
+  },
+  "geometry_sha256": "d16870d9522c24f7d609175219d9e3c34ee51c380d72ce7bda8459ba6cdeee03",
+  "gt_sha256": {
+    "gt_maps.npz": "f0aead298d5b2d1f23dee5462e56d92ea5ef75ab1e626066619ac9a01a2f7624",
+    "mesh_primary_myo.npz": "afd30da67d59c9319198a7bbc45d72af0fb3ca52d45d13dca4bd23383ea1267d"
+  },
+  "observation_sha256": {
+    "2ch": "dcf3db0547ec1c39c2feec61815127f786ea72c32cda09c2a65c36b5da29584c",
+    "4ch": "33abba418d4ed342c1d3afa9dbf2b85409a9d5cb944fc037a96149f4b82bc3af",
+    "sax": "8089e1bc3518e17de317da1d4ab86618ef778868069db1e9dd29796e2e490e3e"
+  },
+  "phase": "2_clean_full_preparation",
+  "phase1_final_gate": {
+    "path": "/home/universe/SVR/multimap_postprogramming/Code_10w/paper_experiments/joint_vs_2dfit/simulation/outputs/phase1_1_clean_mrxcat/phase1_final_gate_matlab_parity.json",
+    "sha256": "247931d9ef76042781ae0c54bd69e028648d5e4bd071a38f30a214101a18a7b5"
+  },
+  "proposed": {
+    "amplitude_guidance": false,
+    "batch": 640,
+    "coarsest_mm": 8.0,
+    "depth": 3,
+    "features_per_level": 2,
+    "finest_mm": 1.0,
+    "group_shared_rigid_pose": true,
+    "hashmap_log2": 19,
+    "latent_dim": 32,
+    "scale": 1.5,
+    "seed": 20260911,
+    "source": "quality_experiments/Q002_B6_roi_same_anchor_mse",
+    "stage_a_iterations": 2000,
+    "stage_b_iterations": 4000,
+    "width": 64
+  },
+  "real_paired_subjects": [
+    "CYJ",
+    "DYZ",
+    "HHZ",
+    "HJL"
+  ],
+  "synthetic_root": "/home/universe/SVR/multimap_postprogramming/Code_10w/paper_experiments/joint_vs_2dfit/simulation/outputs/phase1_1_clean_mrxcat",
+  "timing_sha256": "74fc30a447b4931e3c0a7c4de78a98fd6d91c474d703316614c3053c0b2a551b"
+}
