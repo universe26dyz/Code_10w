@@ -1,0 +1,10 @@
+{
+  "status": "pass",
+  "max_abs_raw_error": 8.728054576995214e-07,
+  "min_normalized_cosine": 0.9999999689530358,
+  "all_finite": true,
+  "cases": 8,
+  "tr_ms": 2.61,
+  "vps": 87,
+  "reference_mat": "/home/universe/SVR/multimap_postprogramming/Code_10w/paper_experiments/joint_vs_2dfit/simulation/outputs/phase1_1_clean_mrxcat/matlab_hhz_reference.mat"
+}

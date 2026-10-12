@@ -1,0 +1,78 @@
+{
+  "phase": "1.2_matlab_parity_finalization",
+  "renderer_convergence_status": "pass",
+  "accepted_quadrature": {
+    "inplane_samples_row_col": [
+      6,
+      6
+    ],
+    "thickness_samples": 9
+  },
+  "matlab_parity_status": "pass",
+  "matlab_validator_result": {
+    "status": "pass",
+    "max_abs_raw_error": 8.728054576995214e-07,
+    "min_normalized_cosine": 0.9999999689530358,
+    "all_finite": true,
+    "cases": 8,
+    "tr_ms": 2.61,
+    "vps": 87,
+    "reference_mat": "/home/universe/SVR/multimap_postprogramming/Code_10w/paper_experiments/joint_vs_2dfit/simulation/outputs/phase1_1_clean_mrxcat/matlab_hhz_reference.mat"
+  },
+  "matlab_reference_provenance": {
+    "authority": "external MATLAB execution of original-HHZ export_matlab_signal_reference.m",
+    "reference_mat": "/home/universe/SVR/multimap_postprogramming/Code_10w/paper_experiments/joint_vs_2dfit/simulation/outputs/phase1_1_clean_mrxcat/matlab_hhz_reference.mat",
+    "reference_mat_sha256": "42933299a6545411e711565549bdef80a7e24b537d80904f88a76f6484968766",
+    "reference_config": "/home/universe/SVR/multimap_postprogramming/Code_10w/paper_experiments/joint_vs_2dfit/simulation/outputs/phase1_1_clean_mrxcat/matlab_hhz_reference_config.json",
+    "reference_config_sha256": "6e994a37c2acab45bcbe2222de053c7647e26f40404f2a72946d26d312af9e91",
+    "original_exporter": "/home/universe/SVR/multimap_postprogramming/Code_10w/trad/modules/module_05_signal_decoder/export_matlab_signal_reference.m",
+    "original_exporter_sha256": "9f6d0cff42c5cc01a89935939d79f462fc0acc8d8e63a3d8cb27b15b7aadfc86",
+    "validator_result_json": "/home/universe/SVR/multimap_postprogramming/Code_10w/paper_experiments/joint_vs_2dfit/simulation/outputs/phase1_1_clean_mrxcat/matlab_parity_validated.json",
+    "validator_result_sha256": "5a0bd7f103542c7987e9497691d757720d6d0e6818c39f653eb3b4c3ac24df04",
+    "validator": "validate_hhz_parity.py --reference-config ... --reference-mat ...",
+    "prior_final_gate": "/home/universe/SVR/multimap_postprogramming/Code_10w/paper_experiments/joint_vs_2dfit/simulation/outputs/phase1_1_clean_mrxcat/phase1_final_gate.json",
+    "prior_final_gate_sha256": "8e1b389ddcdb4fdd4985ade57b15d76d546086256cd8e49a71085ac9505e24cf"
+  },
+  "formal_synthetic_reconstruction_ready": true,
+  "blockers": [],
+  "frozen_contract": {
+    "mrxcat_commit": "9f396a998f435525b234a304c502238ad5955fb2",
+    "myocardium_t1_t2_ms": [
+      1410.0,
+      50.0
+    ],
+    "b1": 1.0,
+    "m0": "1.0 on signal_support_mask, 0.0 outside",
+    "pd_scaling": false,
+    "timing_source": {
+      "subject_id": "CYJ",
+      "stack_name": "sax",
+      "group_idx": 5
+    },
+    "tr_ms": 2.61,
+    "vps": 87,
+    "geometry_source_subjects": {
+      "sax": "DYZ",
+      "2ch": "DYZ",
+      "4ch": "DYZ"
+    },
+    "one_global_rigid_alignment": true,
+    "primary_myocardium_gt": "1-mm mesh-derived exact tetra barycentric containment",
+    "verified": true
+  },
+  "inherited_relevant_sha256": {
+    "clean_signal_field.npz": "57590d5243f7e90065ddf165b803e9cf99c419a71d0bf2b25c59b302e20d41dd",
+    "gt_maps.npz": "f0aead298d5b2d1f23dee5462e56d92ea5ef75ab1e626066619ac9a01a2f7624",
+    "mesh_primary_myo.npz": "afd30da67d59c9319198a7bbc45d72af0fb3ca52d45d13dca4bd23383ea1267d",
+    "timing_selection.json": "74fc30a447b4931e3c0a7c4de78a98fd6d91c474d703316614c3053c0b2a551b",
+    "geometry_templates.json": "d16870d9522c24f7d609175219d9e3c34ee51c380d72ce7bda8459ba6cdeee03",
+    "geometry_alignment_qc.json": "0cdadf5bc796decc2f0fbbf21ef486eec356eaecd8b968bd3f94c9ea5faa1c30",
+    "synthetic_source_manifest.json": "fd940d0b865c2dce16b4a80c560f81f28655d2f8a892f120d9ad6c1c066c8f09",
+    "matlab_parity.json": "49890c89f3441b6c85009cc9cd05e4012391ca321d3aac38994c082ed78103c5",
+    "matlab_hhz_reference_config.json": "6e994a37c2acab45bcbe2222de053c7647e26f40404f2a72946d26d312af9e91",
+    "sax/observations.npz": "8089e1bc3518e17de317da1d4ab86618ef778868069db1e9dd29796e2e490e3e",
+    "2ch/observations.npz": "dcf3db0547ec1c39c2feec61815127f786ea72c32cda09c2a65c36b5da29584c",
+    "4ch/observations.npz": "33abba418d4ed342c1d3afa9dbf2b85409a9d5cb944fc037a96149f4b82bc3af",
+    "phase1_final_convergence.json": "93ed2a35bf79bf4439358006f26eda017797beadf11a0a6370ebd6c740da33b4"
+  }
+}

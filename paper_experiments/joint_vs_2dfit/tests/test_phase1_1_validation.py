@@ -13,6 +13,7 @@ from paper_experiments.joint_vs_2dfit.simulation.generate_clean_dataset import a
 from paper_experiments.joint_vs_2dfit.simulation.simulate_hhz_signals import generate_signal_field
 from paper_experiments.joint_vs_2dfit.simulation.audit_phase1_final_gate import comparison_metrics, choose_accepted_level, meets_plateau
 from paper_experiments.joint_vs_2dfit.simulation.validate_hhz_parity import build_reference_config, validate_matlab_reference
+from paper_experiments.joint_vs_2dfit.simulation.finalize_phase1_matlab_parity import build_final_gate, parity_passes
 
 
 def test_signal_support_excludes_xcat_air_but_keeps_documented_tissue() -> None:
@@ -111,3 +112,29 @@ def test_external_matlab_reference_validator_reads_export_contract(tmp_path: Pat
     result = validate_matlab_reference(reference, config_path)
     assert result["status"] == "pass"
     assert result["max_abs_raw_error"] == 0.0
+
+
+def test_final_gate_requires_passing_external_matlab_parity() -> None:
+    prior = {"renderer_convergence_status": "pass", "accepted_quadrature": {"inplane_samples_row_col": [6, 6], "thickness_samples": 9}, "frozen_contract": {"verified": True}, "relevant_sha256": {"clean_signal_field.npz": "frozen"}}
+    passed = {"status": "pass", "max_abs_raw_error": 1e-5, "min_normalized_cosine": 0.999999, "all_finite": True}
+    assert parity_passes(passed)
+    gate = build_final_gate(prior, passed, {"reference_mat_sha256": "reference"})
+    assert gate["matlab_parity_status"] == "pass"
+    assert gate["formal_synthetic_reconstruction_ready"] is True
+    failed = {**passed, "all_finite": False}
+    assert not parity_passes(failed)
+    with pytest.raises(ValueError, match="acceptance criteria"):
+        build_final_gate(prior, failed, {})
+
+
+def test_external_matlab_final_gate_contract_if_present() -> None:
+    root = Path(__file__).resolve().parents[1] / "simulation/outputs/phase1_1_clean_mrxcat"
+    gate_path = root / "phase1_final_gate_matlab_parity.json"
+    if not gate_path.exists():
+        pytest.skip("external MATLAB finalization artifact is generated after MATLAB reference transfer")
+    gate = json.loads(gate_path.read_text())
+    assert gate["matlab_parity_status"] == "pass"
+    assert gate["formal_synthetic_reconstruction_ready"] is True
+    assert gate["matlab_validator_result"]["max_abs_raw_error"] <= 1e-5
+    assert gate["matlab_validator_result"]["min_normalized_cosine"] >= 0.999999
+    assert gate["matlab_validator_result"]["all_finite"] is True
