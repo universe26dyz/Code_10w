@@ -1,0 +1,136 @@
+{
+  "phase": "1.2",
+  "integration_domain": "signal-domain midpoint quadrature with linear signal interpolation",
+  "representative_groups": {
+    "sax": 6,
+    "2ch": 8,
+    "4ch": 5
+  },
+  "levels_run": [
+    "4x4x5",
+    "6x6x9",
+    "8x8x13"
+  ],
+  "pairwise_metrics": {
+    "4x4x5_vs_6x6x9": {
+      "sax": {
+        "foreground_pixel_count": 4833,
+        "myocardium_intersecting_pixel_count": 1622,
+        "max_abs": 0.007765635848045349,
+        "normalized_max_abs": 0.03015871748237212,
+        "whole_foreground_max_abs": 0.007765635848045349,
+        "whole_foreground_normalized_max_abs": 0.03015871748237212,
+        "myocardium_intersecting_pixel_max_abs": 0.007765635848045349,
+        "myocardium_intersecting_pixel_normalized_max_abs": 0.03015871748237212,
+        "p99_abs": 0.003147671297192572,
+        "p99_normalized_abs": 0.012224334392823333,
+        "rmse": 0.00068011716395991,
+        "normalized_rmse": 0.002641311259520613,
+        "relative_l2": 0.004586951798616404,
+        "fingerprint_cosine_error": 1.0491180524541122e-05,
+        "normalization_scale_max_abs_reference": 0.2574922442436218
+      },
+      "2ch": {
+        "foreground_pixel_count": 7272,
+        "myocardium_intersecting_pixel_count": 1687,
+        "max_abs": 0.013129837810993195,
+        "normalized_max_abs": 0.050991197228335255,
+        "whole_foreground_max_abs": 0.013129837810993195,
+        "whole_foreground_normalized_max_abs": 0.050991197228335255,
+        "myocardium_intersecting_pixel_max_abs": 0.013129837810993195,
+        "myocardium_intersecting_pixel_normalized_max_abs": 0.050991197228335255,
+        "p99_abs": 0.0042538450658321314,
+        "p99_normalized_abs": 0.01652028424517295,
+        "rmse": 0.0009398995387515627,
+        "normalized_rmse": 0.003650205238268431,
+        "relative_l2": 0.006384409982970325,
+        "fingerprint_cosine_error": 2.0342630547731666e-05,
+        "normalization_scale_max_abs_reference": 0.2574922442436218
+      },
+      "4ch": {
+        "foreground_pixel_count": 6411,
+        "myocardium_intersecting_pixel_count": 1848,
+        "max_abs": 0.015701264142990112,
+        "normalized_max_abs": 0.0609776196914678,
+        "whole_foreground_max_abs": 0.015701264142990112,
+        "whole_foreground_normalized_max_abs": 0.0609776196914678,
+        "myocardium_intersecting_pixel_max_abs": 0.010041885077953339,
+        "myocardium_intersecting_pixel_normalized_max_abs": 0.03899878657491673,
+        "p99_abs": 0.005804139301180836,
+        "p99_normalized_abs": 0.022541025723824715,
+        "rmse": 0.0011893122882445887,
+        "normalized_rmse": 0.004618827614548815,
+        "relative_l2": 0.008325798458711198,
+        "fingerprint_cosine_error": 3.4606609448650794e-05,
+        "normalization_scale_max_abs_reference": 0.2574922442436218
+      }
+    },
+    "6x6x9_vs_8x8x13": {
+      "sax": {
+        "foreground_pixel_count": 4837,
+        "myocardium_intersecting_pixel_count": 1622,
+        "max_abs": 0.0017575770616531372,
+        "normalized_max_abs": 0.0068257475747123325,
+        "whole_foreground_max_abs": 0.0017575770616531372,
+        "whole_foreground_normalized_max_abs": 0.0068257475747123325,
+        "myocardium_intersecting_pixel_max_abs": 0.0013237521052360535,
+        "myocardium_intersecting_pixel_normalized_max_abs": 0.0051409397169400115,
+        "p99_abs": 0.0007608085498213757,
+        "p99_normalized_abs": 0.002954685303459276,
+        "rmse": 0.00015670525867632695,
+        "normalized_rmse": 0.0006085824415280757,
+        "relative_l2": 0.0010573844944733385,
+        "fingerprint_cosine_error": 5.566523806344037e-07,
+        "normalization_scale_max_abs_reference": 0.2574922442436218
+      },
+      "2ch": {
+        "foreground_pixel_count": 7275,
+        "myocardium_intersecting_pixel_count": 1687,
+        "max_abs": 0.002300858497619629,
+        "normalized_max_abs": 0.008935641942841244,
+        "whole_foreground_max_abs": 0.002300858497619629,
+        "whole_foreground_normalized_max_abs": 0.008935641942841244,
+        "myocardium_intersecting_pixel_max_abs": 0.0008458923548460007,
+        "myocardium_intersecting_pixel_normalized_max_abs": 0.0032851177996867133,
+        "p99_abs": 0.0006605432182550426,
+        "p99_normalized_abs": 0.002565293646786818,
+        "rmse": 0.0001404346364114147,
+        "normalized_rmse": 0.0005453936557349078,
+        "relative_l2": 0.000954196573220706,
+        "fingerprint_cosine_error": 4.519202698727298e-07,
+        "normalization_scale_max_abs_reference": 0.2574922442436218
+      },
+      "4ch": {
+        "foreground_pixel_count": 6410,
+        "myocardium_intersecting_pixel_count": 1848,
+        "max_abs": 0.003620471805334091,
+        "normalized_max_abs": 0.014060508175573026,
+        "whole_foreground_max_abs": 0.003620471805334091,
+        "whole_foreground_normalized_max_abs": 0.014060508175573026,
+        "myocardium_intersecting_pixel_max_abs": 0.000897631049156189,
+        "myocardium_intersecting_pixel_normalized_max_abs": 0.003486050819872116,
+        "p99_abs": 0.0011769393458962473,
+        "p99_normalized_abs": 0.004570775905711189,
+        "rmse": 0.0002301112785456419,
+        "normalized_rmse": 0.0008936629498165626,
+        "relative_l2": 0.0016108783815582915,
+        "fingerprint_cosine_error": 1.2952231608354126e-06,
+        "normalization_scale_max_abs_reference": 0.2574922442436218
+      }
+    }
+  },
+  "acceptance_rule": {
+    "normalized_rmse_lt": 0.005,
+    "p99_normalized_abs_lt": 0.01,
+    "max_abs_interpretation": "reported for whole foreground and myocardium-intersecting pixels; not a sole acceptance criterion because boundary partial volume is expected"
+  },
+  "renderer_convergence_status": "pass",
+  "accepted_quadrature": {
+    "inplane_samples_row_col": [
+      6,
+      6
+    ],
+    "thickness_samples": 9
+  },
+  "decision": "6x6x9_vs_8x8x13 passes normalized RMSE < 0.5% and P99 < 1% for every stack"
+}

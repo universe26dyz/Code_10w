@@ -5,11 +5,14 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from scipy.io import savemat
 
 from paper_experiments.joint_vs_2dfit.mrxcat.define_gt_tissue_maps import build_gt_maps
 from paper_experiments.joint_vs_2dfit.simulation.build_geometry import apply_global_rigid_alignment
 from paper_experiments.joint_vs_2dfit.simulation.generate_clean_dataset import acquisition_times_from_timing9
 from paper_experiments.joint_vs_2dfit.simulation.simulate_hhz_signals import generate_signal_field
+from paper_experiments.joint_vs_2dfit.simulation.audit_phase1_final_gate import comparison_metrics, choose_accepted_level, meets_plateau
+from paper_experiments.joint_vs_2dfit.simulation.validate_hhz_parity import build_reference_config, validate_matlab_reference
 
 
 def test_signal_support_excludes_xcat_air_but_keeps_documented_tissue() -> None:
@@ -71,3 +74,40 @@ def test_phase1_1_output_contract_if_present() -> None:
         assert np.all(np.diff(data["acquisition_time_ms"][:10]) > 0.0)
         assert np.all(np.isfinite(data["images"]))
         assert np.all(data["vps"] == 87)
+
+
+def test_final_convergence_metrics_use_foreground_myo_and_p99() -> None:
+    reference = np.ones((4, 4, 10), dtype=float)
+    value = reference.copy()
+    value[0, 0] += 0.02
+    myo = np.zeros((4, 4), dtype=bool)
+    myo[1:3, 1:3] = True
+    metrics = comparison_metrics(value, reference, myo)
+    assert metrics["foreground_pixel_count"] == 16
+    assert metrics["myocardium_intersecting_pixel_count"] == 4
+    assert metrics["whole_foreground_normalized_max_abs"] == pytest.approx(0.02)
+    assert metrics["myocardium_intersecting_pixel_max_abs"] == pytest.approx(0.0)
+    assert metrics["p99_normalized_abs"] == pytest.approx(0.02)
+
+
+def test_final_convergence_selects_lowest_global_plateau() -> None:
+    passing = {"normalized_rmse": 0.004, "p99_normalized_abs": 0.009}
+    failing = {"normalized_rmse": 0.006, "p99_normalized_abs": 0.001}
+    assert meets_plateau(passing)
+    metrics = {"6x6x9_vs_8x8x13": {stack: passing for stack in ("sax", "2ch", "4ch")}}
+    assert choose_accepted_level(metrics)[0] == (6, 6, 9)
+    metrics["6x6x9_vs_8x8x13"]["2ch"] = failing
+    metrics["8x8x13_vs_10x10x17"] = {stack: passing for stack in ("sax", "2ch", "4ch")}
+    assert choose_accepted_level(metrics)[0] == (8, 8, 13)
+
+
+def test_external_matlab_reference_validator_reads_export_contract(tmp_path: Path) -> None:
+    config = build_reference_config(np.arange(1.0, 10.0), cases=2)
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps(config))
+    raw = generate_signal_field(np.asarray(config["T1"]), np.asarray(config["T2"]), np.asarray(config["B1"]), np.asarray(config["timing9_ms"])[0])
+    reference = tmp_path / "reference.mat"
+    savemat(reference, {"signal_raw": raw})
+    result = validate_matlab_reference(reference, config_path)
+    assert result["status"] == "pass"
+    assert result["max_abs_raw_error"] == 0.0
