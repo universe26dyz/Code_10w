@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 APPROVED_DECODER_SHA256 = "f83280d4f73bfc9e0540b9606ee20bf83395339ad4e54dd0fb7be93ed9c9a7a9"
+B6_CONFIG_SOURCE_SHA256 = "15981fbe93d2c70e14755ea756a02856c9383481e7d92d239619268a628a29b5"
 FROZEN_GRID = {"t1_ms": (20, 20, 500, 505, 5, 1500, 1520, 20, 2500), "t2_ms": (5, 5, 100, 110, 10, 200), "b1": (0.1, 0.05, 1.2), "constraint": "T1 > T2"}
 BASELINE_POSE_POLICY = {"registration": "stack", "transformation_optimization": True, "t1_t2_independent": True, "t1_to_t2_pose_reuse": False, "slice_thickness_mm": 8.0, "output_resolution_mm": 1.0, "n_iter": 10000, "n_samples": 256, "inference_samples": 128, "pixel_variance_weight": 1.0}
 PROPOSED_CONTRACT = {"source": "quality_experiments/Q002_B6_roi_same_anchor_mse", "coarsest_mm": 8.0, "finest_mm": 1.0, "scale": 1.5, "features_per_level": 2, "hashmap_log2": 19, "latent_dim": 32, "width": 64, "depth": 3, "batch": 640, "seed": 20260911, "stage_a_iterations": 2000, "stage_b_iterations": 4000, "amplitude_guidance": False, "group_shared_rigid_pose": True}

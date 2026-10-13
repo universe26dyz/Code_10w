@@ -26,7 +26,8 @@ def test_runtime_launcher_wires_only_q003_cosine_to_shared_trainer(monkeypatch, 
     captured = {}
 
     monkeypatch.setattr(launcher.torch.cuda, "is_available", lambda: True)
-    monkeypatch.setattr(launcher, "cropped_observation_paths", lambda _: inputs)
+    monkeypatch.setattr(launcher, "APPROVED_DECODER_SHA256", launcher._sha256(decoder))
+    monkeypatch.setattr(launcher, "cropped_observation_paths", lambda *_: inputs)
     monkeypatch.setattr(launcher, "load_b6_resolved_config", lambda _: {"decoder": {"checkpoint": str(decoder)}, "training": {}, "export": {"output_resolution_mm": 1.0, "output_batch_size": 1}, "bbox": {}})
     monkeypatch.setattr(launcher, "QuantPointDataset", lambda *_args, **_kwargs: object())
     monkeypatch.setattr(launcher, "JointAnchorDataset", lambda *_args, **_kwargs: SimpleNamespace(qc={}))
@@ -49,6 +50,6 @@ def test_runtime_launcher_wires_only_q003_cosine_to_shared_trainer(monkeypatch, 
     monkeypatch.setattr(launcher, "export_quantitative_outputs_psf128", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(launcher, "export_native_plane_reprojections", lambda *_args, **_kwargs: None)
     output = tmp_path / "output"
-    launcher.run(Namespace(cropped_prepared_root="/cropped", b6_model=str(b6_model), signal_simulator=str(decoder), output=str(output), protocol="protocol.yaml", device="cuda:0", experiment_id=experiment_id, anchor_batch_size=anchor_batch_size))
+    launcher.run(Namespace(cropped_prepared_root="/cropped", subject_id="CYJ", b6_model=str(b6_model), signal_simulator=str(decoder), output=str(output), protocol="protocol.yaml", device="cuda:0", experiment_id=experiment_id, anchor_batch_size=anchor_batch_size))
     assert captured["anchor_batch_size"] == anchor_batch_size
     assert captured["fingerprint_cosine"] == expected_cosine

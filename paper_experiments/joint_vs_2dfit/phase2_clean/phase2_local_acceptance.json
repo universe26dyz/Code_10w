@@ -1,0 +1,14 @@
+{
+  "local_acceptance": "PASS",
+  "server_acceptance": "UNVERIFIED",
+  "authority": "check_phase2_local_closure.py",
+  "items": {
+    "relocatable_final_real_reference_manifest": "PASS",
+    "actual_file_observation_and_provenance_gate": "PASS",
+    "approved_decoder_and_b6_sha_gates": "PASS",
+    "frozen_independent_fit_first_command": "PASS",
+    "synthetic_and_real_evaluation_clis": "PASS",
+    "formal_shell_script_wiring": "PASS",
+    "server_readiness_finalizer": "PASS"
+  }
+}

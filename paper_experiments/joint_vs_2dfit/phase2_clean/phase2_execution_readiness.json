@@ -4,8 +4,10 @@
   "approved_decoder_gate": false,
   "b6_config_source_gate": false,
   "synthetic_evaluator_ready": true,
-  "real_evaluator_ready": false,
-  "formal_scripts_ready": false,
+  "real_evaluator_ready": true,
+  "formal_scripts_ready": true,
+  "local_acceptance": true,
+  "server_environment_gate": false,
   "formal_reconstruction_ready": false,
-  "server_dependent_status": "unverified; only a successful server preflight may set these gates true"
+  "server_dependent_status": "unverified; only a successful server preflight and finalize_phase2_server_readiness.py may set server gates true"
 }

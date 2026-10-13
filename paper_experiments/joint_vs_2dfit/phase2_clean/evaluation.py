@@ -49,17 +49,23 @@ def main() -> None:
         if not all((args.subject,args.real_t1,args.real_t2,args.native_reference,args.myocardium_bundle)): raise ValueError('real evaluation requires subject, T1/T2 volumes, current reference, and masks')
         ref_root=Path(args.native_reference); reference=np.load(ref_root/'sax.npz'); masks=np.load(Path(args.myocardium_bundle)/'sax_myocardium_masks.npz'); result={}
         for parameter,volume_path in (('t1_ms',args.real_t1),('t2_ms',args.real_t2)):
-            image=nib.load(volume_path); native=nib.load(str(ref_root/('sax_T1_stack_ms.nii.gz' if parameter=='t1_ms' else 'sax_T2_stack_ms.nii.gz'))); rows=[]
+            image=nib.load(volume_path); native=nib.load(str(ref_root/('sax_T1_stack_ms.nii.gz' if parameter=='t1_ms' else 'sax_T2_stack_ms.nii.gz'))); rows=[]; aggregate_reference=[]; aggregate_prediction=[]; total_support=0; valid_support=0
             for group in range(reference[parameter].shape[0]):
                 predicted, valid = reproject_volume_to_native_plane(image.get_fdata(),image.affine,native.affine,reference[parameter].shape[1:],group)
-                rows.append(real_native_agreement(reference[parameter][group],predicted,masks['myocardium_full'][group].astype(bool)&valid))
-            result[parameter]={'per_native_sax_plane':rows}
-        output.parent.mkdir(parents=True,exist_ok=False); output.write_text(json.dumps({'subject':args.subject,'endpoint':'agreement/consistency, not 3-D ground-truth accuracy','metrics':result},indent=2)); print(output); return
+                support=masks['myocardium_full'][group].astype(bool); total_support += int(support.sum()); valid_plane=support & valid & np.isfinite(reference[parameter][group]) & np.isfinite(predicted); valid_support += int(valid_plane.sum())
+                if valid_plane.any():
+                    row=real_native_agreement(reference[parameter][group],predicted,valid_plane); row['group_index']=int(group); rows.append(row)
+                    aggregate_reference.append(reference[parameter][group][valid_plane]); aggregate_prediction.append(predicted[valid_plane])
+                else: rows.append({'group_index':int(group),'status':'no_valid_myocardium_support','support_voxels':0,'coverage_fraction':0.0})
+            if not aggregate_reference: raise ValueError(f'{args.subject}/{parameter} has no valid myocardium support')
+            aggregate=_metrics(np.concatenate(aggregate_reference),np.concatenate(aggregate_prediction),np.ones(sum(map(len,aggregate_reference)),bool)); aggregate.update({'endpoint':'native-reference agreement/consistency, not accuracy versus ground truth','statistical_unit':'subject; all valid SAX myocardium pixels aggregated','coverage_fraction':valid_support/total_support,'valid_support_count':valid_support,'total_myocardium_support_count':total_support})
+            result[parameter]={'subject_level':aggregate,'per_native_sax_plane':rows}
+        output.parent.mkdir(parents=True,exist_ok=True); output.write_text(json.dumps({'subject':args.subject,'endpoint':'agreement/consistency, not 3-D ground-truth accuracy','metrics':result},indent=2)); print(output); return
     if not all((args.synthetic_t1,args.synthetic_t2,args.gt_maps,args.mesh_myo)): raise ValueError('synthetic evaluation requires T1/T2 NIfTI, gt maps, and mesh mask')
     gt=np.load(args.gt_maps); mesh=np.load(args.mesh_myo); affine=np.eye(4); affine[:3,:3]=np.diag(mesh['spacing_mm']); affine[:3,3]=mesh['origin_mm']
     result={}
     for parameter,path,normal in (('t1_ms',args.synthetic_t1,1410.0),('t2_ms',args.synthetic_t2,50.0)):
         image=nib.load(path); prediction,valid=resample_volume_to_grid(image.get_fdata(),image.affine,gt[parameter].shape,affine); result[parameter]=synthetic_metrics(gt[parameter],prediction,mesh['myocardium_mask'],valid,normal)
-    output.parent.mkdir(parents=True,exist_ok=False); output.write_text(json.dumps({'endpoint':'synthetic mesh myocardium; primary NRMSE uses fixed GT value','metrics':result},indent=2)); print(output)
+    output.parent.mkdir(parents=True,exist_ok=True); output.write_text(json.dumps({'endpoint':'synthetic mesh myocardium; primary NRMSE uses fixed GT value','metrics':result},indent=2)); print(output)
 
 if __name__ == '__main__': main()

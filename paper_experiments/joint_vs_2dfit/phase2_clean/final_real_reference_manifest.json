@@ -2,9 +2,49 @@
   "phase": "2.2_final_execution_closure",
   "protocol": "current HHZ/TRAD frozen dictionary grid; effective native agreement reference, not 3-D ground truth",
   "subjects": {
-    "CYJ": {"native_reference": {"path": "/home/universe/SVR/data/Code_10w_v1/reference_data/phase2_clean/CYJ/native_reference_2d/native_reference_manifest.json", "sha256": "06396ce704b977f0b0840947100be1ec9e8a5972ec91cf54bc2930d89dcca9b7"}, "myocardium_bundle": {"path": "/home/universe/SVR/data/Code_10w_v1/reference_data/phase2_clean/CYJ/myocardium_masks_v1/manifest.json", "sha256": "bbcd1c18b27dfcf96cdaed4663ae1171159c7d79aa3edf3faa2f35fee0f11dda"}, "sax_observation_sha256": "63ea694621d512f5d56574a190bb33c7d6796cf8e6911467e8ae5828d79edf56", "geometry_compatibility": "verified current native geometry; historical mask unchanged"},
-    "DYZ": {"native_reference": {"path": "/home/universe/SVR/data/Code_10w_v1/reference_data/phase2_clean/DYZ/native_reference_2d/native_reference_manifest.json", "sha256": "c2440d4e6d8d4bfec0e82b0404abe70efb7171b0644547b69b4ac341afc8f6f3"}, "myocardium_bundle": {"path": "/home/universe/SVR/data/Code_10w_v1/reference_data/phase2_clean/DYZ/myocardium_masks_v1/manifest.json", "sha256": "a07960267241c5289be7bf2c41cb589830729c69595a5dbabf5a7d5feb99e73e"}, "sax_observation_sha256": "a6dcb4e3ff58a7d480ebc91b1bb086853685b513d15aa5a8b59e11bd24209213", "geometry_compatibility": "Phase-0.6 verified deterministic ROI migration"},
-    "HHZ": {"native_reference": {"path": "/home/universe/SVR/data/Code_10w_v1/reference_data/phase2_clean/HHZ/native_reference_2d/native_reference_manifest.json", "sha256": "b82025cf76c5bf3a3d2e2e1ae6e4a8ee1572e57653a4187c2469670ef54b7132"}, "myocardium_bundle": {"path": "/home/universe/SVR/data/Code_10w_v1/reference_data/phase2_clean/HHZ/myocardium_masks_v1/manifest.json", "sha256": "7061546ddd328cf53f107fb73cb83c508fe3f712608cef913d9079fe5562da3c"}, "sax_observation_sha256": "e22a54daf1700e6040b5fbfee981f61bbea8251a94b0e5f057de86c681f8e34a", "geometry_compatibility": "Phase-0.6 verified deterministic ROI migration"},
-    "HJL": {"native_reference": {"path": "/home/universe/SVR/data/Code_10w_v1/reference_data/phase2_clean/HJL/native_reference_2d/native_reference_manifest.json", "sha256": "e73a94bafc42a45b805335c8db69aac6509ff48516adc4b7eb86760c701268a0"}, "myocardium_bundle": {"path": "/home/universe/SVR/data/Code_10w_v1/reference_data/phase2_clean/HJL/myocardium_masks_v1/manifest.json", "sha256": "68384c807d324e871d74664a7d1c7153631d7fa7a94c4ce232035881c614cd07"}, "sax_observation_sha256": "47333475a6ff0a2caf82b1fc303807412141315314549635d1fc112248306710", "geometry_compatibility": "Phase-0.6 verified deterministic ROI migration"}
+    "CYJ": {
+      "subject_id": "CYJ",
+      "protocol": "current HHZ/TRAD",
+      "native_reference": {"relative_path": "reference_data/phase2_clean/CYJ/native_reference_2d/native_reference_manifest.json", "sha256": "06396ce704b977f0b0840947100be1ec9e8a5972ec91cf54bc2930d89dcca9b7"},
+      "myocardium_bundle": {"relative_path": "reference_data/phase2_clean/CYJ/myocardium_masks_v1/manifest.json", "sha256": "bbcd1c18b27dfcf96cdaed4663ae1171159c7d79aa3edf3faa2f35fee0f11dda"},
+      "sax_observation_sha256": "63ea694621d512f5d56574a190bb33c7d6796cf8e6911467e8ae5828d79edf56",
+      "dictionary_grid_provenance": "frozen current HHZ/TRAD dictionary grid; normalized cosine matching; no interpolation/refinement",
+      "roi_migration_provenance": "new current-HHZ reference; existing Phase-0.6 verified mask bundle retained after geometry compatibility",
+      "geometry_compatibility": "verified current native geometry; historical mask unchanged",
+      "effective_reference_role": "native agreement/consistency reference, not 3-D ground truth"
+    },
+    "DYZ": {
+      "subject_id": "DYZ",
+      "protocol": "current HHZ/TRAD",
+      "native_reference": {"relative_path": "reference_data/phase2_clean/DYZ/native_reference_2d/native_reference_manifest.json", "sha256": "c2440d4e6d8d4bfec0e82b0404abe70efb7171b0644547b69b4ac341afc8f6f3"},
+      "myocardium_bundle": {"relative_path": "reference_data/phase2_clean/DYZ/myocardium_masks_v1/manifest.json", "sha256": "a07960267241c5289be7bf2c41cb589830729c69595a5dbabf5a7d5feb99e73e"},
+      "sax_observation_sha256": "a6dcb4e3ff58a7d480ebc91b1bb086853685b513d15aa5a8b59e11bd24209213",
+      "dictionary_grid_provenance": "frozen current HHZ/TRAD dictionary grid; normalized cosine matching; no interpolation/refinement",
+      "roi_migration_provenance": "Phase-0.6 verified deterministic ROI migration; nearest-neighbor only",
+      "geometry_compatibility": "reusable_with_deterministic_transform verified by Phase-0.6",
+      "effective_reference_role": "native agreement/consistency reference, not 3-D ground truth"
+    },
+    "HHZ": {
+      "subject_id": "HHZ",
+      "protocol": "current HHZ/TRAD",
+      "native_reference": {"relative_path": "reference_data/phase2_clean/HHZ/native_reference_2d/native_reference_manifest.json", "sha256": "b82025cf76c5bf3a3d2e2e1ae6e4a8ee1572e57653a4187c2469670ef54b7132"},
+      "myocardium_bundle": {"relative_path": "reference_data/phase2_clean/HHZ/myocardium_masks_v1/manifest.json", "sha256": "7061546ddd328cf53f107fb73cb83c508fe3f712608cef913d9079fe5562da3c"},
+      "sax_observation_sha256": "e22a54daf1700e6040b5fbfee981f61bbea8251a94b0e5f057de86c681f8e34a",
+      "dictionary_grid_provenance": "frozen current HHZ/TRAD dictionary grid; normalized cosine matching; no interpolation/refinement",
+      "roi_migration_provenance": "Phase-0.6 verified deterministic ROI migration; nearest-neighbor only",
+      "geometry_compatibility": "reusable_with_deterministic_transform verified by Phase-0.6",
+      "effective_reference_role": "native agreement/consistency reference, not 3-D ground truth"
+    },
+    "HJL": {
+      "subject_id": "HJL",
+      "protocol": "current HHZ/TRAD",
+      "native_reference": {"relative_path": "reference_data/phase2_clean/HJL/native_reference_2d/native_reference_manifest.json", "sha256": "e73a94bafc42a45b805335c8db69aac6509ff48516adc4b7eb86760c701268a0"},
+      "myocardium_bundle": {"relative_path": "reference_data/phase2_clean/HJL/myocardium_masks_v1/manifest.json", "sha256": "68384c807d324e871d74664a7d1c7153631d7fa7a94c4ce232035881c614cd07"},
+      "sax_observation_sha256": "47333475a6ff0a2caf82b1fc303807412141315314549635d1fc112248306710",
+      "dictionary_grid_provenance": "frozen current HHZ/TRAD dictionary grid; normalized cosine matching; no interpolation/refinement",
+      "roi_migration_provenance": "Phase-0.6 verified deterministic ROI migration; nearest-neighbor only",
+      "geometry_compatibility": "reusable_with_deterministic_transform verified by Phase-0.6",
+      "effective_reference_role": "native agreement/consistency reference, not 3-D ground truth"
+    }
   }
 }
