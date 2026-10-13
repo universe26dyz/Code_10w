@@ -13,10 +13,11 @@
       "transform": "Phase-0.6 verified deterministic exact reorientation plus integer crop; nearest-neighbor only"
     }
   },
-  "pending_native_reference_transfer": {
-    "DYZ": "verified reusable legacy SAX ROI; current native_reference_2d bundle was not present locally",
-    "HHZ": "verified reusable legacy SAX ROI; current native_reference_2d bundle was not present locally",
-    "HJL": "verified reusable legacy SAX ROI; current native_reference_2d bundle was not present locally"
+  "current_reference_status": {
+    "CYJ": "old bundle lacked current-HHZ protocol provenance; regenerated versioned current SAX reference from current observations; existing verified mask bundle retained after geometry compatibility",
+    "DYZ": "current-HHZ dictionary SAX reference and Phase-0.6 verified ROI migration complete",
+    "HHZ": "current-HHZ dictionary SAX reference and Phase-0.6 verified ROI migration complete",
+    "HJL": "current-HHZ dictionary SAX reference and Phase-0.6 verified ROI migration complete"
   },
   "primary_real_endpoint": "SAX native-reference agreement/consistency only; native references are not 3-D ground truth"
 }
