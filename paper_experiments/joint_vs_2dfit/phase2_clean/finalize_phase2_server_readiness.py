@@ -12,6 +12,7 @@ REQUIRED_GATES = (
     "references_ready",
     "approved_decoder_gate",
     "b6_config_source_gate",
+    "historical_nesvor_runtime_gate",
     "environment_gate",
     "phase1_gate",
 )

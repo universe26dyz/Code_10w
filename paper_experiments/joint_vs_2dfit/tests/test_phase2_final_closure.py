@@ -14,6 +14,7 @@ from paper_experiments.joint_vs_2dfit.phase2_clean.contracts import sha256
 from paper_experiments.joint_vs_2dfit.phase2_clean.fit_first import build_independent_nesvor_commands
 from paper_experiments.joint_vs_2dfit.phase2_clean import preflight_actual
 from paper_experiments.joint_vs_2dfit.phase2_clean.finalize_phase2_server_readiness import finalize_server_readiness
+from paper_experiments.joint_vs_2dfit.phase2_clean.historical_nesvor_runtime import verify_runtime
 
 
 REPO = Path(__file__).resolve().parents[3]
@@ -147,12 +148,57 @@ def test_synthetic_evaluator_cli_writes_fixed_value_nrmse(tmp_path: Path) -> Non
 
 
 def test_nesvor_failure_prevents_denormalization(tmp_path: Path) -> None:
-    commands = build_independent_nesvor_commands(tmp_path / "inputs", tmp_path / "output")
+    commands = build_independent_nesvor_commands(tmp_path / "inputs", tmp_path / "output", nesvor_executable=tmp_path / "bin/nesvor")
     fake = tmp_path / "bin"; fake.mkdir(); nesvor = fake / "nesvor"; nesvor.write_text("#!/usr/bin/env bash\nexit 17\n"); nesvor.chmod(0o755)
     env = dict(os.environ, PATH=f"{fake}:{os.environ['PATH']}")
     completed = subprocess.run(commands[0], shell=True, env=env, text=True, capture_output=True)
     assert completed.returncode == 17
     assert not (tmp_path / "output/t1/volume_ms.nii.gz").exists()
+
+
+def test_historical_nesvor_command_is_explicit_and_uses_authoritative_flag() -> None:
+    executable = "/authoritative/nesvor/bin/nesvor"
+    command = build_independent_nesvor_commands("/inputs", "/output", nesvor_executable=executable)[0]
+    assert command.startswith(executable + " reconstruct ")
+    assert "--n-inference-samples 128" in command
+    assert "--inference-samples" not in command
+    assert "--pixel-variance-weight 1" in command
+    assert "--weight-pixel-var-smooth 0" in command
+
+
+def _fake_historical_runtime(tmp_path: Path, *, version: str = "0.6.0rc1", flags: str | None = None, package_parent: Path | None = None) -> tuple[Path, Path, Path]:
+    source = tmp_path / "NeSVoR-master/nesvor"
+    source.mkdir(parents=True)
+    for relative in ("cli/parsers.py", "cli/commands.py", "inr/models.py", "inr/train.py"):
+        path = source / relative; path.parent.mkdir(parents=True, exist_ok=True); path.write_text("# fixture\n")
+    (source / "__init__.py").write_text("")
+    (source / "version.py").write_text(f'__version__ = "{version}"\n')
+    executable = tmp_path / "bin/nesvor"; executable.parent.mkdir()
+    executable.write_text("#!/usr/bin/env bash\nprintf '%s\\n' '" + (flags or "--n-inference-samples --pixel-variance-weight --weight-pixel-var-smooth --scanner-space --no-slice-scale --single-precision --n-samples --batch-size --n-iter --output-psf-factor") + "'\n")
+    executable.chmod(0o755)
+    runtime_python = tmp_path / "bin/historical-python"
+    runtime_python.write_text("#!/usr/bin/env bash\nPYTHONPATH='" + str(package_parent or source.parent) + "' exec '" + sys.executable + "' \"$@\"\n")
+    runtime_python.chmod(0o755)
+    return executable, runtime_python, source
+
+
+def test_historical_runtime_gate_accepts_verified_fixture_and_rejects_runtime_drift(tmp_path: Path) -> None:
+    executable, runtime_python, source = _fake_historical_runtime(tmp_path)
+    report = verify_runtime(executable, runtime_python, source)
+    assert report["historical_nesvor_runtime_gate"] is True
+    assert report["historical_nesvor"]["version"] == "0.6.0rc1"
+    _, wrong_version_python, wrong_version_source = _fake_historical_runtime(tmp_path / "wrong_version", version="0.5")
+    with pytest.raises(ValueError, match="version"):
+        verify_runtime(tmp_path / "wrong_version/bin/nesvor", wrong_version_python, wrong_version_source)
+    _, missing_flag_python, missing_flag_source = _fake_historical_runtime(tmp_path / "missing_flag", flags="--n-inference-samples")
+    with pytest.raises(ValueError, match="required flag"):
+        verify_runtime(tmp_path / "missing_flag/bin/nesvor", missing_flag_python, missing_flag_source)
+    other_parent = tmp_path / "other"; _fake_historical_runtime(other_parent)
+    executable, wrong_source_python, source = _fake_historical_runtime(tmp_path / "wrong_source", package_parent=other_parent / "NeSVoR-master")
+    with pytest.raises(ValueError, match="package source"):
+        verify_runtime(executable, wrong_source_python, source)
+    with pytest.raises(FileNotFoundError, match="executable"):
+        verify_runtime(tmp_path / "missing/nesvor", runtime_python, source)
 
 
 def test_formal_scripts_use_actual_preflight_and_all_real_evaluations() -> None:
@@ -161,6 +207,8 @@ def test_formal_scripts_use_actual_preflight_and_all_real_evaluations() -> None:
         text = (scripts / name).read_text()
         assert "server_preflight_phase2.sh" in text
         assert "phase2_clean.runner" not in text
+    for name in ("run_phase2_synthetic_fit_first.sh", "run_phase2_real_fit_first.sh"):
+        assert '--nesvor-executable "$NESVOR_EXEC"' in (scripts / name).read_text()
     for name in ("run_phase2_synthetic_proposed.sh", "run_phase2_real_proposed.sh"):
         text = (scripts / name).read_text()
         assert '["approved_decoder"]["path"]' in text
@@ -168,6 +216,12 @@ def test_formal_scripts_use_actual_preflight_and_all_real_evaluations() -> None:
     evaluation = (scripts / "evaluate_phase2.sh").read_text()
     assert "--contract" not in evaluation
     assert all(subject in evaluation for subject in ("CYJ", "DYZ", "HHZ", "HJL"))
+    preflight = (scripts / "server_preflight_phase2.sh").read_text()
+    assert "PHASE2_NESVOR_EXECUTABLE" in preflight
+    assert "PHASE2_NESVOR_PYTHON" in preflight
+    assert "historical_nesvor_runtime.py" in preflight
+    assert "import torch, tinycudann, paper_experiments" in preflight
+    assert "import nesvor" not in preflight
 
 
 def test_server_readiness_finalizer_requires_real_passing_preflight(tmp_path: Path) -> None:
@@ -177,12 +231,15 @@ def test_server_readiness_finalizer_requires_real_passing_preflight(tmp_path: Pa
         "references_ready": True,
         "approved_decoder_gate": True,
         "b6_config_source_gate": True,
+        "historical_nesvor_runtime_gate": True,
         "environment_gate": True,
         "phase1_gate": True,
     }))
     output = tmp_path / "readiness.json"
     written = finalize_server_readiness(preflight, output)
     assert json.loads(written.read_text())["formal_reconstruction_ready"] is True
-    preflight.write_text(json.dumps({"actual_observation_hash_gate": True}))
+    missing_historical = json.loads(preflight.read_text())
+    del missing_historical["historical_nesvor_runtime_gate"]
+    preflight.write_text(json.dumps(missing_historical))
     with pytest.raises(ValueError, match="server preflight did not pass"):
         finalize_server_readiness(preflight, tmp_path / "rejected.json")

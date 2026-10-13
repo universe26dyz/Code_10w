@@ -9,6 +9,7 @@
     "frozen_independent_fit_first_command": "PASS",
     "synthetic_and_real_evaluation_clis": "PASS",
     "formal_shell_script_wiring": "PASS",
-    "server_readiness_finalizer": "PASS"
+    "server_readiness_finalizer": "PASS",
+    "historical_nesvor_runtime_contract": "PASS"
   }
 }

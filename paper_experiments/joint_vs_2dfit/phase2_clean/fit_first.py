@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse, json, shlex
 from pathlib import Path
 import numpy as np
-from .contracts import BASELINE_POSE_POLICY, sha256, write_immutable_json
+from .contracts import BASELINE_POSE_POLICY, HISTORICAL_NESVOR_EXECUTABLE_DEFAULT, sha256, write_immutable_json
 from .dictionary import frozen_dictionary, match_fingerprints
 
 def fit_native(observations: str|Path, output: str|Path) -> Path:
@@ -45,7 +45,7 @@ def export_nesvor_native_inputs(native_maps: str|Path, output: str|Path, normali
     write_immutable_json(target/'manifest.json', {'input_native_maps': {'path': str(source.resolve()), 'sha256': sha256(source/'native_maps.npz')}, 'group_idx': [int(x) for x in maps['group_idx']], 'affine_ras': affine_ras.tolist(), 'geometry': 'current prepared LPS row/column geometry converted to RAS; groups become stack slices', 'normalization_before_nesvor': normalization or {'t1':1.0,'t2':1.0}, 'denormalization_after_nesvor_ms': normalization or {'t1':1.0,'t2':1.0}, 'pose_policy': BASELINE_POSE_POLICY, 'parameters': ['t1', 't2']})
     return target
 
-def build_independent_nesvor_commands(nesvor_input: str|Path|list[str|Path], output: str|Path, device: int = 0) -> list[str]:
+def build_independent_nesvor_commands(nesvor_input: str|Path|list[str|Path], output: str|Path, device: int = 0, nesvor_executable: str|Path = HISTORICAL_NESVOR_EXECUTABLE_DEFAULT) -> list[str]:
     """Exact independent NeSVoR commands; neither command may consume the other's pose."""
     roots = [Path(value) for value in nesvor_input] if isinstance(nesvor_input, list) else [Path(nesvor_input)]
     result = Path(output)
@@ -54,7 +54,7 @@ def build_independent_nesvor_commands(nesvor_input: str|Path|list[str|Path], out
     for parameter in ('t1', 't2'):
         destination = result/parameter
         inputs=[str(root/parameter/'stack.nii.gz') for root in roots]; scale='2500' if parameter=='t1' else '200'
-        args = ['nesvor','reconstruct','--input-stacks',*inputs,'--thicknesses','8','8','8','--registration','stack','--scanner-space','--metric','none','--weight-transformation','1','--weight-deform','0.1','--weight-image','1','--weight-pixel-var-smooth','0','--output-volume',str(destination/'volume_normalized.nii.gz'),'--output-json',str(destination/'result.json'),'--output-log',str(destination/'nesvor.log'),'--output-slices',str(destination/'slices'),'--output-resolution','1.0','--output-psf-factor','1','--no-slice-scale','--single-precision','--log2-hashmap-size','19','--batch-size','2000','--n-iter','10000','--n-samples','256','--inference-samples','128','--inference-batch-size','16000','--pixel-variance-weight','1','--coarsest-resolution','16','--finest-resolution','0.5','--level-scale','1.3819','--n-features-per-level','2','--depth','1','--width','64','--n-features-z','15','--n-features-slice','16','--weight-bias','100','--image-regularization','edge','--delta','0.2','--learning-rate','0.005','--gamma','0.33','--milestones','0.5','0.75','0.9','--seed','20260823','--device',str(device)]
+        args = [str(nesvor_executable),'reconstruct','--input-stacks',*inputs,'--thicknesses','8','8','8','--registration','stack','--scanner-space','--metric','none','--weight-transformation','1','--weight-deform','0.1','--weight-image','1','--weight-pixel-var-smooth','0','--output-volume',str(destination/'volume_normalized.nii.gz'),'--output-json',str(destination/'result.json'),'--output-log',str(destination/'nesvor.log'),'--output-slices',str(destination/'slices'),'--output-resolution','1.0','--output-psf-factor','1','--no-slice-scale','--single-precision','--log2-hashmap-size','19','--batch-size','2000','--n-iter','10000','--n-samples','256','--n-inference-samples','128','--inference-batch-size','16000','--pixel-variance-weight','1','--coarsest-resolution','16','--finest-resolution','0.5','--level-scale','1.3819','--n-features-per-level','2','--depth','1','--width','64','--n-features-z','15','--n-features-slice','16','--weight-bias','100','--image-regularization','edge','--delta','0.2','--learning-rate','0.005','--gamma','0.33','--milestones','0.5','0.75','0.9','--seed','20260823','--device',str(device)]
         commands.append(' '.join(shlex.quote(value) for value in args)+f' && python -m paper_experiments.joint_vs_2dfit.phase2_clean.fit_first_denormalize --input {shlex.quote(str(destination/"volume_normalized.nii.gz"))} --scale {scale} --output {shlex.quote(str(destination/"volume_ms.nii.gz"))}')
     return commands
 def main()->None:

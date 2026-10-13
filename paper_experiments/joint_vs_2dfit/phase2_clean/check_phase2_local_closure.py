@@ -5,7 +5,7 @@ import json
 import subprocess
 from pathlib import Path
 
-from .contracts import APPROVED_DECODER_SHA256, B6_CONFIG_SOURCE_SHA256, ELIGIBLE_REAL_SUBJECTS, sha256
+from .contracts import APPROVED_DECODER_SHA256, B6_CONFIG_SOURCE_SHA256, ELIGIBLE_REAL_SUBJECTS, HISTORICAL_NESVOR_EXECUTABLE_DEFAULT, HISTORICAL_NESVOR_VERSION, sha256
 
 ROOT = Path(__file__).resolve().parent
 REPOSITORY = ROOT.parents[3]
@@ -47,13 +47,16 @@ def _check_source_contracts() -> None:
     baseline = _read("baseline.py")
     evaluator = _read("evaluation.py")
     proposed = _read("proposed.py")
+    historical = json.loads(_read("historical_nesvor_v5_128_w1_contract.json"))
     _require("assert " not in preflight, "formal preflight contains assert safety gate")
     for token in ("sha256(p)", "reference source SAX SHA mismatch", "native-reference internal source SAX SHA mismatch", "relative_path", "B6_CONFIG_SOURCE_SHA256"):
         _require(token in preflight, f"preflight lacks actual-file gate: {token}")
     _require("nesvor reconstruct" not in baseline and "build_independent_nesvor_commands" in baseline, "baseline has duplicated NeSVoR command authority")
-    for token in ("'2500'", "'200'", "'--thicknesses','8','8','8'", "'--registration','stack'", "--scanner-space", "--no-slice-scale", "--single-precision", "'--batch-size','2000'", "'--n-iter','10000'", "'--n-samples','256'", "'--inference-samples','128'", "'--pixel-variance-weight','1'", "'--seed','20260823'", " && python -m"):
+    for token in ("HISTORICAL_NESVOR_EXECUTABLE_DEFAULT", "'2500'", "'200'", "'--thicknesses','8','8','8'", "'--registration','stack'", "--scanner-space", "--no-slice-scale", "--single-precision", "'--batch-size','2000'", "'--n-iter','10000'", "'--n-samples','256'", "'--n-inference-samples','128'", "'--pixel-variance-weight','1'", "'--weight-pixel-var-smooth','0'", "'--seed','20260823'", " && python -m"):
         _require(token in fit, f"fit-first contract missing {token}")
-    _require("; python" not in fit and "--initial-transforms" not in fit, "fit-first can hide NeSVoR failure or reuse pose")
+    _require("--inference-samples" not in fit and "; python" not in fit and "--initial-transforms" not in fit, "fit-first can hide NeSVoR failure, use the wrong CLI, or reuse pose")
+    _require(historical["runtime"]["executable"] == HISTORICAL_NESVOR_EXECUTABLE_DEFAULT and historical["runtime"]["version"] == HISTORICAL_NESVOR_VERSION, "historical runtime contract drifted")
+    _require(historical["historical_explicit_flags"]["n_inference_samples"] == 128 and historical["historical_resolved_defaults"]["n_samples"] == 256, "historical explicit/default distinction drifted")
     _require("args.mode == 'real'" in evaluator and "'subject_level'" in evaluator and "not 3-D ground-truth accuracy" in evaluator, "real evaluator is incomplete")
     _require("1410.0" in evaluator and "50.0" in evaluator and "not_applicable_constant_reference" in evaluator, "synthetic constant-GT metrics drifted")
     for token in ("Q002S640_B6_roi_same_anchor_mse", "--anchor-batch-size','640'", "--signal-simulator"):
@@ -70,13 +73,15 @@ def _check_scripts() -> None:
         _require("TEMPLATE ONLY" not in text and "--contract" not in text, f"{name} contains stale placeholder contract")
         subprocess.run(["bash", "-n", str(path)], check=True)
     preflight = (directory / "server_preflight_phase2.sh").read_text()
-    _require("assert " not in preflight and "--reference-root \"$DATA\"" in preflight and "-name '*.pth'" not in preflight, "server preflight lacks relocatable SHA-only gates")
+    _require("assert " not in preflight and "--reference-root \"$DATA\"" in preflight and "-name '*.pth'" not in preflight and "PHASE2_NESVOR_EXECUTABLE" in preflight and "historical_nesvor_runtime.py" in preflight and "import nesvor" not in preflight, "server preflight lacks isolated historical runtime gate")
     for name in names[1:5]:
         text = (directory / name).read_text()
         _require("server_preflight_phase2.sh" in text and "phase2_clean.runner" not in text, f"{name} uses stale manifest self-comparison")
     for name in ("run_phase2_synthetic_proposed.sh", "run_phase2_real_proposed.sh"):
         text = (directory / name).read_text()
         _require('["approved_decoder"]["path"]' in text and "approved_decoder_path" not in text, f"{name} does not consume the actual preflight decoder record")
+    for name in ("run_phase2_synthetic_fit_first.sh", "run_phase2_real_fit_first.sh"):
+        _require('--nesvor-executable "$NESVOR_EXEC"' in (directory / name).read_text(), f"{name} does not consume verified historical NeSVoR")
     evaluation = (directory / "evaluate_phase2.sh").read_text()
     for token in ("PROPOSED_SYN_ROOT", "T1_3D.nii.gz", "volume_ms.nii.gz", "CYJ", "DYZ", "HHZ", "HJL", "--mode real"):
         _require(token in evaluation, f"evaluation script lacks {token}")
@@ -86,7 +91,7 @@ def _check_readiness() -> None:
     readiness = json.loads(_read("phase2_execution_readiness.json"))
     for key in ("references_ready", "synthetic_evaluator_ready", "real_evaluator_ready", "formal_scripts_ready", "local_acceptance"):
         _require(readiness.get(key) is True, f"local readiness false: {key}")
-    for key in ("actual_observation_hash_gate", "approved_decoder_gate", "b6_config_source_gate", "server_environment_gate", "formal_reconstruction_ready"):
+    for key in ("actual_observation_hash_gate", "approved_decoder_gate", "b6_config_source_gate", "historical_nesvor_runtime_gate", "server_environment_gate", "formal_reconstruction_ready"):
         _require(readiness.get(key) is False, f"server gate falsely marked true: {key}")
     acceptance = json.loads(_read("phase2_local_acceptance.json"))
     _require(acceptance.get("local_acceptance") == "PASS" and acceptance.get("server_acceptance") == "UNVERIFIED", "acceptance artifact not finalized")
@@ -95,6 +100,7 @@ def _check_readiness() -> None:
 def main() -> None:
     _require(APPROVED_DECODER_SHA256 == "f83280d4f73bfc9e0540b9606ee20bf83395339ad4e54dd0fb7be93ed9c9a7a9", "approved decoder SHA drifted")
     _require(B6_CONFIG_SOURCE_SHA256 == "15981fbe93d2c70e14755ea756a02856c9383481e7d92d239619268a628a29b5", "B6 source SHA drifted")
+    _require(HISTORICAL_NESVOR_EXECUTABLE_DEFAULT == "/home/dengyz/miniconda3/envs/nesvor/bin/nesvor" and HISTORICAL_NESVOR_VERSION == "0.6.0rc1", "historical NeSVoR authority drifted")
     _check_references()
     _check_source_contracts()
     _check_scripts()

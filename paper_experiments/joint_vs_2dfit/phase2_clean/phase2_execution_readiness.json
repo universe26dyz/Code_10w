@@ -3,6 +3,7 @@
   "actual_observation_hash_gate": false,
   "approved_decoder_gate": false,
   "b6_config_source_gate": false,
+  "historical_nesvor_runtime_gate": false,
   "synthetic_evaluator_ready": true,
   "real_evaluator_ready": true,
   "formal_scripts_ready": true,
