@@ -29,6 +29,36 @@ def observation_hashes(root: str | Path) -> dict[str, str]:
     if len(result) != 3: raise ValueError("all three observation stacks are required")
     return result
 
+def real_observation_identities(root: str | Path, subjects: tuple[str, ...] = ELIGIBLE_REAL_SUBJECTS) -> dict[str, dict[str, dict[str, str]]]:
+    """Freeze each paired subject's own prepared observations, never a synthetic proxy."""
+    prepared = Path(root)
+    result: dict[str, dict[str, dict[str, str]]] = {}
+    for subject in subjects:
+        stacks: dict[str, dict[str, str]] = {}
+        for stack in ("sax", "2ch", "4ch"):
+            path = prepared / subject / stack / "observations.npz"
+            if not path.is_file():
+                raise FileNotFoundError(f"missing prepared observation: {path}")
+            stacks[stack] = {"path": str(path.resolve()), "sha256": sha256(path)}
+        result[subject] = stacks
+    return result
+
+def compare_real_observation_identities(shared: dict, candidate: dict, subject_id: str) -> None:
+    try:
+        expected, actual = shared[subject_id], candidate[subject_id]
+    except KeyError as exc:
+        raise ValueError(f"real observation identity missing for subject {subject_id}") from exc
+    if expected != actual:
+        raise ValueError(f"real observation hash mismatch for subject {subject_id}")
+
+def historical_reference_is_current_compatible(config: dict) -> bool:
+    """Historical 2D maps are usable only if their inversion-time protocol is not TI=[10,100]."""
+    ti = config.get("TI", config.get("ti_ms"))
+    if ti is None:
+        return False
+    values = [float(value) for value in ti]
+    return not (len(values) == 2 and values == [10.0, 100.0])
+
 def validate_proposed_subject(subject_id: str, tr_ms: float, vps: int) -> None:
     if subject_id == "DYL" or int(vps) != 87 or float(tr_ms) != 2.61:
         raise ValueError(f"{subject_id} is incompatible with approved decoder: expected TR=2.61/VPS=87; got TR={tr_ms}/VPS={vps}" if subject_id != "DYL" else "DYL rejected: VPS=85 is incompatible with approved VPS=87 decoder")

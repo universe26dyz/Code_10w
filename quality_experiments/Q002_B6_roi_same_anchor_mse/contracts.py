@@ -15,16 +15,18 @@ Q004S640_K1_EXPERIMENT_ID = "Q004S640_K1_B6_roi_same_anchor_mse"
 STACKS = ("sax", "2ch", "4ch")
 
 
-def cropped_observation_paths(root: str | Path) -> list[Path]:
+def cropped_observation_paths(root: str | Path, subject_id: str = "CYJ") -> list[Path]:
     """Return only the three original B6 cropped observation archives."""
 
     prepared_root = Path(root)
     if "full_fov" in str(prepared_root).lower():
         raise ValueError("Q002 forbids full-FOV prepared inputs.")
-    paths = [prepared_root / "CYJ" / stack / "observations.npz" for stack in STACKS]
+    subject_paths = [prepared_root / subject_id / stack / "observations.npz" for stack in STACKS]
+    direct_paths = [prepared_root / stack / "observations.npz" for stack in STACKS]
+    paths = direct_paths if all(path.is_file() for path in direct_paths) else subject_paths
     missing = [str(path) for path in paths if not path.is_file()]
     if missing:
-        raise FileNotFoundError("Q002 requires B6 cropped CYJ/{sax,2ch,4ch}/observations.npz: " + "; ".join(missing))
+        raise FileNotFoundError(f"Q002 requires B6 cropped {subject_id}/{{sax,2ch,4ch}}/observations.npz: " + "; ".join(missing))
     return paths
 
 

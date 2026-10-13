@@ -20,7 +20,14 @@ def frozen_dictionary(timing9_ms: np.ndarray, tr_ms: float, vps: int) -> dict[st
     x,y,z=np.meshgrid(t1,t2,b1,indexing="ij"); keep=x>y
     return build_dictionary(x[keep],y[keep],z[keep],timing9_ms,tr_ms,vps)
 
-def match_fingerprints(dictionary_fingerprints: np.ndarray, measured: np.ndarray) -> np.ndarray:
+def match_fingerprints(dictionary_fingerprints: np.ndarray, measured: np.ndarray, pixel_chunk: int = 256, dictionary_chunk: int = 32768) -> np.ndarray:
     d=np.asarray(dictionary_fingerprints,float); m=np.asarray(measured,float)
     m=m.reshape(-1,10); m=m/np.linalg.norm(m,axis=1,keepdims=True).clip(1e-12)
-    return np.argmax(m @ d.T,axis=1)
+    result=np.empty(len(m),dtype=np.int64)
+    for begin in range(0,len(m),pixel_chunk):
+        block=m[begin:begin+pixel_chunk]; best=np.full(len(block),-np.inf); index=np.zeros(len(block),dtype=np.int64)
+        for offset in range(0,len(d),dictionary_chunk):
+            score=block @ d[offset:offset+dictionary_chunk].T; local=np.argmax(score,axis=1); values=score[np.arange(len(block)),local]; update=values>best
+            best[update]=values[update]; index[update]=offset+local[update]
+        result[begin:begin+len(block)]=index
+    return result

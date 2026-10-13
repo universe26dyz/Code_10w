@@ -62,6 +62,12 @@
     "HHZ",
     "HJL"
   ],
+  "real_observation_sha256": {
+    "CYJ": {"sax": {"path": "/home/universe/SVR/data/Code_10w_v1/Code_10w_prepared/CYJ/sax/observations.npz", "sha256": "63ea694621d512f5d56574a190bb33c7d6796cf8e6911467e8ae5828d79edf56"}, "2ch": {"path": "/home/universe/SVR/data/Code_10w_v1/Code_10w_prepared/CYJ/2ch/observations.npz", "sha256": "110e26952d02e2554a2b7c91d1d9d22687135411756b9349cb7cd96176c75711"}, "4ch": {"path": "/home/universe/SVR/data/Code_10w_v1/Code_10w_prepared/CYJ/4ch/observations.npz", "sha256": "307dfd830e359216da936ce106657e00247ec52b76e750c2a534e97cd3a02e58"}},
+    "DYZ": {"sax": {"path": "/home/universe/SVR/data/Code_10w_v1/Code_10w_prepared/DYZ/sax/observations.npz", "sha256": "a6dcb4e3ff58a7d480ebc91b1bb086853685b513d15aa5a8b59e11bd24209213"}, "2ch": {"path": "/home/universe/SVR/data/Code_10w_v1/Code_10w_prepared/DYZ/2ch/observations.npz", "sha256": "8827c75aa8953614702904c891ea79b14ab2ff27463f6a08e9e67e0ea8c5a8a9"}, "4ch": {"path": "/home/universe/SVR/data/Code_10w_v1/Code_10w_prepared/DYZ/4ch/observations.npz", "sha256": "2c8414fdafee54eec813d806d9ab2a4ea11400b475bfb897412547ebaec8f31d"}},
+    "HHZ": {"sax": {"path": "/home/universe/SVR/data/Code_10w_v1/Code_10w_prepared/HHZ/sax/observations.npz", "sha256": "e22a54daf1700e6040b5fbfee981f61bbea8251a94b0e5f057de86c681f8e34a"}, "2ch": {"path": "/home/universe/SVR/data/Code_10w_v1/Code_10w_prepared/HHZ/2ch/observations.npz", "sha256": "d03c368d59f8c90a2f9541de34e6f2e1e5e49c7ee44261d8c3a5552d40af5696"}, "4ch": {"path": "/home/universe/SVR/data/Code_10w_v1/Code_10w_prepared/HHZ/4ch/observations.npz", "sha256": "76cb0a8b153d4263c85aa5ee5a98fb8f9b27606ad2494ca5e3f4c208d2443f03"}},
+    "HJL": {"sax": {"path": "/home/universe/SVR/data/Code_10w_v1/Code_10w_prepared/HJL/sax/observations.npz", "sha256": "47333475a6ff0a2caf82b1fc303807412141315314549635d1fc112248306710"}, "2ch": {"path": "/home/universe/SVR/data/Code_10w_v1/Code_10w_prepared/HJL/2ch/observations.npz", "sha256": "324dffda6b8e771447083bc9112921f148012106f1df26b45a7ac9ecfab90584"}, "4ch": {"path": "/home/universe/SVR/data/Code_10w_v1/Code_10w_prepared/HJL/4ch/observations.npz", "sha256": "427d2c5588f3c6c336d5107b78c772bd71b54a5c4316cb73d6c696390c6051a6"}}
+  },
   "synthetic_root": "/home/universe/SVR/multimap_postprogramming/Code_10w/paper_experiments/joint_vs_2dfit/simulation/outputs/phase1_1_clean_mrxcat",
   "timing_sha256": "74fc30a447b4931e3c0a7c4de78a98fd6d91c474d703316614c3053c0b2a551b"
 }
