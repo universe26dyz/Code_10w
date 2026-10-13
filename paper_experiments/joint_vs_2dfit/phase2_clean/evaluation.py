@@ -42,9 +42,19 @@ def real_native_agreement(reference: np.ndarray, prediction: np.ndarray, myocard
 def main() -> None:
     import argparse, json, nibabel as nib
     from pathlib import Path
-    parser=argparse.ArgumentParser(description=__doc__); parser.add_argument('--synthetic-t1'); parser.add_argument('--synthetic-t2'); parser.add_argument('--gt-maps'); parser.add_argument('--mesh-myo'); parser.add_argument('--output', required=True); args=parser.parse_args()
+    parser=argparse.ArgumentParser(description=__doc__); parser.add_argument('--mode', choices=('synthetic','real'), required=True); parser.add_argument('--synthetic-t1'); parser.add_argument('--synthetic-t2'); parser.add_argument('--gt-maps'); parser.add_argument('--mesh-myo'); parser.add_argument('--subject'); parser.add_argument('--real-t1'); parser.add_argument('--real-t2'); parser.add_argument('--native-reference'); parser.add_argument('--myocardium-bundle'); parser.add_argument('--output', required=True); args=parser.parse_args()
     output=Path(args.output)
     if output.exists(): raise FileExistsError(f'refusing overwrite: {output}')
+    if args.mode == 'real':
+        if not all((args.subject,args.real_t1,args.real_t2,args.native_reference,args.myocardium_bundle)): raise ValueError('real evaluation requires subject, T1/T2 volumes, current reference, and masks')
+        ref_root=Path(args.native_reference); reference=np.load(ref_root/'sax.npz'); masks=np.load(Path(args.myocardium_bundle)/'sax_myocardium_masks.npz'); result={}
+        for parameter,volume_path in (('t1_ms',args.real_t1),('t2_ms',args.real_t2)):
+            image=nib.load(volume_path); native=nib.load(str(ref_root/('sax_T1_stack_ms.nii.gz' if parameter=='t1_ms' else 'sax_T2_stack_ms.nii.gz'))); rows=[]
+            for group in range(reference[parameter].shape[0]):
+                predicted, valid = reproject_volume_to_native_plane(image.get_fdata(),image.affine,native.affine,reference[parameter].shape[1:],group)
+                rows.append(real_native_agreement(reference[parameter][group],predicted,masks['myocardium_full'][group].astype(bool)&valid))
+            result[parameter]={'per_native_sax_plane':rows}
+        output.parent.mkdir(parents=True,exist_ok=False); output.write_text(json.dumps({'subject':args.subject,'endpoint':'agreement/consistency, not 3-D ground-truth accuracy','metrics':result},indent=2)); print(output); return
     if not all((args.synthetic_t1,args.synthetic_t2,args.gt_maps,args.mesh_myo)): raise ValueError('synthetic evaluation requires T1/T2 NIfTI, gt maps, and mesh mask')
     gt=np.load(args.gt_maps); mesh=np.load(args.mesh_myo); affine=np.eye(4); affine[:3,:3]=np.diag(mesh['spacing_mm']); affine[:3,3]=mesh['origin_mm']
     result={}

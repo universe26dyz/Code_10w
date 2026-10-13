@@ -1,0 +1,11 @@
+{
+  "references_ready": true,
+  "actual_observation_hash_gate": false,
+  "approved_decoder_gate": false,
+  "b6_config_source_gate": false,
+  "synthetic_evaluator_ready": true,
+  "real_evaluator_ready": false,
+  "formal_scripts_ready": false,
+  "formal_reconstruction_ready": false,
+  "server_dependent_status": "unverified; only a successful server preflight may set these gates true"
+}
