@@ -14,6 +14,7 @@ from paper_experiments.joint_vs_2dfit.phase2_clean.contracts import (
 from paper_experiments.joint_vs_2dfit.phase2_clean.evaluation import (
     reproject_volume_to_native_plane,
     resample_volume_to_grid,
+    synthetic_metrics,
 )
 from paper_experiments.joint_vs_2dfit.phase2_clean.fit_first import (
     build_independent_nesvor_commands,
@@ -97,6 +98,14 @@ def test_affine_resampling_and_native_plane_reprojection() -> None:
     assert valid.all() and sampled[1, 2, 3] == pytest.approx(9.0)
     plane, plane_valid = reproject_volume_to_native_plane(volume, affine, affine, (4, 4))
     assert plane_valid.all() and plane[1, 2] == pytest.approx(volume[1, 2, 0])
+
+
+def test_constant_gt_uses_fixed_value_nrmse_and_no_fake_correlation() -> None:
+    reference = np.full((2, 2, 2), 1410.0); prediction = reference + 14.1; mask = np.ones_like(reference, bool)
+    report = synthetic_metrics(reference, prediction, mask, mask, normalization=1410.0)
+    assert report["relative_nrmse"] == pytest.approx(0.01)
+    assert report["pearson_r"] is None and report["ncc"] is None
+    assert report["correlation_status"] == "not_applicable_constant_reference"
 
 
 def test_phase2_server_scripts_are_commands_not_echo_templates() -> None:

@@ -12,13 +12,14 @@ from paper_experiments.joint_vs_2dfit.phase2_clean.contracts import (
     compare_observation_hashes,
     validate_proposed_subject,
 )
-from paper_experiments.joint_vs_2dfit.phase2_clean.dictionary import build_dictionary, match_fingerprints
+from paper_experiments.joint_vs_2dfit.phase2_clean.dictionary import build_dictionary, match_fingerprints, frozen_axis
 from paper_experiments.joint_vs_2dfit.phase2_clean.evaluation import synthetic_metrics
 from paper_experiments.joint_vs_2dfit.reference.migrate_verified_legacy_roi import _bundle_audit_entry
 
 
 def test_phase2_frozen_dictionary_contract_and_on_grid_recovery() -> None:
     assert FROZEN_GRID["t1_ms"] == (20, 20, 500, 505, 5, 1500, 1520, 20, 2500)
+    assert frozen_axis(FROZEN_GRID["t2_ms"])[-1] == 200
     dictionary = build_dictionary(np.array([1410.0]), np.array([50.0]), np.array([1.0]), np.arange(1.0, 10.0), 2.61, 87)
     result = match_fingerprints(dictionary["fingerprints"], dictionary["fingerprints"])
     assert result.tolist() == [0]

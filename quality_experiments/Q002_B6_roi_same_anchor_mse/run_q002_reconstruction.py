@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import json
 from pathlib import Path
@@ -20,6 +21,7 @@ from .contracts import Q002_EXPERIMENT_ID, Q002S640_EXPERIMENT_ID, Q003S640_EXPE
 from .joint_dataset import JointAnchorDataset
 from .training import train_q002_reconstruction
 from .training_curves import generate_convergence_artifacts, generate_q004_convergence_artifacts
+from paper_experiments.joint_vs_2dfit.phase2_clean.contracts import APPROVED_DECODER_SHA256
 
 
 def _sha256(path: Path) -> str:
@@ -38,8 +40,10 @@ def run(args: argparse.Namespace) -> Path:
     if output.exists() and any(output.iterdir()):
         raise FileExistsError(f"Refusing non-empty Q002 output root: {output}")
     config = load_b6_resolved_config(args.b6_model)
-    if str(config["decoder"].get("checkpoint")) != str(Path(args.signal_simulator)):
-        raise ValueError("B6 resolved_config decoder checkpoint does not match approved FrozenMLP.")
+    source_decoder_path = str(config["decoder"].get("checkpoint"))
+    if _sha256(Path(args.signal_simulator)) != APPROVED_DECODER_SHA256:
+        raise ValueError("runtime decoder SHA256 is not the approved FrozenMLP.")
+    config = copy.deepcopy(config); config["decoder"] = dict(config["decoder"]); config["decoder"]["checkpoint"] = str(Path(args.signal_simulator))
     route = build_q002_route_config(
         config,
         cropped_prepared_root=args.cropped_prepared_root,
@@ -88,7 +92,7 @@ def run(args: argparse.Namespace) -> Path:
         export_native_plane_reprojections(result["model"], result["training_space"], inputs, output / "evaluation/mapping_central_no_psf", output_psf={"enabled": False}, export_parameter_maps=True)
         export_native_plane_reprojections(result["model"], result["training_space"], inputs, output / "evaluation/signal_psf_K8", output_psf={"enabled": True, "n_samples": 8}, evaluation_seed=20260911, export_parameter_maps=False)
     export_quantitative_outputs_psf128(result["model"], result["training_space"], output, dataset=scalar, export_config=export_config, batch_size=int(export["output_batch_size"]), experiment_id=args.experiment_id, subject_id=args.subject_id, source_checkpoint=output / "model.pt", reconstruction_code_git_commit=git_sha)
-    common = {"experiment_id": args.experiment_id, "subject_id": args.subject_id, "route": route["route"], "reconstruction_git_sha": git_sha, "git_dirty": bool(__import__("subprocess").check_output(["git", "status", "--porcelain"], text=True).strip()), "B6_model_path": str(Path(args.b6_model)), "b6_model_sha256": _sha256(Path(args.b6_model)), "approved_decoder_path": str(Path(args.signal_simulator)), "approved_decoder_sha256": _sha256(Path(args.signal_simulator)), "prepared_inputs_sha256": {str(path): _sha256(path) for path in inputs}, "joint_dataset_qc": joint.qc, "controls": result["controls"], "intensity_normalization": result["intensity_normalization"], "stack_weights": result["stack_weights"], "fixed_monitor": {"seed": result["fixed_monitor"]["seed"], "anchor_identity_sha256": result["fixed_monitor"]["anchor_identity_sha256"]}, "q002_checkpoint_sha256": _sha256(output / "model.pt"), "psf128_contract": {"resolution_mm": 1.0, "factor": 1.0, "samples": 128, "seed": 20260911}}
+    common = {"experiment_id": args.experiment_id, "subject_id": args.subject_id, "route": route["route"], "reconstruction_git_sha": git_sha, "git_dirty": bool(__import__("subprocess").check_output(["git", "status", "--porcelain"], text=True).strip()), "B6_model_path": str(Path(args.b6_model)), "b6_model_sha256": _sha256(Path(args.b6_model)), "decoder_relocation":{"b6_resolved_config_path":source_decoder_path,"runtime_decoder_path":str(Path(args.signal_simulator)),"approved_decoder_sha256":_sha256(Path(args.signal_simulator)),"scientific_config_changed":False}, "approved_decoder_path": str(Path(args.signal_simulator)), "approved_decoder_sha256": _sha256(Path(args.signal_simulator)), "prepared_inputs_sha256": {str(path): _sha256(path) for path in inputs}, "joint_dataset_qc": joint.qc, "controls": result["controls"], "intensity_normalization": result["intensity_normalization"], "stack_weights": result["stack_weights"], "fixed_monitor": {"seed": result["fixed_monitor"]["seed"], "anchor_identity_sha256": result["fixed_monitor"]["anchor_identity_sha256"]}, "q002_checkpoint_sha256": _sha256(output / "model.pt"), "psf128_contract": {"resolution_mm": 1.0, "factor": 1.0, "samples": 128, "seed": 20260911}}
     if args.experiment_id == Q003S640_EXPERIMENT_ID:
         common.update({"parent_experiment": Q002S640_EXPERIMENT_ID, "scientific_change": "add_fingerprint_cosine_only", "checkpoint_sha256": common["q002_checkpoint_sha256"], "anchor_batch_size": 640, "weights_per_anchor": 10, "signal_residual_count": 6400, "training_psf_samples": 8, "data_psf_inr_location_count": 5120, "stage_a_iterations": 2000, "stage_b_iterations": 4000, "seed": 20260911, "regularization_candidate_count": 640, "regularization_effective_point_count": 256, "regularization_sampling_source": "B6 scalar cropped support", "fingerprint_cosine_enabled": True, "fingerprint_cosine_weight": 1.0, "fingerprint_cosine_epsilon": 1.0e-8})
     if args.experiment_id == Q003S640_10K_EXPERIMENT_ID:

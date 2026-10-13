@@ -27,7 +27,7 @@ def fit_native(observations: str|Path, output: str|Path) -> Path:
     write_immutable_json(output/'manifest.json',{"method":"current-protocol HHZ/TRAD dictionary matching; normalized 10D inner product; no interpolation/refinement","source_observations":{"path":str(source.resolve()),"sha256":sha256(source)},"dictionary_cache_entries":len(cache),"baseline_pose_policy":BASELINE_POSE_POLICY,"next_formal_step":"independent T1 and T2 NeSVoR stack registration/transformation optimization"})
     return output
 
-def export_nesvor_native_inputs(native_maps: str|Path, output: str|Path) -> Path:
+def export_nesvor_native_inputs(native_maps: str|Path, output: str|Path, normalization: dict[str, float] | None = None) -> Path:
     """Export current dictionary maps as independent geometry-preserving NeSVoR stacks."""
     import nibabel as nib
     source, target = Path(native_maps), Path(output)
@@ -39,10 +39,10 @@ def export_nesvor_native_inputs(native_maps: str|Path, output: str|Path) -> Path
     affine_ras = np.diag([-1., -1., 1., 1.]) @ affine_lps
     target.mkdir(parents=True)
     for parameter in ('t1', 't2'):
-        values = np.asarray(maps[f'{parameter}_ms'], np.float32)
+        values = np.asarray(maps[f'{parameter}_ms'], np.float32) / float((normalization or {}).get(parameter, 1.0))
         folder = target/parameter; folder.mkdir()
         nib.save(nib.Nifti1Image(np.moveaxis(values, 0, 2), affine_ras), str(folder/'stack.nii.gz'))
-    write_immutable_json(target/'manifest.json', {'input_native_maps': {'path': str(source.resolve()), 'sha256': sha256(source/'native_maps.npz')}, 'group_idx': [int(x) for x in maps['group_idx']], 'affine_ras': affine_ras.tolist(), 'geometry': 'current prepared LPS row/column geometry converted to RAS; groups become stack slices', 'pose_policy': BASELINE_POSE_POLICY, 'parameters': ['t1', 't2']})
+    write_immutable_json(target/'manifest.json', {'input_native_maps': {'path': str(source.resolve()), 'sha256': sha256(source/'native_maps.npz')}, 'group_idx': [int(x) for x in maps['group_idx']], 'affine_ras': affine_ras.tolist(), 'geometry': 'current prepared LPS row/column geometry converted to RAS; groups become stack slices', 'normalization_before_nesvor': normalization or {'t1':1.0,'t2':1.0}, 'denormalization_after_nesvor_ms': normalization or {'t1':1.0,'t2':1.0}, 'pose_policy': BASELINE_POSE_POLICY, 'parameters': ['t1', 't2']})
     return target
 
 def build_independent_nesvor_commands(nesvor_input: str|Path, output: str|Path, device: int = 0) -> list[str]:

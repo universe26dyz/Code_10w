@@ -23,25 +23,33 @@ def reproject_volume_to_native_plane(volume: np.ndarray, volume_affine: np.ndarr
     values, valid = _world_sample(volume, volume_affine, world.reshape(4, *plane_shape), order=1)
     return values, valid
 
-def _metrics(reference: np.ndarray, prediction: np.ndarray, mask: np.ndarray) -> dict:
+def _metrics(reference: np.ndarray, prediction: np.ndarray, mask: np.ndarray, constant_normalization: float | None = None) -> dict:
     r,p=np.asarray(reference,float)[mask],np.asarray(prediction,float)[mask]
     if not len(r): raise ValueError("empty evaluation support")
     diff=p-r; rmse=float(np.sqrt(np.mean(diff**2))); rng=float(np.max(r)-np.min(r))
     pearson=float(np.corrcoef(r,p)[0,1]) if len(r)>1 and np.std(r)>0 and np.std(p)>0 else float("nan")
     ncc=float(np.dot(r-r.mean(),p-p.mean())/(np.linalg.norm(r-r.mean())*np.linalg.norm(p-p.mean()))) if np.std(r)>0 and np.std(p)>0 else float("nan")
-    return {"bias":float(diff.mean()),"mae":float(np.abs(diff).mean()),"rmse":rmse,"nrmse":rmse/rng if rng else float("nan"),"valid_mape":float(np.mean(np.abs(diff[r!=0]/r[r!=0]))*100) if np.any(r!=0) else float("nan"),"pearson_r":pearson,"ncc":ncc,"ssim":None,"support_voxels":int(len(r))}
+    constant = np.std(r) == 0
+    return {"bias":float(diff.mean()),"mae":float(np.abs(diff).mean()),"rmse":rmse,"relative_nrmse":rmse/(float(constant_normalization) if constant_normalization is not None else (rng if rng else float('nan'))),"valid_mape":float(np.mean(np.abs(diff[r!=0]/r[r!=0]))*100) if np.any(r!=0) else float("nan"),"pearson_r":None if constant else pearson,"ncc":None if constant else ncc,"correlation_status":"not_applicable_constant_reference" if constant else "applicable","ssim":None,"support_voxels":int(len(r))}
 
-def synthetic_metrics(reference: np.ndarray, prediction: np.ndarray, myocardium_full: np.ndarray, valid: np.ndarray) -> dict:
+def synthetic_metrics(reference: np.ndarray, prediction: np.ndarray, myocardium_full: np.ndarray, valid: np.ndarray, normalization: float | None = None) -> dict:
     support=np.asarray(myocardium_full,bool)&np.asarray(valid,bool)&np.isfinite(reference)&np.isfinite(prediction)
-    report=_metrics(reference,prediction,support); report.update({"primary_region":"full_mesh_myocardium","coverage_fraction":float(support.sum()/np.asarray(myocardium_full,bool).sum()),"out_of_grid_voxels":int((np.asarray(myocardium_full,bool)&~np.asarray(valid,bool)).sum()),"world_alignment":"raw known world geometry primary; common SE(3) diagnostic only"}); return report
+    report=_metrics(reference,prediction,support,normalization); report.update({"primary_region":"full_mesh_myocardium","coverage_fraction":float(support.sum()/np.asarray(myocardium_full,bool).sum()),"out_of_grid_voxels":int((np.asarray(myocardium_full,bool)&~np.asarray(valid,bool)).sum()),"world_alignment":"raw known world geometry primary; common SE(3) diagnostic only"}); return report
 
 def real_native_agreement(reference: np.ndarray, prediction: np.ndarray, myocardium_mask: np.ndarray) -> dict:
     report=_metrics(reference,prediction,np.asarray(myocardium_mask,bool)&np.isfinite(reference)&np.isfinite(prediction)); report["endpoint"]="native-reference agreement/consistency, not accuracy versus ground truth"; return report
 
 def main() -> None:
-    import argparse, json
+    import argparse, json, nibabel as nib
     from pathlib import Path
-    parser=argparse.ArgumentParser(description=__doc__); parser.add_argument('--contract', required=True); args=parser.parse_args()
-    print(json.dumps({'evaluation_contract': Path(args.contract).resolve().as_posix(), 'status':'inputs_required_for_evaluation'}, indent=2))
+    parser=argparse.ArgumentParser(description=__doc__); parser.add_argument('--synthetic-t1'); parser.add_argument('--synthetic-t2'); parser.add_argument('--gt-maps'); parser.add_argument('--mesh-myo'); parser.add_argument('--output', required=True); args=parser.parse_args()
+    output=Path(args.output)
+    if output.exists(): raise FileExistsError(f'refusing overwrite: {output}')
+    if not all((args.synthetic_t1,args.synthetic_t2,args.gt_maps,args.mesh_myo)): raise ValueError('synthetic evaluation requires T1/T2 NIfTI, gt maps, and mesh mask')
+    gt=np.load(args.gt_maps); mesh=np.load(args.mesh_myo); affine=np.eye(4); affine[:3,:3]=np.diag(mesh['spacing_mm']); affine[:3,3]=mesh['origin_mm']
+    result={}
+    for parameter,path,normal in (('t1_ms',args.synthetic_t1,1410.0),('t2_ms',args.synthetic_t2,50.0)):
+        image=nib.load(path); prediction,valid=resample_volume_to_grid(image.get_fdata(),image.affine,gt[parameter].shape,affine); result[parameter]=synthetic_metrics(gt[parameter],prediction,mesh['myocardium_mask'],valid,normal)
+    output.parent.mkdir(parents=True,exist_ok=False); output.write_text(json.dumps({'endpoint':'synthetic mesh myocardium; primary NRMSE uses fixed GT value','metrics':result},indent=2)); print(output)
 
 if __name__ == '__main__': main()

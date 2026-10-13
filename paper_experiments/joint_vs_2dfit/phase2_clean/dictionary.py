@@ -5,6 +5,9 @@ from ..simulation.simulate_hhz_signals import generate_signal_field
 from .contracts import FROZEN_GRID
 
 def frozen_axis(spec: tuple[float, float, float, float, float, float, float, float, float]) -> np.ndarray:
+    if len(spec) == 6:
+        a,b,c,d,e,f = spec
+        return np.concatenate((np.arange(a, c + 0.1, b), np.arange(d, f + 0.1, e)))
     a,b,c,d,e,f,g,h,i = spec
     return np.concatenate((np.arange(a, c + 0.1, b), np.arange(d, f + 0.1, e), np.arange(g, i + 0.1, h)))
 
