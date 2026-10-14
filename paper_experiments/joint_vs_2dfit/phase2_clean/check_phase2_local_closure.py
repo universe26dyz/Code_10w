@@ -5,10 +5,11 @@ import json
 import subprocess
 from pathlib import Path
 
-from .contracts import APPROVED_DECODER_SHA256, B6_CONFIG_SOURCE_SHA256, ELIGIBLE_REAL_SUBJECTS, HISTORICAL_NESVOR_EXECUTABLE_DEFAULT, HISTORICAL_NESVOR_VERSION, sha256
+from .contracts import APPROVED_DECODER_SHA256, B6_CONFIG_SOURCE_SHA256, CANONICAL_APPROVED_DECODER_DECLARED_PATH, CANONICAL_APPROVED_DECODER_RELATIVE_PATH, ELIGIBLE_REAL_SUBJECTS, HISTORICAL_NESVOR_EXECUTABLE_DEFAULT, HISTORICAL_NESVOR_VERSION, sha256
 
 ROOT = Path(__file__).resolve().parent
 REPOSITORY = ROOT.parents[3]
+CODE_ROOT = ROOT.parents[2]
 REFERENCE_ROOT = Path("/home/universe/SVR/data/Code_10w_v1")
 
 
@@ -48,9 +49,14 @@ def _check_source_contracts() -> None:
     evaluator = _read("evaluation.py")
     proposed = _read("proposed.py")
     historical = json.loads(_read("historical_nesvor_v5_128_w1_contract.json"))
+    approved = json.loads((CODE_ROOT / "paper_experiments/joint_vs_2dfit/audit/outputs/approved_decoder.json").read_text())
     _require("assert " not in preflight, "formal preflight contains assert safety gate")
     for token in ("sha256(p)", "reference source SAX SHA mismatch", "native-reference internal source SAX SHA mismatch", "relative_path", "B6_CONFIG_SOURCE_SHA256"):
         _require(token in preflight, f"preflight lacks actual-file gate: {token}")
+    for token in ("verify_approved_decoder", "CANONICAL_DECODER_RELATIVE", "CANONICAL_APPROVED_DECODER_DECLARED_PATH", "canonical_path_plus_sha256"):
+        _require(token in preflight, f"preflight lacks canonical decoder authority: {token}")
+    _require(approved.get("approved_for_paper") is True and approved.get("approved_by_manual_review") is True and approved.get("validation_status") == "approved_by_manual_review", "approved decoder audit is not manually approved")
+    _require(approved.get("sha256") == APPROVED_DECODER_SHA256 and approved.get("resolved_from_provenance", {}).get("declared_decoder_path") == CANONICAL_APPROVED_DECODER_DECLARED_PATH, "approved decoder audit disagrees with canonical authority")
     _require("nesvor reconstruct" not in baseline and "build_independent_nesvor_commands" in baseline, "baseline has duplicated NeSVoR command authority")
     for token in ("HISTORICAL_NESVOR_EXECUTABLE_DEFAULT", "'2500'", "'200'", "'--thicknesses','8','8','8'", "'--registration','stack'", "--scanner-space", "--no-slice-scale", "--single-precision", "'--batch-size','2000'", "'--n-iter','10000'", "'--n-samples','256'", "'--n-inference-samples','128'", "'--pixel-variance-weight','1'", "'--weight-pixel-var-smooth','0'", "'--seed','20260823'", " && python -m"):
         _require(token in fit, f"fit-first contract missing {token}")
@@ -73,7 +79,7 @@ def _check_scripts() -> None:
         _require("TEMPLATE ONLY" not in text and "--contract" not in text, f"{name} contains stale placeholder contract")
         subprocess.run(["bash", "-n", str(path)], check=True)
     preflight = (directory / "server_preflight_phase2.sh").read_text()
-    _require("assert " not in preflight and "--reference-root \"$DATA\"" in preflight and "-name '*.pth'" not in preflight and "PHASE2_NESVOR_EXECUTABLE" in preflight and "historical_nesvor_runtime.py" in preflight and "import nesvor" not in preflight, "server preflight lacks isolated historical runtime gate")
+    _require("assert " not in preflight and "--reference-root \"$DATA\"" in preflight and "PHASE2_NESVOR_EXECUTABLE" in preflight and "historical_nesvor_runtime.py" in preflight and "import nesvor" not in preflight and "PHASE2_APPROVED_DECODER" in preflight and "CANONICAL_DECODER" in preflight and "CANDIDATES" not in preflight and "approved_decoder_duplicate_sha_matches" in preflight, "server preflight lacks canonical decoder authority or isolated historical runtime gate")
     for name in names[1:5]:
         text = (directory / name).read_text()
         _require("server_preflight_phase2.sh" in text and "phase2_clean.runner" not in text, f"{name} uses stale manifest self-comparison")
@@ -101,6 +107,7 @@ def main() -> None:
     _require(APPROVED_DECODER_SHA256 == "f83280d4f73bfc9e0540b9606ee20bf83395339ad4e54dd0fb7be93ed9c9a7a9", "approved decoder SHA drifted")
     _require(B6_CONFIG_SOURCE_SHA256 == "15981fbe93d2c70e14755ea756a02856c9383481e7d92d239619268a628a29b5", "B6 source SHA drifted")
     _require(HISTORICAL_NESVOR_EXECUTABLE_DEFAULT == "/home/dengyz/miniconda3/envs/nesvor/bin/nesvor" and HISTORICAL_NESVOR_VERSION == "0.6.0rc1", "historical NeSVoR authority drifted")
+    _require(CANONICAL_APPROVED_DECODER_RELATIVE_PATH == "Code_10w_runs/CYJ_decoder_comparison_20260924_clean_v1/inputs/mlp/signal_simulator_approved.pth", "canonical decoder relative path drifted")
     _check_references()
     _check_source_contracts()
     _check_scripts()

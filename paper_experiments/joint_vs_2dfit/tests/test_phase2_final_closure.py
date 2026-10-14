@@ -28,6 +28,42 @@ def _write_observations(root: Path, value: int = 1) -> None:
         np.savez_compressed(path, fixture=np.full((1,), value, np.uint8))
 
 
+def _approved_decoder_audit(path: Path, digest: str, *, declared_path: str = "/data/dengyz/dataset/Code_10w_v1/Code_10w_runs/CYJ_decoder_comparison_20260924_clean_v1/inputs/mlp/signal_simulator_approved.pth") -> Path:
+    path.write_text(json.dumps({
+        "approved_for_paper": True,
+        "approved_by_manual_review": True,
+        "validation_status": "approved_by_manual_review",
+        "sha256": digest,
+        "resolved_from_provenance": {"declared_decoder_path": declared_path},
+    }))
+    return path
+
+
+def test_canonical_decoder_authority_rejects_drift_but_allows_duplicate_sha(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    data_root = tmp_path / "data"
+    relative = preflight_actual.CANONICAL_DECODER_RELATIVE
+    canonical = data_root / relative
+    canonical.parent.mkdir(parents=True)
+    canonical.write_bytes(b"approved")
+    duplicate = data_root / "Code_10w_runs/duplicate/approved_copy.pth"
+    duplicate.parent.mkdir(parents=True); duplicate.write_bytes(b"approved")
+    monkeypatch.setattr(preflight_actual, "APPROVED_DECODER_SHA256", sha256(canonical))
+    audit = _approved_decoder_audit(tmp_path / "approved_decoder.json", sha256(canonical))
+    approved = preflight_actual.verify_approved_decoder(canonical, audit, data_root)
+    assert approved["authority"] == "canonical_path_plus_sha256"
+    assert approved["path"] == str(canonical)
+    assert duplicate.is_file()  # an identical non-canonical copy is not an ambiguity
+    with pytest.raises(FileNotFoundError, match="canonical approved decoder"):
+        preflight_actual.verify_approved_decoder(data_root / relative.parent / "missing.pth", audit, data_root)
+    canonical.write_bytes(b"wrong")
+    with pytest.raises(ValueError, match="approved decoder SHA mismatch"):
+        preflight_actual.verify_approved_decoder(canonical, audit, data_root)
+    canonical.write_bytes(b"approved")
+    bad_audit = _approved_decoder_audit(tmp_path / "bad_decoder.json", sha256(canonical), declared_path="/wrong/provenance.pth")
+    with pytest.raises(ValueError, match="declared canonical path"):
+        preflight_actual.verify_approved_decoder(canonical, bad_audit, data_root)
+
+
 def test_final_reference_manifest_is_relocatable_and_complete() -> None:
     manifest = json.loads((PHASE2 / "final_real_reference_manifest.json").read_text())
     assert set(manifest["subjects"]) == {"CYJ", "DYZ", "HHZ", "HJL"}
@@ -66,30 +102,32 @@ def test_preflight_actual_reads_files_and_rejects_each_integrity_mismatch(tmp_pa
     manifest = {"observation_sha256": {stack: sha256(synthetic / stack / "observations.npz") for stack in ("sax", "2ch", "4ch")}, "real_observation_sha256": real}
     manifest_path, refs_path = tmp_path / "manifest.json", tmp_path / "refs.json"
     manifest_path.write_text(json.dumps(manifest)); refs_path.write_text(json.dumps(refs))
-    decoder, b6 = tmp_path / "decoder.pt", tmp_path / "b6.pt"; decoder.write_bytes(b"decoder"); b6.write_bytes(b"b6")
+    decoder = reference_root / preflight_actual.CANONICAL_DECODER_RELATIVE; decoder.parent.mkdir(parents=True, exist_ok=True); decoder.write_bytes(b"decoder")
+    b6 = tmp_path / "b6.pt"; b6.write_bytes(b"b6")
     monkeypatch.setattr(preflight_actual, "APPROVED_DECODER_SHA256", sha256(decoder))
     monkeypatch.setattr(preflight_actual, "B6_CONFIG_SOURCE_SHA256", sha256(b6))
-    result = preflight_actual.verify(manifest_path, prepared, synthetic, decoder, b6, refs_path, reference_root)
+    audit = _approved_decoder_audit(tmp_path / "approved_decoder.json", sha256(decoder))
+    result = preflight_actual.verify(manifest_path, prepared, synthetic, decoder, b6, refs_path, reference_root, audit)
     assert result["actual_observation_hash_gate"] and result["references_ready"]
     (synthetic / "sax/observations.npz").write_bytes(b"mismatch")
     with pytest.raises(ValueError, match="synthetic sax SHA mismatch"):
-        preflight_actual.verify(manifest_path, prepared, synthetic, decoder, b6, refs_path, reference_root)
+        preflight_actual.verify(manifest_path, prepared, synthetic, decoder, b6, refs_path, reference_root, audit)
     _write_observations(synthetic, 1)
     _write_observations(prepared / "CYJ", 99)
     with pytest.raises(ValueError, match="CYJ/sax SHA mismatch"):
-        preflight_actual.verify(manifest_path, prepared, synthetic, decoder, b6, refs_path, reference_root)
+        preflight_actual.verify(manifest_path, prepared, synthetic, decoder, b6, refs_path, reference_root, audit)
     _write_observations(prepared / "CYJ", 2)
     decoder.write_bytes(b"wrong")
     with pytest.raises(ValueError, match="approved decoder SHA mismatch"):
-        preflight_actual.verify(manifest_path, prepared, synthetic, decoder, b6, refs_path, reference_root)
+        preflight_actual.verify(manifest_path, prepared, synthetic, decoder, b6, refs_path, reference_root, audit)
     decoder.write_bytes(b"decoder"); b6.write_bytes(b"wrong")
     with pytest.raises(ValueError, match="B6 source SHA mismatch"):
-        preflight_actual.verify(manifest_path, prepared, synthetic, decoder, b6, refs_path, reference_root)
+        preflight_actual.verify(manifest_path, prepared, synthetic, decoder, b6, refs_path, reference_root, audit)
     b6.write_bytes(b"b6")
     refs["subjects"]["CYJ"]["sax_observation_sha256"] = "wrong"
     refs_path.write_text(json.dumps(refs))
     with pytest.raises(ValueError, match="reference source SAX SHA mismatch"):
-        preflight_actual.verify(manifest_path, prepared, synthetic, decoder, b6, refs_path, reference_root)
+        preflight_actual.verify(manifest_path, prepared, synthetic, decoder, b6, refs_path, reference_root, audit)
     refs["subjects"]["CYJ"]["sax_observation_sha256"] = real["CYJ"]["sax"]["sha256"]
     refs_path.write_text(json.dumps(refs))
     native_path = reference_root / refs["subjects"]["CYJ"]["native_reference"]["relative_path"]
@@ -97,11 +135,11 @@ def test_preflight_actual_reads_files_and_rejects_each_integrity_mismatch(tmp_pa
     refs["subjects"]["CYJ"]["native_reference"]["sha256"] = sha256(native_path)
     refs_path.write_text(json.dumps(refs))
     with pytest.raises(ValueError, match="native-reference internal source SAX SHA mismatch"):
-        preflight_actual.verify(manifest_path, prepared, synthetic, decoder, b6, refs_path, reference_root)
+        preflight_actual.verify(manifest_path, prepared, synthetic, decoder, b6, refs_path, reference_root, audit)
     refs["subjects"]["CYJ"]["native_reference"]["sha256"] = "not-the-file-hash"
     refs_path.write_text(json.dumps(refs))
     with pytest.raises(ValueError, match="CYJ native_reference"):
-        preflight_actual.verify(manifest_path, prepared, synthetic, decoder, b6, refs_path, reference_root)
+        preflight_actual.verify(manifest_path, prepared, synthetic, decoder, b6, refs_path, reference_root, audit)
 
 
 def test_real_evaluator_cli_writes_subject_level_aggregate(tmp_path: Path) -> None:
@@ -222,6 +260,11 @@ def test_formal_scripts_use_actual_preflight_and_all_real_evaluations() -> None:
     assert "historical_nesvor_runtime.py" in preflight
     assert "import torch, tinycudann, paper_experiments" in preflight
     assert "import nesvor" not in preflight
+    assert "PHASE2_APPROVED_DECODER" in preflight
+    assert "CANONICAL_DECODER" in preflight
+    assert "--approved-decoder-audit" in preflight
+    assert "CANDIDATES" not in preflight
+    assert "approved_decoder_duplicate_sha_matches" in preflight
 
 
 def test_server_readiness_finalizer_requires_real_passing_preflight(tmp_path: Path) -> None:
