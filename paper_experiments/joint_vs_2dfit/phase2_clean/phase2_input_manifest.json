@@ -24,20 +24,10 @@
   "excluded": {
     "DYL": "VPS=85 incompatible with approved VPS=87 decoder"
   },
-  "geometry_sha256": "d16870d9522c24f7d609175219d9e3c34ee51c380d72ce7bda8459ba6cdeee03",
-  "gt_sha256": {
-    "gt_maps.npz": "f0aead298d5b2d1f23dee5462e56d92ea5ef75ab1e626066619ac9a01a2f7624",
-    "mesh_primary_myo.npz": "afd30da67d59c9319198a7bbc45d72af0fb3ca52d45d13dca4bd23383ea1267d"
-  },
-  "observation_sha256": {
-    "2ch": "dcf3db0547ec1c39c2feec61815127f786ea72c32cda09c2a65c36b5da29584c",
-    "4ch": "33abba418d4ed342c1d3afa9dbf2b85409a9d5cb944fc037a96149f4b82bc3af",
-    "sax": "8089e1bc3518e17de317da1d4ab86618ef778868069db1e9dd29796e2e490e3e"
-  },
   "phase": "2_clean_full_preparation",
   "phase1_2_gate": {
-    "manifest": "paper_experiments/joint_vs_2dfit/simulation/outputs/phase1_2_xcat3d_clean/synthetic_source_manifest.json",
-    "required": "scientific_gt_geometry_gate=true"
+    "manifest": "paper_experiments/joint_vs_2dfit/simulation/outputs/phase1_2_xcat3d_clean/phase1_2_final_manifest.json",
+    "required": "formal_synthetic_ready=true with verified artifact SHA-256"
   },
   "proposed": {
     "amplitude_guidance": false,
@@ -69,5 +59,5 @@
     "HJL": {"sax": {"path": "/home/universe/SVR/data/Code_10w_v1/Code_10w_prepared/HJL/sax/observations.npz", "sha256": "47333475a6ff0a2caf82b1fc303807412141315314549635d1fc112248306710"}, "2ch": {"path": "/home/universe/SVR/data/Code_10w_v1/Code_10w_prepared/HJL/2ch/observations.npz", "sha256": "324dffda6b8e771447083bc9112921f148012106f1df26b45a7ac9ecfab90584"}, "4ch": {"path": "/home/universe/SVR/data/Code_10w_v1/Code_10w_prepared/HJL/4ch/observations.npz", "sha256": "427d2c5588f3c6c336d5107b78c772bd71b54a5c4316cb73d6c696390c6051a6"}}
   },
   "synthetic_root": "paper_experiments/joint_vs_2dfit/simulation/outputs/phase1_2_xcat3d_clean",
-  "timing_sha256": "74fc30a447b4931e3c0a7c4de78a98fd6d91c474d703316614c3053c0b2a551b"
+  "synthetic_authority": "phase1_2_final_manifest.json after external XCAT generation and local finalization"
 }

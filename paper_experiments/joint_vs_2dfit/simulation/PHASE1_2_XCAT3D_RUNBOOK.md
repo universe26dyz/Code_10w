@@ -1,20 +1,18 @@
-# Phase-1.2 XCAT3D runbook
+# Phase-1.2 Hanson-anchored XCAT3D runbook
 
-This route requires a licensed external XCAT runtime. Codex runs only local CPU validation and must not generate the XCAT files.
+Codex performs only local CPU validation. Run licensed XCAT externally; do not substitute MRXCAT VTI files or a Patient1 mesh.
 
-1. Create the hand-off template locally:
+1. Locally create the handoff package:
 
-   `python -m paper_experiments.joint_vs_2dfit.simulation.generate_phase1_2_xcat3d --stage prepare-xcat --output-root /path/to/xcat3d_handoff`
+   `python -m paper_experiments.joint_vs_2dfit.simulation.generate_phase1_2_xcat3d --stage prepare-xcat --output-root /path/to/handoff_parent`
 
-2. In the licensed XCAT environment, use one unchanged XCAT configuration, resolution, cardiac phase, and respiratory phase to generate full-3-D T1, T2, signal-support (or PD/M0), and LV-myocardium volumes. Set the LV values in the XCAT parameterization to T1=1410 ms and T2=50 ms. Do not use Patient1 mesh or any 2-D VTI output.
+2. In the licensed XCAT environment, copy the supplied `XCAT_input_ap.dat` and `XCAT_input_dia.dat` paths into the four parameter files. Run the same anatomy, resolution, cardiac phase and respiratory phase four times: `t1_phase1_2.par` → T1 activity volume, `t2_phase1_2.par` → T2 volume, `pd_phase1_2.par` → PD volume, and `lv_mask_phase1_2.par` → LV mask volume. This reproduces the Hanson activity-field mechanism; the LV run is the explicit Code_10w extension.
 
-3. Complete `xcat3d_inputs.template.json` with filenames, raw-binary shape/dtype/axis order, world geometry, and hashes of the shared XCAT parameter files. Copy it beside the four generated files as `xcat3d_inputs.json`.
+3. Record each raw float32 file’s SHA256, raw shape/order, physical convention, spacing, origin, XCAT version/build and parameter-file hashes in `xcat3d_inputs.json`. Do not leave placeholders.
 
-4. Validate before creating a dataset:
+4. Point the local manifest at those raw files. Code_10w canonicalizes every volume together to xyz/LPS/mm and a 1-mm isotropic grid, validates the shared geometry, builds GT, derives LV centroid/PCA, aligns all views with one rigid transform, simulates HHZ, and renders with 6×6×9 quadrature:
 
    `python -m paper_experiments.joint_vs_2dfit.simulation.generate_phase1_2_xcat3d --stage validate-xcat-inputs --xcat-input-manifest /path/to/xcat3d_inputs.json`
-
-5. Build the local GT and then render only after the gate passes:
 
    `python -m paper_experiments.joint_vs_2dfit.simulation.generate_phase1_2_xcat3d --stage build-gt --xcat-input-manifest /path/to/xcat3d_inputs.json --output-root paper_experiments/joint_vs_2dfit/simulation/outputs/phase1_2_xcat3d_clean`
 
@@ -22,4 +20,6 @@ This route requires a licensed external XCAT runtime. Codex runs only local CPU 
 
    `python -m paper_experiments.joint_vs_2dfit.simulation.generate_phase1_2_xcat3d --stage render-observations --output-root paper_experiments/joint_vs_2dfit/simulation/outputs/phase1_2_xcat3d_clean --prepared-root /path/to/Code_10w_prepared`
 
-No formal reconstruction is part of this runbook.
+   `python -m paper_experiments.joint_vs_2dfit.simulation.generate_phase1_2_xcat3d --stage validate-final --output-root paper_experiments/joint_vs_2dfit/simulation/outputs/phase1_2_xcat3d_clean`
+
+Only a passing final manifest permits Phase-2 preflight. No formal reconstruction is included here.

@@ -15,6 +15,7 @@ def validate_quantitative_gt(gt: QuantitativeGT) -> dict:
         "all_quantitative_volumes_same_shape": all(array.shape == gt.geometry.shape for array in (gt.t1_ms, gt.t2_ms, gt.b1, gt.m0, support, myo)),
         "all_quantitative_volumes_same_world_geometry": True,
         "full_3d": min(gt.geometry.shape) > 1,
+        "canonical_xyz_lps_mm": gt.geometry.axis_order == "xyz" and gt.geometry.world_convention == "LPS" and gt.geometry.spacing_mm == (1.0, 1.0, 1.0),
         "finite_values": all(np.all(np.isfinite(array)) for array in (gt.t1_ms, gt.t2_ms, gt.b1, gt.m0)),
         "positive_t1_t2_on_support": bool(np.all(gt.t1_ms[support] > 0) and np.all(gt.t2_ms[support] > 0)),
         "positive_b1_on_support": bool(np.all(np.isfinite(gt.b1[support])) and np.all(gt.b1[support] > 0)),

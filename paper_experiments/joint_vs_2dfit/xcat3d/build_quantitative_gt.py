@@ -5,14 +5,18 @@ from pathlib import Path
 
 import numpy as np
 
+from .canonicalize import canonicalize_volume
 from .contracts import FROZEN_B1, FROZEN_LV_T1_MS, FROZEN_LV_T2_MS, QuantitativeGT, XCATInputs
 
 
 def build_quantitative_gt(inputs: XCATInputs) -> QuantitativeGT:
-    t1 = np.asarray(inputs.t1_ms.data, dtype=np.float32)
-    t2 = np.asarray(inputs.t2_ms.data, dtype=np.float32)
-    myocardium = np.asarray(inputs.myocardium_mask.data, dtype=bool)
-    support = np.asarray(inputs.signal_support.data, dtype=bool)
+    raw = inputs.t1_ms.geometry
+    kwargs = {"shape": raw.shape, "spacing_mm": raw.spacing_mm, "origin_mm": raw.origin_mm, "axis_order": raw.axis_order, "world_convention": raw.world_convention}
+    t1, geometry = canonicalize_volume(inputs.t1_ms.data, **kwargs, interpolation="linear")
+    t2, _ = canonicalize_volume(inputs.t2_ms.data, **kwargs, interpolation="linear")
+    myocardium, _ = canonicalize_volume(inputs.myocardium_mask.data, **kwargs, interpolation="nearest")
+    support, _ = canonicalize_volume(inputs.signal_support.data, **kwargs, interpolation="nearest")
+    myocardium, support = myocardium.astype(bool), support.astype(bool)
     if not np.any(myocardium):
         raise ValueError("single-source XCAT myocardium support is empty")
     if np.any(myocardium & ~support):
@@ -34,7 +38,7 @@ def build_quantitative_gt(inputs: XCATInputs) -> QuantitativeGT:
     else:
         raise ValueError("m0_policy must be controlled_binary_signal_support_m0_1 or native_xcat_pd_m0")
     b1 = np.full(t1.shape, FROZEN_B1, dtype=np.float32)
-    return QuantitativeGT(t1, t2, b1, m0, support, myocardium, inputs.t1_ms.geometry, inputs.manifest)
+    return QuantitativeGT(t1, t2, b1, m0, support, myocardium, geometry, inputs.manifest)
 
 
 def write_quantitative_gt(gt: QuantitativeGT, output_root: str | Path) -> Path:

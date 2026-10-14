@@ -36,6 +36,7 @@ def _write_phase1_2_manifest(root: Path, geometry_gate: bool = True) -> None:
         "source_family": "single_source_xcat_3d_quantitative",
         "scientific_gt_geometry_gate": geometry_gate,
     }))
+    (root / "phase1_2_final_manifest.json").write_text(json.dumps({"phase": "1.2", "formal_synthetic_ready": geometry_gate, "artifact_sha256": {}}))
 
 
 def _approved_decoder_audit(path: Path, digest: str, *, declared_path: str = "/data/dengyz/dataset/Code_10w_v1/Code_10w_runs/CYJ_decoder_comparison_20260924_clean_v1/inputs/mlp/signal_simulator_approved.pth") -> Path:
@@ -121,7 +122,7 @@ def test_preflight_actual_reads_files_and_rejects_each_integrity_mismatch(tmp_pa
     result = preflight_actual.verify(manifest_path, prepared, synthetic, decoder, b6, refs_path, reference_root, audit)
     assert result["actual_observation_hash_gate"] and result["references_ready"]
     _write_phase1_2_manifest(synthetic, geometry_gate=False)
-    with pytest.raises(ValueError, match="geometry gate"):
+    with pytest.raises(ValueError, match="formal_synthetic_ready"):
         preflight_actual.verify(manifest_path, prepared, synthetic, decoder, b6, refs_path, reference_root, audit)
     _write_phase1_2_manifest(synthetic)
     _write_observations(synthetic, 1)

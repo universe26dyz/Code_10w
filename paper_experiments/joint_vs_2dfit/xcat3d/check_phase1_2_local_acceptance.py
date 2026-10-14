@@ -18,6 +18,9 @@ def local_acceptance_report(repository_root: str | Path) -> dict:
     passed = wiring["passed"] and archived and tombstone_ok
     return {
         "LOCAL_CODE_ACCEPTANCE": "PASS" if passed else "FAIL",
+        "REFERENCE_SOURCE_ANCHORING": "PASS" if (root / "paper_experiments/joint_vs_2dfit/xcat3d/prepare_xcat_parameters.py").is_file() else "FAIL",
+        "EXTERNAL_XCAT_RUNTIME_GATE": "UNVERIFIED",
+        "XCAT_RAW_VOLUME_GATE": "UNVERIFIED",
         "EXTERNAL_XCAT_INPUT_GATE": "UNVERIFIED",
         "SCIENTIFIC_GT_GEOMETRY_GATE": "UNVERIFIED",
         "FORMAL_SYNTHETIC_READY": "FAIL",

@@ -11,7 +11,7 @@ from ..xcat3d.build_quantitative_gt import build_quantitative_gt, write_quantita
 from ..xcat3d.prepare_xcat_parameters import prepare_xcat_parameter_hand_off
 from ..xcat3d.read_xcat_volume import load_xcat_inputs
 from ..xcat3d.validate_quantitative_gt import assert_phase1_2_manifest_ready, validate_quantitative_gt, write_validation
-from .build_geometry import recenter_geometry, select_modal_geometry_templates
+from .build_geometry import apply_global_rigid_alignment, select_modal_geometry_templates
 from .render_observations import render_groups
 from .select_timing_template import choose_timing_template, collect_manifest_candidates
 from .simulate_hhz_signals import generate_signal_field
@@ -35,23 +35,24 @@ def acquisition_times_from_timing9(timing9_ms: np.ndarray, tr_ms: float = 2.61, 
     return acquisition
 
 
-def _write_source_manifest(root: Path, inputs, qc: dict) -> Path:
+def _write_source_manifest(root: Path, inputs, gt, qc: dict) -> Path:
     path = root / "synthetic_source_manifest.json"
     if path.exists():
         raise FileExistsError(f"refusing to overwrite {path}")
-    geometry = inputs.t1_ms.geometry
+    geometry = gt.geometry
     manifest = {
         "phase": "1.2",
         "scientific_status": "candidate_until_geometry_acceptance",
         "source_family": "single_source_xcat_3d_quantitative",
         "legacy_invalid_route_forbidden": True,
-        "xcat": {**inputs.manifest["xcat"], "shape": list(geometry.shape), "spacing_mm": list(geometry.spacing_mm), "origin_mm": list(geometry.origin_mm), "axis_order": geometry.axis_order, "world_convention": geometry.world_convention},
+        "xcat": {**inputs.manifest["xcat"], "raw_volumes": inputs.manifest["volumes"], "shape": list(geometry.shape), "spacing_mm": [1.0, 1.0, 1.0], "origin_mm": list(geometry.origin_mm), "axis_order": "xyz", "world_convention": "LPS"},
         "gt_contract": {"lv_myocardium_t1_ms": 1410.0, "lv_myocardium_t2_ms": 50.0, "b1": 1.0, "m0_policy": inputs.manifest["m0_policy"]},
         "geometry_gates": qc["geometry_gates"],
         "scientific_gt_geometry_gate": qc["scientific_gt_geometry_gate"],
         "external_xcat_input_gate": "PASS",
         "formal_synthetic_ready": False,
-        "external_reference_provenance": {"hanson_2021_doi": "10.1002/mp.15036", "reference_implementation": "https://github.com/hmhanson/4DPhantomMRI", "mrxcat_audit_commit": "9f396a998f435525b234a304c502238ad5955fb2"},
+        "spatial_integration": {"method": "midpoint quadrature in signal space with linear interpolation", "inplane_samples_row_col": [6, 6], "thickness_samples": 9},
+        "external_reference_provenance": {"hanson_2021_doi": "10.1002/mp.15036", "reference_implementation": "https://github.com/hmhanson/4DPhantomMRI", "reference_commit": "97558db05f4e344865f472de974b9f4d042a1a15"},
     }
     path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
     return path
@@ -66,7 +67,7 @@ def build_gt(xcat_input_manifest: str | Path, output_root: str | Path = DEFAULT_
     root = Path(output_root)
     gt_path = write_quantitative_gt(gt, root)
     qc_path = write_validation(qc, root)
-    manifest = _write_source_manifest(root, inputs, qc)
+    manifest = _write_source_manifest(root, inputs, gt, qc)
     return {"gt_maps": str(gt_path), "geometry_qc": str(qc_path), "synthetic_source_manifest": str(manifest), "scientific_gt_geometry_gate": True}
 
 
@@ -96,14 +97,20 @@ def render_observations(output_root: str | Path, prepared_root: str | Path) -> d
     assert_phase1_2_manifest_ready(root / "synthetic_source_manifest.json")
     signal = np.load(root / "clean_signal_field.npz")
     selection = json.loads((root / "timing_selection.json").read_text())
+    maps = np.load(root / "gt_maps.npz"); myo = maps["myocardium_mask"].astype(bool)
+    indices = np.argwhere(myo); world = np.asarray(maps["origin_mm"], float)[None, :] + indices * np.asarray(maps["spacing_mm"], float)[None, :]
+    center = world.mean(axis=0); eigenvalues, eigenvectors = np.linalg.eigh(np.cov((world - center).T)); long_axis = eigenvectors[:, np.argmax(eigenvalues)]
+    if long_axis[np.argmax(np.abs(long_axis))] < 0: long_axis *= -1
     templates = select_modal_geometry_templates(prepared_root)
-    center = np.asarray(signal["origin_mm"], dtype=float) + np.asarray(signal["spacing_mm"], dtype=float) * (np.asarray(signal["signals"].shape[:3]) - 1) / 2.0
+    aligned, alignment_qc = apply_global_rigid_alignment(templates, center, long_axis)
+    alignment_qc.update({"lv_centroid_mm": center.tolist(), "lv_pca_eigenvalues": eigenvalues.tolist(), "lv_long_axis": long_axis.tolist(), "lv_alignment_gate": bool(abs(alignment_qc["sax_normal_dot_lv_long_axis"]) >= 0.999 and alignment_qc["max_pairwise_center_distance_error_mm"] <= 1e-6)})
+    if not alignment_qc["lv_alignment_gate"]: raise ValueError("LV PCA geometry alignment gate failed")
+    (root / "geometry_alignment_qc.json").write_text(json.dumps(alignment_qc, indent=2) + "\n")
     timing = np.asarray(selection["timing9_ms"], dtype=float)
     acquisition = acquisition_times_from_timing9(timing)
     summaries = {}
-    for stack, template in templates.items():
-        groups = recenter_geometry(template, center)
-        images, masks = render_groups(signal["signals"], signal["origin_mm"], signal["spacing_mm"], groups)
+    for stack, groups in aligned.items():
+        images, masks = render_groups(signal["signals"], signal["origin_mm"], signal["spacing_mm"], groups, inplane_samples=6, thickness_samples=9)
         metadata = {"group_idx": np.repeat(np.arange(len(groups)), 10), "weight_idx": np.tile(np.arange(10), len(groups)), "stack_idx": np.zeros(len(groups) * 10, dtype=np.int64), "acquisition_time_ms": np.tile(acquisition, len(groups)), "timing9_ms": np.repeat(timing[None, :], len(groups) * 10, axis=0), "affine_lps_rc": np.repeat(np.asarray([item["affine_lps_rc"] for item in groups]), 10, axis=0), "pixel_spacing_rc_mm": np.concatenate([np.repeat([item["pixel_spacing_rc_mm"]], 10, axis=0) for item in groups]), "slice_thickness_mm": np.concatenate([np.repeat([item["slice_thickness_mm"]], 10) for item in groups]), "tr_ms": np.repeat([2.61], len(groups) * 10), "vps": np.repeat([87], len(groups) * 10)}
         result = write_observations(root / stack, images, masks, metadata, {"phase": "1.2", "stack": stack, "signal_field": str(root / "clean_signal_field.npz")})
         summaries[stack] = result
@@ -137,7 +144,8 @@ def main() -> None:
             parser.error("--prepared-root is required")
         result = render_observations(args.output_root, args.prepared_root)
     else:
-        result = assert_phase1_2_manifest_ready(Path(args.output_root) / "synthetic_source_manifest.json")
+        from ..xcat3d.finalize import finalize_phase1_2
+        result = {"phase1_2_final_manifest": str(finalize_phase1_2(args.output_root))}
     print(json.dumps(result, indent=2, sort_keys=True))
 
 

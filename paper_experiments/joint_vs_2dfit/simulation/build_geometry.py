@@ -128,7 +128,7 @@ def apply_global_rigid_alignment(
 ) -> tuple[dict[str, list[dict]], dict]:
     """Apply one rigid transform to every real stack, preserving inter-stack geometry.
 
-    The source SAX plane normal is aligned to the mesh/PCA LV long axis.  No
+    The source SAX plane normal is aligned to the anatomy/PCA LV long axis.  No
     stack receives an independent rotation or translation.
     """
 
@@ -176,13 +176,13 @@ def apply_global_rigid_alignment(
             pair_errors.append(abs(np.linalg.norm(before[idx] - before[jdx]) - np.linalg.norm(after[idx] - after[jdx])))
     normals = {stack: _normal(np.asarray(groups[0]["affine_lps_rc"], dtype=float)) for stack, groups in out.items()}
     qc = {
-        "method": "single_rigid_rotation_source_sax_normal_to_mesh_lv_long_axis_plus_single_translation",
+        "method": "single_rigid_rotation_source_sax_normal_to_anatomy_lv_long_axis_plus_single_translation",
         "rotation_matrix": rotation.tolist(),
         "translation_mm": translation.tolist(),
         "source_anchor_mm": source_anchor.tolist(),
         "anatomy_center_mm": target_center.tolist(),
         "source_sax_normal": source_normal.tolist(),
-        "mesh_lv_long_axis": long_axis.tolist(),
+        "anatomy_lv_long_axis": long_axis.tolist(),
         "sax_normal_dot_lv_long_axis": float(np.dot(normals["sax"], long_axis)),
         "stack_plane_normals": {key: value.tolist() for key, value in normals.items()},
         "max_pairwise_center_distance_error_mm": float(max(pair_errors, default=0.0)),

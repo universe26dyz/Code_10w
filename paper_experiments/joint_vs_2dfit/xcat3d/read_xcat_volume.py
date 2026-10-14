@@ -1,6 +1,7 @@
 """Read externally generated XCAT property volumes only when their geometry is explicit."""
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -30,6 +31,11 @@ def _load_array(path: Path, dtype: str, shape: tuple[int, int, int]) -> np.ndarr
 def _volume(name: str, record: dict[str, Any], root: Path) -> XCATVolume:
     geometry = Geometry.from_record(record)
     path = root / str(record["path"])
+    if not record.get("sha256") or str(record["sha256"]).upper() in {"UNKNOWN", "TODO", "REQUIRED"}:
+        raise ValueError(f"XCAT raw-volume SHA256 is required for {name}")
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    if digest != record["sha256"]:
+        raise ValueError(f"XCAT raw-volume SHA256 mismatch for {name}")
     return XCATVolume(name, _load_array(path, str(record["dtype"]), geometry.shape), geometry, path)
 
 
@@ -48,7 +54,7 @@ def load_xcat_inputs(manifest_path: str | Path) -> XCATInputs:
     if manifest.get("phase") != "1.2" or manifest.get("source_family") != "single_source_xcat_3d_quantitative":
         raise ValueError("input manifest is not a Phase-1.2 single-source XCAT3D manifest")
     xcat = manifest.get("xcat", {})
-    for key in ("source", "parameter_files", "configuration_hashes", "cardiac_phase", "respiratory_phase"):
+    for key in ("version_build", "source", "parameter_files", "configuration_hashes", "cardiac_phase", "respiratory_phase"):
         if key not in xcat:
             raise ValueError(f"XCAT provenance is missing {key}")
     records = manifest.get("volumes", {})

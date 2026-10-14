@@ -7,7 +7,7 @@ test -z "$(git status --porcelain)" || { echo 'refusing dirty git' >&2; exit 1; 
 python -c 'import torch, tinycudann, paper_experiments.joint_vs_2dfit.phase2_clean.runner; raise SystemExit(0 if torch.cuda.is_available() else "CUDA unavailable")'
 NESVOR_RUNTIME_JSON=$("$NESVOR_PYTHON" "$REPO/paper_experiments/joint_vs_2dfit/phase2_clean/historical_nesvor_runtime.py" --executable "$NESVOR_EXEC" --python "$NESVOR_PYTHON" --source-root "$NESVOR_SOURCE")
 SYNTHETIC_ROOT=${PHASE1_2_SYNTHETIC_ROOT:-"$REPO/paper_experiments/joint_vs_2dfit/simulation/outputs/phase1_2_xcat3d_clean"}
-python -m paper_experiments.joint_vs_2dfit.xcat3d.validate_quantitative_gt --manifest "$SYNTHETIC_ROOT/synthetic_source_manifest.json" >/dev/null
+SYNTHETIC_ROOT="$SYNTHETIC_ROOT" python -c 'from paper_experiments.joint_vs_2dfit.xcat3d.finalize import assert_final_manifest_ready; import os; assert_final_manifest_ready(os.environ["SYNTHETIC_ROOT"])'
 for sid in CYJ DYZ HHZ HJL; do for stack in sax 2ch 4ch; do test -f "$DATA/Code_10w_prepared/$sid/$stack/observations.npz"; done; done
 CANONICAL_RELATIVE=$(python -c 'from paper_experiments.joint_vs_2dfit.phase2_clean.contracts import CANONICAL_APPROVED_DECODER_RELATIVE_PATH; print(CANONICAL_APPROVED_DECODER_RELATIVE_PATH)')
 CANONICAL_DECODER=${PHASE2_APPROVED_DECODER:-"$DATA/$CANONICAL_RELATIVE"}; APPROVED_AUDIT="$REPO/paper_experiments/joint_vs_2dfit/audit/outputs/approved_decoder.json"
