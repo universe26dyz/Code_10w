@@ -1,6 +1,6 @@
 """Native current-protocol dictionary maps for the independent-NeSVoR baseline."""
 from __future__ import annotations
-import argparse, json, shlex
+import argparse, json, shlex, sys
 from pathlib import Path
 import numpy as np
 from .contracts import BASELINE_POSE_POLICY, HISTORICAL_NESVOR_EXECUTABLE_DEFAULT, sha256, write_immutable_json
@@ -38,11 +38,16 @@ def export_nesvor_native_inputs(native_maps: str|Path, output: str|Path, normali
         affine_lps[:3, 2] = np.asarray(geometry['affine_lps_rc'][1], float)[:3, 3] - affine_lps[:3, 3]
     affine_ras = np.diag([-1., -1., 1., 1.]) @ affine_lps
     target.mkdir(parents=True)
+    export_provenance = {}
     for parameter in ('t1', 't2'):
-        values = np.asarray(maps[f'{parameter}_ms'], np.float32) / float((normalization or {}).get(parameter, 1.0))
+        raw_values = np.asarray(maps[f'{parameter}_ms'], np.float32) / float((normalization or {}).get(parameter, 1.0))
+        invalid = ~np.isfinite(raw_values)
+        values = np.where(invalid, 0.0, raw_values).astype(np.float32)
+        if not np.isfinite(values).all(): raise ValueError(f'non-finite NeSVoR export for {parameter}')
         folder = target/parameter; folder.mkdir()
         nib.save(nib.Nifti1Image(np.moveaxis(values, 0, 2), affine_ras), str(folder/'stack.nii.gz'))
-    write_immutable_json(target/'manifest.json', {'input_native_maps': {'path': str(source.resolve()), 'sha256': sha256(source/'native_maps.npz')}, 'group_idx': [int(x) for x in maps['group_idx']], 'affine_ras': affine_ras.tolist(), 'geometry': 'current prepared LPS row/column geometry converted to RAS; groups become stack slices', 'normalization_before_nesvor': normalization or {'t1':1.0,'t2':1.0}, 'denormalization_after_nesvor_ms': normalization or {'t1':1.0,'t2':1.0}, 'pose_policy': BASELINE_POSE_POLICY, 'parameters': ['t1', 't2']})
+        export_provenance[parameter] = {'nonfinite_native_pixel_count': int(invalid.sum()), 'finite_output': True}
+    write_immutable_json(target/'manifest.json', {'input_native_maps': {'path': str(source.resolve()), 'sha256': sha256(source/'native_maps.npz')}, 'group_idx': [int(x) for x in maps['group_idx']], 'affine_ras': affine_ras.tolist(), 'geometry': 'current prepared LPS row/column geometry converted to RAS; groups become stack slices', 'normalization_before_nesvor': normalization or {'t1':1.0,'t2':1.0}, 'denormalization_after_nesvor_ms': normalization or {'t1':1.0,'t2':1.0}, 'nesvor_background_policy': 'non-finite native dictionary pixels are exported as zero-valued background; finite matched values unchanged', 'nesvor_export': export_provenance, 'pose_policy': BASELINE_POSE_POLICY, 'parameters': ['t1', 't2']})
     return target
 
 def build_independent_nesvor_commands(nesvor_input: str|Path|list[str|Path], output: str|Path, device: int = 0, nesvor_executable: str|Path = HISTORICAL_NESVOR_EXECUTABLE_DEFAULT) -> list[str]:
@@ -55,7 +60,7 @@ def build_independent_nesvor_commands(nesvor_input: str|Path|list[str|Path], out
         destination = result/parameter
         inputs=[str(root/parameter/'stack.nii.gz') for root in roots]; scale='2500' if parameter=='t1' else '200'
         args = [str(nesvor_executable),'reconstruct','--input-stacks',*inputs,'--thicknesses','8','8','8','--registration','stack','--scanner-space','--metric','none','--weight-transformation','1','--weight-deform','0.1','--weight-image','1','--weight-pixel-var-smooth','0','--output-volume',str(destination/'volume_normalized.nii.gz'),'--output-json',str(destination/'result.json'),'--output-log',str(destination/'nesvor.log'),'--output-slices',str(destination/'slices'),'--output-resolution','1.0','--output-psf-factor','1','--no-slice-scale','--single-precision','--log2-hashmap-size','19','--batch-size','2000','--n-iter','10000','--n-samples','256','--n-inference-samples','128','--inference-batch-size','16000','--pixel-variance-weight','1','--coarsest-resolution','16','--finest-resolution','0.5','--level-scale','1.3819','--n-features-per-level','2','--depth','1','--width','64','--n-features-z','15','--n-features-slice','16','--weight-bias','100','--image-regularization','edge','--delta','0.2','--learning-rate','0.005','--gamma','0.33','--milestones','0.5','0.75','0.9','--seed','20260823','--device',str(device)]
-        commands.append(' '.join(shlex.quote(value) for value in args)+f' && python -m paper_experiments.joint_vs_2dfit.phase2_clean.fit_first_denormalize --input {shlex.quote(str(destination/"volume_normalized.nii.gz"))} --scale {scale} --output {shlex.quote(str(destination/"volume_ms.nii.gz"))}')
+        commands.append(' '.join(shlex.quote(value) for value in args)+f' && {shlex.quote(sys.executable)} -m paper_experiments.joint_vs_2dfit.phase2_clean.fit_first_denormalize --input {shlex.quote(str(destination/"volume_normalized.nii.gz"))} --scale {scale} --output {shlex.quote(str(destination/"volume_ms.nii.gz"))}')
     return commands
 def main()->None:
  p=argparse.ArgumentParser(description=__doc__);p.add_argument('--observations',required=True);p.add_argument('--output',required=True);a=p.parse_args();print(fit_native(**vars(a)))

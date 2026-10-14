@@ -58,9 +58,10 @@ def _check_source_contracts() -> None:
     _require(approved.get("approved_for_paper") is True and approved.get("approved_by_manual_review") is True and approved.get("validation_status") == "approved_by_manual_review", "approved decoder audit is not manually approved")
     _require(approved.get("sha256") == APPROVED_DECODER_SHA256 and approved.get("resolved_from_provenance", {}).get("declared_decoder_path") == CANONICAL_APPROVED_DECODER_DECLARED_PATH, "approved decoder audit disagrees with canonical authority")
     _require("nesvor reconstruct" not in baseline and "build_independent_nesvor_commands" in baseline, "baseline has duplicated NeSVoR command authority")
-    for token in ("HISTORICAL_NESVOR_EXECUTABLE_DEFAULT", "'2500'", "'200'", "'--thicknesses','8','8','8'", "'--registration','stack'", "--scanner-space", "--no-slice-scale", "--single-precision", "'--batch-size','2000'", "'--n-iter','10000'", "'--n-samples','256'", "'--n-inference-samples','128'", "'--pixel-variance-weight','1'", "'--weight-pixel-var-smooth','0'", "'--seed','20260823'", " && python -m"):
+    for token in ("HISTORICAL_NESVOR_EXECUTABLE_DEFAULT", "'2500'", "'200'", "'--thicknesses','8','8','8'", "'--registration','stack'", "--scanner-space", "--no-slice-scale", "--single-precision", "'--batch-size','2000'", "'--n-iter','10000'", "'--n-samples','256'", "'--n-inference-samples','128'", "'--pixel-variance-weight','1'", "'--weight-pixel-var-smooth','0'", "'--seed','20260823'", "sys.executable", "nesvor_background_policy", "nonfinite_native_pixel_count"):
         _require(token in fit, f"fit-first contract missing {token}")
-    _require("--inference-samples" not in fit and "; python" not in fit and "--initial-transforms" not in fit, "fit-first can hide NeSVoR failure, use the wrong CLI, or reuse pose")
+    _require("--inference-samples" not in fit and " && python -m" not in fit and "; python" not in fit and "--initial-transforms" not in fit, "fit-first can hide NeSVoR failure, use the wrong CLI/interpreter, or reuse pose")
+    _require("root/'nesvor'/parameter" in baseline and "exist_ok=False" in baseline, "baseline does not create fresh NeSVoR output directories before execution")
     _require(historical["runtime"]["executable"] == HISTORICAL_NESVOR_EXECUTABLE_DEFAULT and historical["runtime"]["version"] == HISTORICAL_NESVOR_VERSION, "historical runtime contract drifted")
     _require(historical["historical_explicit_flags"]["n_inference_samples"] == 128 and historical["historical_resolved_defaults"]["n_samples"] == 256, "historical explicit/default distinction drifted")
     _require("args.mode == 'real'" in evaluator and "'subject_level'" in evaluator and "not 3-D ground-truth accuracy" in evaluator, "real evaluator is incomplete")
@@ -86,6 +87,9 @@ def _check_scripts() -> None:
     for name in ("run_phase2_synthetic_proposed.sh", "run_phase2_real_proposed.sh"):
         text = (directory / name).read_text()
         _require('["approved_decoder"]["path"]' in text and "approved_decoder_path" not in text, f"{name} does not consume the actual preflight decoder record")
+    for name in names[1:5]:
+        text = (directory / name).read_text()
+        _require("CR_PYTHON=${PHASE2_PYTHON:-/home/dengyz/miniconda3/envs/cr_dreme/bin/python}" in text and 'test -x "$CR_PYTHON"' in text and '"$CR_PYTHON" -c' in text and '"$CR_PYTHON" -m paper_experiments.joint_vs_2dfit.phase2_clean' in text and "python -m paper_experiments.joint_vs_2dfit.phase2_clean" not in text, f"{name} depends on caller Python")
     for name in ("run_phase2_synthetic_fit_first.sh", "run_phase2_real_fit_first.sh"):
         _require('--nesvor-executable "$NESVOR_EXEC"' in (directory / name).read_text(), f"{name} does not consume verified historical NeSVoR")
     evaluation = (directory / "evaluate_phase2.sh").read_text()

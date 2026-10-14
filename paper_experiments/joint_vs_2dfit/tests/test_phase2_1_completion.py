@@ -113,4 +113,7 @@ def test_phase2_server_scripts_are_commands_not_echo_templates() -> None:
     for name in ("run_phase2_synthetic_proposed.sh", "run_phase2_synthetic_fit_first.sh", "run_phase2_real_proposed.sh", "run_phase2_real_fit_first.sh", "evaluate_phase2.sh"):
         text = (root / name).read_text()
         assert "TEMPLATE ONLY" not in text
-        assert "python -m " in text
+        if name == "evaluate_phase2.sh":
+            assert "python -m " in text
+        else:
+            assert '"$CR_PYTHON" -m ' in text

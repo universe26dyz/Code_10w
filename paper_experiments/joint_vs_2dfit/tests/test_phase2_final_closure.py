@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -11,7 +12,8 @@ import numpy as np
 import pytest
 
 from paper_experiments.joint_vs_2dfit.phase2_clean.contracts import sha256
-from paper_experiments.joint_vs_2dfit.phase2_clean.fit_first import build_independent_nesvor_commands
+from paper_experiments.joint_vs_2dfit.phase2_clean.fit_first import build_independent_nesvor_commands, export_nesvor_native_inputs
+from paper_experiments.joint_vs_2dfit.phase2_clean import baseline
 from paper_experiments.joint_vs_2dfit.phase2_clean import preflight_actual
 from paper_experiments.joint_vs_2dfit.phase2_clean.finalize_phase2_server_readiness import finalize_server_readiness
 from paper_experiments.joint_vs_2dfit.phase2_clean.historical_nesvor_runtime import verify_runtime
@@ -204,6 +206,49 @@ def test_historical_nesvor_command_is_explicit_and_uses_authoritative_flag() -> 
     assert "--weight-pixel-var-smooth 0" in command
 
 
+def test_nesvor_export_replaces_only_nonfinite_native_background(tmp_path: Path) -> None:
+    nib = pytest.importorskip("nibabel")
+    native = tmp_path / "native"; native.mkdir()
+    t1 = np.array([[[1000.0, np.nan], [np.inf, 2000.0]]], np.float32)
+    t2 = np.array([[[40.0, np.nan], [-np.inf, 80.0]]], np.float32)
+    np.savez_compressed(native / "native_maps.npz", t1_ms=t1, t2_ms=t2, b1=np.ones_like(t1), group_idx=np.array([0]))
+    np.savez_compressed(native / "geometry.npz", affine_lps_rc=np.eye(4)[None], pixel_spacing_rc_mm=np.ones((1, 2)), slice_thickness_mm=np.array([8.0]))
+    exported = export_nesvor_native_inputs(native, tmp_path / "export", {"t1": 2500.0, "t2": 200.0})
+    for parameter, source, scale in (("t1", t1, 2500.0), ("t2", t2, 200.0)):
+        actual = np.moveaxis(nib.load(str(exported / parameter / "stack.nii.gz")).get_fdata(), 2, 0)
+        invalid = ~np.isfinite(source)
+        assert np.isfinite(actual).all()
+        assert np.array_equal(actual[invalid], np.zeros(invalid.sum()))
+        assert np.allclose(actual[~invalid], (source / scale)[~invalid])
+    original = np.load(native / "native_maps.npz")
+    assert np.isnan(original["t1_ms"][0, 0, 1]) and np.isnan(original["t2_ms"][0, 0, 1])
+    manifest = json.loads((exported / "manifest.json").read_text())
+    assert manifest["nesvor_background_policy"] == "non-finite native dictionary pixels are exported as zero-valued background; finite matched values unchanged"
+    assert manifest["nesvor_export"]["t1"]["finite_output"] is True
+
+
+def test_baseline_execute_creates_nesvor_output_dirs_before_first_command(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root = tmp_path / "run"; commands = ["t1", "t2"]; seen = []
+    root.mkdir()
+    with pytest.raises(FileExistsError, match="refusing overwrite"):
+        baseline.build_baseline_run(tmp_path, "subject", root)
+    monkeypatch.setattr(baseline, "build_baseline_run", lambda *args: (root, commands))
+    monkeypatch.setattr(sys, "argv", ["baseline", "--prepared-root", "prepared", "--subject-id", "synthetic", "--output", str(root), "--execute"])
+    def fake_run(command, **kwargs):
+        seen.append((command, (root / "nesvor/t1").is_dir(), (root / "nesvor/t2").is_dir()))
+    monkeypatch.setattr(baseline.subprocess, "run", fake_run)
+    baseline.main()
+    assert seen == [("t1", True, True), ("t2", True, True)]
+
+
+def test_denormalization_uses_the_baseline_interpreter_and_preserves_historical_flags() -> None:
+    command = build_independent_nesvor_commands("/inputs", "/output", nesvor_executable="/historical/nesvor")[0]
+    assert f" && {shlex.quote(sys.executable)} -m paper_experiments.joint_vs_2dfit.phase2_clean.fit_first_denormalize" in command
+    assert " && python -m " not in command
+    for token in ("--registration stack", "--scanner-space", "--metric none", "--weight-transformation 1", "--weight-deform 0.1", "--weight-image 1", "--weight-pixel-var-smooth 0", "--output-resolution 1.0", "--output-psf-factor 1", "--no-slice-scale", "--single-precision", "--log2-hashmap-size 19", "--batch-size 2000", "--n-iter 10000", "--n-samples 256", "--n-inference-samples 128", "--inference-batch-size 16000", "--pixel-variance-weight 1", "--coarsest-resolution 16", "--finest-resolution 0.5", "--level-scale 1.3819", "--n-features-per-level 2", "--depth 1", "--width 64", "--n-features-z 15", "--n-features-slice 16", "--weight-bias 100", "--image-regularization edge", "--delta 0.2", "--learning-rate 0.005", "--gamma 0.33", "--milestones 0.5 0.75 0.9", "--seed 20260823", "--device 0"):
+        assert token in command
+
+
 def _fake_historical_runtime(tmp_path: Path, *, version: str = "0.6.0rc1", flags: str | None = None, package_parent: Path | None = None) -> tuple[Path, Path, Path]:
     source = tmp_path / "NeSVoR-master/nesvor"
     source.mkdir(parents=True)
@@ -251,6 +296,13 @@ def test_formal_scripts_use_actual_preflight_and_all_real_evaluations() -> None:
         text = (scripts / name).read_text()
         assert '["approved_decoder"]["path"]' in text
         assert "approved_decoder_path" not in text
+    for name in ("run_phase2_synthetic_proposed.sh", "run_phase2_synthetic_fit_first.sh", "run_phase2_real_proposed.sh", "run_phase2_real_fit_first.sh"):
+        text = (scripts / name).read_text()
+        assert "CR_PYTHON=${PHASE2_PYTHON:-/home/dengyz/miniconda3/envs/cr_dreme/bin/python}" in text
+        assert 'test -x "$CR_PYTHON"' in text
+        assert '"$CR_PYTHON" -c' in text
+        assert '"$CR_PYTHON" -m paper_experiments.joint_vs_2dfit.phase2_clean' in text
+        assert "python -m paper_experiments.joint_vs_2dfit.phase2_clean" not in text
     evaluation = (scripts / "evaluate_phase2.sh").read_text()
     assert "--contract" not in evaluation
     assert all(subject in evaluation for subject in ("CYJ", "DYZ", "HHZ", "HJL"))

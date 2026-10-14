@@ -23,6 +23,7 @@ def main() -> None:
     parser=argparse.ArgumentParser(description=__doc__); parser.add_argument('--prepared-root',required=True); parser.add_argument('--subject-id',required=True); parser.add_argument('--output',required=True); parser.add_argument('--nesvor-executable',default=HISTORICAL_NESVOR_EXECUTABLE_DEFAULT); parser.add_argument('--execute',action='store_true'); args=parser.parse_args()
     root, commands=build_baseline_run(args.prepared_root,args.subject_id,args.output,args.nesvor_executable)
     if args.execute:
+        for parameter in ('t1','t2'): (root/'nesvor'/parameter).mkdir(parents=True, exist_ok=False)
         for command in commands: subprocess.run(command, shell=True, check=True)
     print(root)
 if __name__ == '__main__': main()
