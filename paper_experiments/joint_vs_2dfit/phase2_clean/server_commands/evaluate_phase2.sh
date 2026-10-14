@@ -9,10 +9,11 @@ REPO=${REPO:-/data/dengyz/code/Code_10w}; DATA=${DATA:-/data/dengyz/dataset/Code
 PROPOSED_SYN=$1; FIT_SYN=$2; PROPOSED_REAL=$3; FIT_REAL=$4; OUTPUT=$5
 [[ ! -e "$OUTPUT" ]] || { echo "refusing overwrite: $OUTPUT" >&2; exit 1; }
 mkdir -p "$OUTPUT"
-GT=paper_experiments/joint_vs_2dfit/simulation/outputs/phase1_1_clean_mrxcat/gt_maps.npz
-MESH=paper_experiments/joint_vs_2dfit/simulation/outputs/phase1_1_clean_mrxcat/mesh_primary_myo.npz
-python -m paper_experiments.joint_vs_2dfit.phase2_clean.evaluation --mode synthetic --synthetic-t1 "$PROPOSED_SYN/T1_3D.nii.gz" --synthetic-t2 "$PROPOSED_SYN/T2_3D.nii.gz" --gt-maps "$GT" --mesh-myo "$MESH" --output "$OUTPUT/synthetic_proposed.json"
-python -m paper_experiments.joint_vs_2dfit.phase2_clean.evaluation --mode synthetic --synthetic-t1 "$FIT_SYN/nesvor/t1/volume_ms.nii.gz" --synthetic-t2 "$FIT_SYN/nesvor/t2/volume_ms.nii.gz" --gt-maps "$GT" --mesh-myo "$MESH" --output "$OUTPUT/synthetic_fit_first.json"
+SYNTHETIC_ROOT=${PHASE1_2_SYNTHETIC_ROOT:-"$REPO/paper_experiments/joint_vs_2dfit/simulation/outputs/phase1_2_xcat3d_clean"}
+python -m paper_experiments.joint_vs_2dfit.xcat3d.validate_quantitative_gt --manifest "$SYNTHETIC_ROOT/synthetic_source_manifest.json" >/dev/null
+GT="$SYNTHETIC_ROOT/gt_maps.npz"
+python -m paper_experiments.joint_vs_2dfit.phase2_clean.evaluation --mode synthetic --synthetic-t1 "$PROPOSED_SYN/T1_3D.nii.gz" --synthetic-t2 "$PROPOSED_SYN/T2_3D.nii.gz" --gt-maps "$GT" --output "$OUTPUT/synthetic_proposed.json"
+python -m paper_experiments.joint_vs_2dfit.phase2_clean.evaluation --mode synthetic --synthetic-t1 "$FIT_SYN/nesvor/t1/volume_ms.nii.gz" --synthetic-t2 "$FIT_SYN/nesvor/t2/volume_ms.nii.gz" --gt-maps "$GT" --output "$OUTPUT/synthetic_fit_first.json"
 for SID in CYJ DYZ HHZ HJL; do
   REF="$DATA/reference_data/phase2_clean/$SID/native_reference_2d"
   MASK="$DATA/reference_data/phase2_clean/$SID/myocardium_masks_v1"

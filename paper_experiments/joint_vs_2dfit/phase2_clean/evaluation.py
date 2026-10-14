@@ -42,7 +42,7 @@ def real_native_agreement(reference: np.ndarray, prediction: np.ndarray, myocard
 def main() -> None:
     import argparse, json, nibabel as nib
     from pathlib import Path
-    parser=argparse.ArgumentParser(description=__doc__); parser.add_argument('--mode', choices=('synthetic','real'), required=True); parser.add_argument('--synthetic-t1'); parser.add_argument('--synthetic-t2'); parser.add_argument('--gt-maps'); parser.add_argument('--mesh-myo'); parser.add_argument('--subject'); parser.add_argument('--real-t1'); parser.add_argument('--real-t2'); parser.add_argument('--native-reference'); parser.add_argument('--myocardium-bundle'); parser.add_argument('--output', required=True); args=parser.parse_args()
+    parser=argparse.ArgumentParser(description=__doc__); parser.add_argument('--mode', choices=('synthetic','real'), required=True); parser.add_argument('--synthetic-t1'); parser.add_argument('--synthetic-t2'); parser.add_argument('--gt-maps'); parser.add_argument('--subject'); parser.add_argument('--real-t1'); parser.add_argument('--real-t2'); parser.add_argument('--native-reference'); parser.add_argument('--myocardium-bundle'); parser.add_argument('--output', required=True); args=parser.parse_args()
     output=Path(args.output)
     if output.exists(): raise FileExistsError(f'refusing overwrite: {output}')
     if args.mode == 'real':
@@ -61,11 +61,11 @@ def main() -> None:
             aggregate=_metrics(np.concatenate(aggregate_reference),np.concatenate(aggregate_prediction),np.ones(sum(map(len,aggregate_reference)),bool)); aggregate.update({'endpoint':'native-reference agreement/consistency, not accuracy versus ground truth','statistical_unit':'subject; all valid SAX myocardium pixels aggregated','coverage_fraction':valid_support/total_support,'valid_support_count':valid_support,'total_myocardium_support_count':total_support})
             result[parameter]={'subject_level':aggregate,'per_native_sax_plane':rows}
         output.parent.mkdir(parents=True,exist_ok=True); output.write_text(json.dumps({'subject':args.subject,'endpoint':'agreement/consistency, not 3-D ground-truth accuracy','metrics':result},indent=2)); print(output); return
-    if not all((args.synthetic_t1,args.synthetic_t2,args.gt_maps,args.mesh_myo)): raise ValueError('synthetic evaluation requires T1/T2 NIfTI, gt maps, and mesh mask')
-    gt=np.load(args.gt_maps); mesh=np.load(args.mesh_myo); affine=np.eye(4); affine[:3,:3]=np.diag(mesh['spacing_mm']); affine[:3,3]=mesh['origin_mm']
+    if not all((args.synthetic_t1,args.synthetic_t2,args.gt_maps)): raise ValueError('synthetic evaluation requires T1/T2 NIfTI and Phase-1.2 GT maps')
+    gt=np.load(args.gt_maps); affine=np.eye(4); affine[:3,:3]=np.diag(gt['spacing_mm']); affine[:3,3]=gt['origin_mm']
     result={}
     for parameter,path,normal in (('t1_ms',args.synthetic_t1,1410.0),('t2_ms',args.synthetic_t2,50.0)):
-        image=nib.load(path); prediction,valid=resample_volume_to_grid(image.get_fdata(),image.affine,gt[parameter].shape,affine); result[parameter]=synthetic_metrics(gt[parameter],prediction,mesh['myocardium_mask'],valid,normal)
-    output.parent.mkdir(parents=True,exist_ok=True); output.write_text(json.dumps({'endpoint':'synthetic mesh myocardium; primary NRMSE uses fixed GT value','metrics':result},indent=2)); print(output)
+        image=nib.load(path); prediction,valid=resample_volume_to_grid(image.get_fdata(),image.affine,gt[parameter].shape,affine); result[parameter]=synthetic_metrics(gt[parameter],prediction,gt['myocardium_mask'],valid,normal)
+    output.parent.mkdir(parents=True,exist_ok=True); output.write_text(json.dumps({'endpoint':'synthetic XCAT3D myocardium; primary NRMSE uses fixed GT value','metrics':result},indent=2)); print(output)
 
 if __name__ == '__main__': main()

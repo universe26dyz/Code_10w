@@ -1,0 +1,8 @@
+{
+  "archived_from_git_commit": "527754239c2a5ea3721d2f311a0c9cf888c06062",
+  "archived_date": "2026-10-14",
+  "scientific_status": "invalid_geometry",
+  "reason": "Background XCAT anatomy and Patient1/Mesh.vtk myocardium came from mismatched geometry/deformation states.",
+  "old_output_path": "paper_experiments/joint_vs_2dfit/simulation/outputs/phase1_1_clean_mrxcat",
+  "replacement_route": "phase1_2_xcat3d"
+}

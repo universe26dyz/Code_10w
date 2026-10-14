@@ -30,6 +30,14 @@ def _write_observations(root: Path, value: int = 1) -> None:
         np.savez_compressed(path, fixture=np.full((1,), value, np.uint8))
 
 
+def _write_phase1_2_manifest(root: Path, geometry_gate: bool = True) -> None:
+    (root / "synthetic_source_manifest.json").write_text(json.dumps({
+        "phase": "1.2",
+        "source_family": "single_source_xcat_3d_quantitative",
+        "scientific_gt_geometry_gate": geometry_gate,
+    }))
+
+
 def _approved_decoder_audit(path: Path, digest: str, *, declared_path: str = "/data/dengyz/dataset/Code_10w_v1/Code_10w_runs/CYJ_decoder_comparison_20260924_clean_v1/inputs/mlp/signal_simulator_approved.pth") -> Path:
     path.write_text(json.dumps({
         "approved_for_paper": True,
@@ -85,6 +93,7 @@ def test_final_reference_manifest_is_relocatable_and_complete() -> None:
 def test_preflight_actual_reads_files_and_rejects_each_integrity_mismatch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     synthetic, prepared, reference_root = tmp_path / "synthetic", tmp_path / "prepared", tmp_path / "reference_root"
     _write_observations(synthetic, 1)
+    _write_phase1_2_manifest(synthetic)
     real = {}
     for i, subject in enumerate(("CYJ", "DYZ", "HHZ", "HJL"), start=2):
         subject_root = prepared / subject
@@ -101,7 +110,7 @@ def test_preflight_actual_reads_files_and_rejects_each_integrity_mismatch(tmp_pa
             "native_reference": {"relative_path": str(native.relative_to(reference_root)), "sha256": sha256(native)},
             "myocardium_bundle": {"relative_path": str(mask.relative_to(reference_root)), "sha256": sha256(mask)},
         }
-    manifest = {"observation_sha256": {stack: sha256(synthetic / stack / "observations.npz") for stack in ("sax", "2ch", "4ch")}, "real_observation_sha256": real}
+    manifest = {"real_observation_sha256": real}
     manifest_path, refs_path = tmp_path / "manifest.json", tmp_path / "refs.json"
     manifest_path.write_text(json.dumps(manifest)); refs_path.write_text(json.dumps(refs))
     decoder = reference_root / preflight_actual.CANONICAL_DECODER_RELATIVE; decoder.parent.mkdir(parents=True, exist_ok=True); decoder.write_bytes(b"decoder")
@@ -111,9 +120,10 @@ def test_preflight_actual_reads_files_and_rejects_each_integrity_mismatch(tmp_pa
     audit = _approved_decoder_audit(tmp_path / "approved_decoder.json", sha256(decoder))
     result = preflight_actual.verify(manifest_path, prepared, synthetic, decoder, b6, refs_path, reference_root, audit)
     assert result["actual_observation_hash_gate"] and result["references_ready"]
-    (synthetic / "sax/observations.npz").write_bytes(b"mismatch")
-    with pytest.raises(ValueError, match="synthetic sax SHA mismatch"):
+    _write_phase1_2_manifest(synthetic, geometry_gate=False)
+    with pytest.raises(ValueError, match="geometry gate"):
         preflight_actual.verify(manifest_path, prepared, synthetic, decoder, b6, refs_path, reference_root, audit)
+    _write_phase1_2_manifest(synthetic)
     _write_observations(synthetic, 1)
     _write_observations(prepared / "CYJ", 99)
     with pytest.raises(ValueError, match="CYJ/sax SHA mismatch"):
@@ -172,14 +182,13 @@ def test_synthetic_evaluator_cli_writes_fixed_value_nrmse(tmp_path: Path) -> Non
     nib = pytest.importorskip("nibabel")
     t1_gt = np.full((2, 2, 2), 1410.0)
     t2_gt = np.full((2, 2, 2), 50.0)
-    gt, mesh = tmp_path / "gt.npz", tmp_path / "mesh.npz"
-    np.savez_compressed(gt, t1_ms=t1_gt, t2_ms=t2_gt)
-    np.savez_compressed(mesh, spacing_mm=np.ones(3), origin_mm=np.zeros(3), myocardium_mask=np.ones((2, 2, 2), bool))
+    gt = tmp_path / "gt.npz"
+    np.savez_compressed(gt, t1_ms=t1_gt, t2_ms=t2_gt, spacing_mm=np.ones(3), origin_mm=np.zeros(3), myocardium_mask=np.ones((2, 2, 2), bool))
     t1, t2 = tmp_path / "t1.nii.gz", tmp_path / "t2.nii.gz"
     nib.save(nib.Nifti1Image(t1_gt + 14.1, np.eye(4)), t1)
     nib.save(nib.Nifti1Image(t2_gt + 0.5, np.eye(4)), t2)
     output = tmp_path / "synthetic_metrics.json"
-    completed = subprocess.run([sys.executable, "-m", "paper_experiments.joint_vs_2dfit.phase2_clean.evaluation", "--mode", "synthetic", "--synthetic-t1", str(t1), "--synthetic-t2", str(t2), "--gt-maps", str(gt), "--mesh-myo", str(mesh), "--output", str(output)], cwd=REPO, text=True, capture_output=True)
+    completed = subprocess.run([sys.executable, "-m", "paper_experiments.joint_vs_2dfit.phase2_clean.evaluation", "--mode", "synthetic", "--synthetic-t1", str(t1), "--synthetic-t2", str(t2), "--gt-maps", str(gt), "--output", str(output)], cwd=REPO, text=True, capture_output=True)
     assert completed.returncode == 0, completed.stderr
     metrics = json.loads(output.read_text())["metrics"]
     assert metrics["t1_ms"]["relative_nrmse"] == pytest.approx(0.01)

@@ -6,7 +6,6 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from paper_experiments.joint_vs_2dfit.mrxcat.define_gt_tissue_maps import build_gt_maps
 from paper_experiments.joint_vs_2dfit.simulation.render_observations import (
     integrate_signal_volume,
     lps_to_ras_affine,
@@ -19,19 +18,6 @@ from paper_experiments.joint_vs_2dfit.simulation.select_timing_template import (
 from paper_experiments.joint_vs_2dfit.simulation.write_observations_npz import (
     write_observations,
 )
-
-
-def test_gt_values_within_contract_and_primary_myocardium() -> None:
-    labels = np.array([[0, 1, 5, 2]], dtype=np.int16)
-    maps = build_gt_maps(labels)
-    assert maps.t1_ms[0, 1] == pytest.approx(1410.0)
-    assert maps.t2_ms[0, 1] == pytest.approx(50.0)
-    assert maps.b1[0, 1] == pytest.approx(1.0)
-    assert maps.myocardium_mask[0, 1]
-    assert maps.signal_support_mask.tolist() == [[False, True, True, True]]
-    assert np.all((maps.t1_ms[maps.signal_support_mask] > 0) & (maps.t1_ms[maps.signal_support_mask] <= 2500))
-    assert np.all((maps.t2_ms[maps.signal_support_mask] >= 5) & (maps.t2_ms[maps.signal_support_mask] <= 200))
-    assert np.all((maps.b1 >= 0.1) & (maps.b1 <= 1.2))
 
 
 def test_timing_selection_is_actual_vps87_group_and_decoder_compatible() -> None:
@@ -115,18 +101,3 @@ def test_signal_generation_is_finite_and_deterministic() -> None:
     assert first.shape == (2, 10)
     assert np.all(np.isfinite(first))
     np.testing.assert_array_equal(first, second)
-
-
-def test_generated_clean_dataset_contract_if_present() -> None:
-    root = Path(__file__).resolve().parents[1] / "simulation/outputs/phase1_clean_mrxcat"
-    if not root.exists():
-        pytest.skip("formal Phase 1 output is generated after the source-only test stage")
-    data = np.load(root / "sax/observations.npz")
-    assert data["images"].shape[0] % 10 == 0
-    assert np.all(data["vps"] == 87)
-    assert np.allclose(data["tr_ms"], 2.61)
-    assert np.all(np.isfinite(data["images"]))
-    source = json.loads((root / "synthetic_source_manifest.json").read_text())
-    assert source["gt_contract"]["m0"] == 1.0
-    assert source["forbidden_routes"]["frozen_mlp"] is False
-    assert source["forbidden_routes"]["reconstruction"] is False
