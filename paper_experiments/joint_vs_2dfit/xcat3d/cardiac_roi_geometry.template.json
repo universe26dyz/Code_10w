@@ -1,5 +1,6 @@
 {
   "schema": "code10w_phase1_2_cardiac_roi_geometry_template/v1",
+  "xcat_version_build_compatibility": "REQUIRED_LICENSED_XCAT_VERSION_BUILD",
   "formal_target_voxel_size_mm": [1.0, 1.0, 1.0],
   "minimum_lv_boundary_margin_mm": 5.0,
   "minimum_lv_voxel_count": 64,

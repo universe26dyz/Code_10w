@@ -8,12 +8,18 @@ import pytest
 
 from paper_experiments.joint_vs_2dfit.simulation.render_observations import coverage_preflight
 from paper_experiments.joint_vs_2dfit.xcat3d.audits import quantitative_tuple_audit
-from paper_experiments.joint_vs_2dfit.xcat3d.prepare_xcat_parameters import prepare_xcat_parameter_hand_off, validate_parameter_contract
+from paper_experiments.joint_vs_2dfit.xcat3d.prepare_xcat_parameters import (
+    derive_raw_contract,
+    prepare_xcat_parameter_hand_off,
+    validate_parameter_contract,
+    validate_phantom_spec,
+)
 
 
 def _frozen_geometry(tmp_path: Path) -> Path:
     source = Path(__file__).parents[1] / "xcat3d/cardiac_roi_geometry.template.json"
     geometry = json.loads(source.read_text())
+    geometry["xcat_version_build_compatibility"] = "fixture-xcat"
     geometry["xcat_geometry_block"].update({"array_size": 8, "startslice": 1, "endslice": 8})
     path = tmp_path / "geometry.json"; path.write_text(json.dumps(geometry))
     return path
@@ -46,3 +52,18 @@ def test_coverage_preflight_rejects_through_plane_and_inplane_escape() -> None:
     bad = dict(good); bad["affine_lps_rc"] = np.eye(4).tolist(); bad["affine_lps_rc"][2][3] = 3.0
     with pytest.raises(ValueError, match="out-of-volume"):
         coverage_preflight((3, 3, 3, 10), -np.ones(3), np.ones(3), [bad])
+
+
+def test_phantom_spec_and_frozen_geometry_contract_are_machine_checked(tmp_path: Path) -> None:
+    spec_path = Path(__file__).parents[1] / "xcat3d/cardiac_roi_phantom_spec.json"
+    spec = json.loads(spec_path.read_text())
+    validate_phantom_spec(spec)
+    duplicate = json.loads(json.dumps(spec))
+    duplicate["structures"]["rv_myocardium"]["xcat_parameter"] = "myoLV_act"
+    with pytest.raises(ValueError, match="unique"):
+        validate_phantom_spec(duplicate)
+    geometry = json.loads(_frozen_geometry(tmp_path).read_text())
+    assert derive_raw_contract(geometry) == {
+        "shape": (8, 8, 8), "spacing_mm": (1.0, 1.0, 1.0), "axis_order": "zyx",
+        "origin_policy": "centered_synthetic_lps",
+    }

@@ -86,7 +86,7 @@ def foreground_mask(images: np.ndarray) -> np.ndarray:
     return mask.astype(bool)
 
 
-def _assert_footprint_in_bounds(shape, origin, spacing, group, inplane_samples, thickness_samples) -> None:
+def _footprint_coordinates(shape, origin, spacing, group, inplane_samples, thickness_samples) -> np.ndarray:
     rows, cols = group["image_shape_rows_cols"]
     affine = np.asarray(group["affine_lps_rc"], float)
     ro = ((np.arange(inplane_samples) + 0.5) / inplane_samples - 0.5)
@@ -97,15 +97,22 @@ def _assert_footprint_in_bounds(shape, origin, spacing, group, inplane_samples, 
     offsets = np.asarray([[r, c, s] for r in ro for c in co for s in so])
     points = base.reshape(-1, 3)[None] + offsets[:, None, 0, None] * affine[:3, 0] + offsets[:, None, 1, None] * affine[:3, 1] + offsets[:, None, 2, None] * affine[:3, 2]
     coords = (points - np.asarray(origin)) / np.asarray(spacing)
-    if np.any(coords < 0) or np.any(coords > (np.asarray(shape[:3]) - 1)):
+    return coords
+
+
+def _assert_footprint_in_bounds(shape, origin, spacing, group, inplane_samples, thickness_samples) -> float:
+    coords = _footprint_coordinates(shape, origin, spacing, group, inplane_samples, thickness_samples)
+    upper = np.asarray(shape[:3]) - 1
+    if np.any(coords < 0) or np.any(coords > upper):
         raise ValueError("out-of-volume quadrature footprint")
+    return float(np.minimum(coords, upper - coords).min())
 
 
 def coverage_preflight(shape, origin, spacing, groups, inplane_samples=6, thickness_samples=9) -> dict:
     records = []
     for group in groups:
-        _assert_footprint_in_bounds(shape, origin, spacing, group, inplane_samples, thickness_samples)
-        records.append({"group_idx": int(group["group_idx"]), "coverage_fraction": 1.0, "out_of_volume_quadrature_points": 0, "minimum_boundary_margin_voxel": 0.0})
+        margin = _assert_footprint_in_bounds(shape, origin, spacing, group, inplane_samples, thickness_samples)
+        records.append({"group_idx": int(group["group_idx"]), "coverage_fraction": 1.0, "out_of_volume_quadrature_points": 0, "minimum_boundary_margin_voxel": margin})
     return {"gate": True, "groups": records}
 
 

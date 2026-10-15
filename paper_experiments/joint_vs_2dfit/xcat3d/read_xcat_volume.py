@@ -10,6 +10,7 @@ from typing import Any
 import numpy as np
 
 from .contracts import Geometry, XCATInputs, XCATVolume
+from .prepare_xcat_parameters import derive_raw_contract, validate_geometry_spec, validate_parameter_contract, validate_phantom_spec
 
 
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
@@ -95,22 +96,28 @@ def _validate_provenance(manifest: dict[str, Any], root: Path) -> None:
         parameter_path, parameter_hashes[name] = _verified_file(record, root, f"XCAT parameter-file {name}")
         _reject_placeholders(parameter_path.read_text(), f"XCAT parameter-file {name}")
     specs = {}
+    payloads = {}
     for key in ("phantom_spec", "geometry_spec"):
         record = xcat.get(key)
         if not isinstance(record, dict):
             raise ValueError(f"XCAT provenance is missing {key}")
         spec_path, specs[key] = _verified_file(record, root, f"XCAT {key}")
         try:
-            _reject_placeholders(json.loads(spec_path.read_text()), f"XCAT {key}")
+            payloads[key] = json.loads(spec_path.read_text())
+            _reject_placeholders(payloads[key], f"XCAT {key}")
         except json.JSONDecodeError as error:
             raise ValueError(f"XCAT {key} must be valid JSON") from error
-    geometry_payload = json.loads((root / xcat["geometry_spec"]["path"]).read_text())
-    block = geometry_payload.get("xcat_geometry_block", {})
-    if geometry_payload.get("raw_layout_policy") == "hanson_4DPhantomMRI_97558db_zyx_slices_rows_cols":
-        expected_shape = (int(block["endslice"]) - int(block["startslice"]) + 1, int(block["array_size"]), int(block["array_size"]))
-        expected_spacing = (float(block["slice_width"]) * float(geometry_payload["xcat_mm_per_length_unit"]), float(block["pixel_width"]) * float(geometry_payload["xcat_mm_per_length_unit"]), float(block["pixel_width"]) * float(geometry_payload["xcat_mm_per_length_unit"]))
+    phantom_payload, geometry_payload = payloads["phantom_spec"], payloads["geometry_spec"]
+    formal_geometry = "raw_layout_policy" in geometry_payload
+    if formal_geometry:
+        validate_phantom_spec(phantom_payload)
+        validate_geometry_spec(geometry_payload, formal=True)
+        if _require_text(xcat.get("version_build"), "XCAT provenance version_build") != geometry_payload["xcat_version_build_compatibility"]:
+            raise ValueError("licensed XCAT version/build disagrees with frozen geometry compatibility")
+        contract = derive_raw_contract(geometry_payload)
+        expected_shape, expected_spacing = contract["shape"], contract["spacing_mm"]
         for name, record in manifest["volumes"].items():
-            if tuple(record["shape"]) != expected_shape or record.get("axis_order") != "zyx" or not np.allclose(record["spacing_mm"], expected_spacing):
+            if tuple(record["shape"]) != expected_shape or record.get("axis_order") != contract["axis_order"] or not np.allclose(record["spacing_mm"], expected_spacing):
                 raise ValueError(f"{name} violates frozen XCAT unit/layout contract")
     if geometry_payload.get("origin_policy") == "centered_synthetic_lps":
         for name, record in manifest["volumes"].items():
@@ -119,6 +126,19 @@ def _validate_provenance(manifest: dict[str, Any], root: Path) -> None:
             expected_origin = -0.5 * (shape - 1) * spacing
             if not np.allclose(record["origin_mm"], expected_origin):
                 raise ValueError(f"{name} violates centered synthetic LPS origin policy")
+        validate_parameter_contract(root / Path(next(iter(parameter_files.values()))["path"]).parent, phantom_payload, geometry_payload)
+        static_inputs = xcat.get("static_inputs")
+        if not isinstance(static_inputs, list) or not static_inputs:
+            raise ValueError("formal XCAT provenance requires static input path/SHA256/role records")
+        expected_static = {str(geometry_payload["xcat_geometry_block"][key]) for key in ("ap_filename", "dia_filename", "organ_file", "heart_base", "heart_curve_file")}
+        observed_static = set()
+        for item in static_inputs:
+            if not isinstance(item, dict) or not _require_text(item.get("role"), "static XCAT input role"):
+                raise ValueError("invalid static XCAT input provenance")
+            static_path, _ = _verified_file(item, root, "static XCAT input")
+            observed_static.add(static_path.name)
+        if not expected_static <= observed_static:
+            raise ValueError("static XCAT input provenance does not cover every frozen anatomy/motion input")
     records = manifest.get("volumes", {})
     if set(records) != set(_PARAMETER_FOR_VOLUME):
         raise ValueError("input manifest requires exactly T1, T2, PD and LV-mask raw volumes")

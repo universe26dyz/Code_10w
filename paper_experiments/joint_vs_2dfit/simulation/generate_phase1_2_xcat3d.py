@@ -3,15 +3,16 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 from pathlib import Path
 
 import numpy as np
 
-from ..xcat3d.build_quantitative_gt import build_quantitative_gt, write_quantitative_gt
-from ..xcat3d.prepare_xcat_parameters import prepare_xcat_parameter_hand_off, validate_parameter_contract
+from ..xcat3d.build_quantitative_gt import build_quantitative_gt, lv_boundary_margin_qc, write_quantitative_gt
+from ..xcat3d.prepare_xcat_parameters import freeze_xcat_parameter_hand_off, prepare_xcat_parameter_hand_off, validate_parameter_contract
 from ..xcat3d.read_xcat_volume import load_xcat_inputs
 from ..xcat3d.audits import quantitative_tuple_audit, structure_id_audit_status
-from ..xcat3d.validate_quantitative_gt import assert_phase1_2_manifest_ready, validate_quantitative_gt, write_validation
+from ..xcat3d.validate_quantitative_gt import assert_phase1_2_manifest_ready, lv_pca_qc, validate_quantitative_gt, write_validation
 from .build_geometry import apply_global_rigid_alignment, select_modal_geometry_templates
 from .render_observations import render_groups, coverage_preflight
 from .select_timing_template import choose_timing_template, collect_manifest_candidates
@@ -41,6 +42,8 @@ def _write_source_manifest(root: Path, inputs, gt, qc: dict) -> Path:
     if path.exists():
         raise FileExistsError(f"refusing to overwrite {path}")
     geometry = gt.geometry
+    frozen_geometry = json.loads((inputs.manifest_path.parent / inputs.manifest["xcat"]["geometry_spec"]["path"]).read_text())
+    repository = Path(__file__).resolve().parents[4]
     manifest = {
         "phase": "1.2",
         "scientific_status": "candidate_until_geometry_acceptance",
@@ -49,11 +52,14 @@ def _write_source_manifest(root: Path, inputs, gt, qc: dict) -> Path:
         "xcat": {**inputs.manifest["xcat"], "raw_volumes": inputs.manifest["volumes"], "shape": list(geometry.shape), "spacing_mm": [1.0, 1.0, 1.0], "origin_mm": list(geometry.origin_mm), "axis_order": "xyz", "world_convention": "LPS"},
         "gt_contract": {"lv_myocardium_t1_ms": 1410.0, "lv_myocardium_t2_ms": 50.0, "b1": 1.0, "m0_policy": inputs.manifest["m0_policy"]},
         "geometry_gates": qc["geometry_gates"],
+        "lv_boundary_margin_qc": qc["lv_boundary_margin_qc"],
         "scientific_gt_geometry_gate": qc["scientific_gt_geometry_gate"],
         "external_xcat_input_gate": "PASS",
         "formal_synthetic_ready": False,
         "spatial_integration": {"method": "midpoint quadrature in signal space with linear interpolation", "inplane_samples_row_col": [6, 6], "thickness_samples": 9},
         "external_reference_provenance": {"hanson_2021_doi": "10.1002/mp.15036", "reference_implementation": "https://github.com/hmhanson/4DPhantomMRI", "reference_commit": "97558db05f4e344865f472de974b9f4d042a1a15"},
+        "code_provenance": {"git_commit": subprocess.check_output(["git", "-C", str(repository), "rev-parse", "HEAD"], text=True).strip(), "tracked_worktree_clean": not bool(subprocess.check_output(["git", "-C", str(repository), "status", "--porcelain", "--untracked-files=no"], text=True).strip())},
+        "frozen_geometry_qc": {"minimum_lv_voxel_count": frozen_geometry["minimum_lv_voxel_count"], "pca_lambda1_lambda2_min": frozen_geometry["pca_lambda1_lambda2_min"]},
     }
     path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
     return path
@@ -63,10 +69,12 @@ def build_gt(xcat_input_manifest: str | Path, output_root: str | Path = DEFAULT_
     inputs = load_xcat_inputs(xcat_input_manifest)
     gt = build_quantitative_gt(inputs)
     qc = validate_quantitative_gt(gt)
+    frozen_geometry = json.loads((inputs.manifest_path.parent / inputs.manifest["xcat"]["geometry_spec"]["path"]).read_text())
+    qc["lv_boundary_margin_qc"] = lv_boundary_margin_qc(gt.myocardium_mask, gt.geometry, float(frozen_geometry["minimum_lv_boundary_margin_mm"]))
     if not qc["scientific_gt_geometry_gate"]:
         raise ValueError("Phase-1.2 geometry acceptance failed")
     root = Path(output_root)
-    if any((root / name).exists() for name in ("gt_maps.npz", "geometry_qc.json", "synthetic_source_manifest.json", "quantitative_tuple_qc.json")):
+    if any((root / name).exists() for name in ("gt_maps.npz", "geometry_qc.json", "synthetic_source_manifest.json", "parameter_contract_qc.json", "quantitative_tuple_qc.json")):
         raise FileExistsError("refusing partial build-gt overwrite")
     gt_path = write_quantitative_gt(gt, root)
     qc_path = write_validation(qc, root)
@@ -110,17 +118,21 @@ def render_observations(output_root: str | Path, prepared_root: str | Path) -> d
     signal = np.load(root / "clean_signal_field.npz")
     selection = json.loads((root / "timing_selection.json").read_text())
     maps = np.load(root / "gt_maps.npz"); myo = maps["myocardium_mask"].astype(bool)
-    indices = np.argwhere(myo); world = np.asarray(maps["origin_mm"], float)[None, :] + indices * np.asarray(maps["spacing_mm"], float)[None, :]
-    center = world.mean(axis=0); covariance = np.cov((world - center).T); eigenvalues, eigenvectors = np.linalg.eigh(covariance); order = np.argsort(eigenvalues)[::-1]; eigenvalues, eigenvectors = eigenvalues[order], eigenvectors[:, order]; long_axis = eigenvectors[:, 0]
-    if long_axis[np.argmax(np.abs(long_axis))] < 0: long_axis *= -1
+    spec_payload = json.loads((root / "synthetic_source_manifest.json").read_text())
+    frozen = spec_payload["frozen_geometry_qc"]
+    pca = lv_pca_qc(myo, maps["origin_mm"], maps["spacing_mm"], minimum_voxel_count=int(frozen["minimum_lv_voxel_count"]), lambda1_lambda2_min=float(frozen["pca_lambda1_lambda2_min"]))
+    center, long_axis = np.asarray(pca["lv_centroid_mm"]), np.asarray(pca["lv_long_axis"])
     templates = select_modal_geometry_templates(prepared_root)
     aligned, alignment_qc = apply_global_rigid_alignment(templates, center, long_axis)
-    pca_gate = bool(len(indices) >= 64 and np.isfinite(covariance).all() and eigenvalues[1] > 0 and eigenvalues[0] / eigenvalues[1] >= 1.1)
-    alignment_qc.update({"lv_voxel_count": int(len(indices)), "lv_centroid_mm": center.tolist(), "lv_pca_covariance": covariance.tolist(), "lv_pca_eigenvalues": eigenvalues.tolist(), "lv_pca_axes": eigenvectors.tolist(), "lv_pca_lambda1_lambda2": float(eigenvalues[0]/eigenvalues[1]), "pca_stability_gate": pca_gate, "lv_long_axis": long_axis.tolist(), "lv_alignment_gate": bool(pca_gate and abs(alignment_qc["sax_normal_dot_lv_long_axis"]) >= 0.999 and alignment_qc["max_pairwise_center_distance_error_mm"] <= 1e-6)})
+    alignment_qc.update(pca)
+    alignment_qc.update({"template_subject": templates["sax"]["source_subject"], "template_manifest_sha256": {stack: template["source_manifest_sha256"] for stack, template in templates.items()}, "lv_alignment_gate": bool(pca["pca_stability_gate"] and abs(alignment_qc["sax_normal_dot_lv_long_axis"]) >= 0.999 and alignment_qc["max_pairwise_center_distance_error_mm"] <= 1e-6)})
     if not alignment_qc["lv_alignment_gate"]: raise ValueError("LV PCA geometry alignment gate failed")
-    coverage = {"observation_coverage_gate": True, "stacks": {}}
+    coverage = {"observation_coverage_gate": True, "stacks": {}, "worst_stack": None, "worst_group": None, "minimum_sampling_coordinate_margin_voxel": float("inf")}
     for stack, groups in aligned.items():
         coverage["stacks"][stack] = coverage_preflight(signal["signals"].shape, signal["origin_mm"], signal["spacing_mm"], groups)
+        for record in coverage["stacks"][stack]["groups"]:
+            if record["minimum_boundary_margin_voxel"] < coverage["minimum_sampling_coordinate_margin_voxel"]:
+                coverage.update({"minimum_sampling_coordinate_margin_voxel": record["minimum_boundary_margin_voxel"], "worst_stack": stack, "worst_group": record["group_idx"]})
     (root / "observation_coverage_qc.json").write_text(json.dumps(coverage, indent=2) + "\n")
     (root / "geometry_alignment_qc.json").write_text(json.dumps(alignment_qc, indent=2) + "\n")
     timing = np.asarray(selection["timing9_ms"], dtype=float)
@@ -131,12 +143,17 @@ def render_observations(output_root: str | Path, prepared_root: str | Path) -> d
         metadata = {"group_idx": np.repeat(np.arange(len(groups)), 10), "weight_idx": np.tile(np.arange(10), len(groups)), "stack_idx": np.zeros(len(groups) * 10, dtype=np.int64), "acquisition_time_ms": np.tile(acquisition, len(groups)), "timing9_ms": np.repeat(timing[None, :], len(groups) * 10, axis=0), "affine_lps_rc": np.repeat(np.asarray([item["affine_lps_rc"] for item in groups]), 10, axis=0), "pixel_spacing_rc_mm": np.concatenate([np.repeat([item["pixel_spacing_rc_mm"]], 10, axis=0) for item in groups]), "slice_thickness_mm": np.concatenate([np.repeat([item["slice_thickness_mm"]], 10) for item in groups]), "tr_ms": np.repeat([2.61], len(groups) * 10), "vps": np.repeat([87], len(groups) * 10)}
         result = write_observations(root / stack, images, masks, metadata, {"phase": "1.2", "stack": stack, "signal_field": str(root / "clean_signal_field.npz")})
         summaries[stack] = result
+    source = json.loads((root / "synthetic_source_manifest.json").read_text())
+    source["template_geometry"] = {"template_subject": alignment_qc["template_subject"], "selection_rule": templates["sax"]["selection_rule"], "manifest_sha256": alignment_qc["template_manifest_sha256"]}
+    source["geometry_alignment_gate"] = {"pca_stability_gate": alignment_qc["pca_stability_gate"], "lv_alignment_gate": alignment_qc["lv_alignment_gate"], "single_global_rigid_transform": True}
+    source["observation_coverage_gate"] = coverage
+    (root / "synthetic_source_manifest.json").write_text(json.dumps(source, indent=2, sort_keys=True) + "\n")
     return {"stacks": summaries}
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--stage", required=True, choices=("prepare-xcat", "validate-xcat-inputs", "build-gt", "simulate-signal-field", "render-observations", "validate-final"))
+    parser.add_argument("--stage", required=True, choices=("prepare-xcat", "prepare-xcat-template", "freeze-xcat-handoff", "validate-xcat-inputs", "build-gt", "simulate-signal-field", "render-observations", "validate-final"))
     parser.add_argument("--output-root", default=str(DEFAULT_OUTPUT_ROOT))
     parser.add_argument("--xcat-input-manifest")
     parser.add_argument("--prepared-root")
@@ -144,8 +161,12 @@ def main() -> None:
     parser.add_argument("--geometry-spec")
     parser.add_argument("--phantom-spec")
     args = parser.parse_args()
-    if args.stage == "prepare-xcat":
-        result = prepare_xcat_parameter_hand_off(args.output_root, geometry_spec=args.geometry_spec, phantom_spec=args.phantom_spec)
+    if args.stage == "prepare-xcat-template":
+        result = prepare_xcat_parameter_hand_off(args.output_root, phantom_spec=args.phantom_spec)
+    elif args.stage in ("prepare-xcat", "freeze-xcat-handoff"):
+        if not args.geometry_spec:
+            parser.error("--geometry-spec is required for executable frozen XCAT handoff")
+        result = freeze_xcat_parameter_hand_off(args.output_root, geometry_spec=args.geometry_spec, phantom_spec=args.phantom_spec)
     elif args.stage == "validate-xcat-inputs":
         if not args.xcat_input_manifest:
             parser.error("--xcat-input-manifest is required")

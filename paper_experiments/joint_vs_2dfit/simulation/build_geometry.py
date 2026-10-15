@@ -150,6 +150,7 @@ def apply_global_rigid_alignment(
 
     out: dict[str, list[dict]] = {}
     before_centers, after_centers = [], []
+    source_centers_by_stack, aligned_centers_by_stack = {}, {}
     for stack, template in templates.items():
         groups = []
         for group in template["groups"]:
@@ -169,6 +170,8 @@ def apply_global_rigid_alignment(
             before_centers.append(_group_center(group))
             after_centers.append(_group_center(groups[-1]))
         out[stack] = groups
+        source_centers_by_stack[stack] = [_group_center(group).tolist() for group in template["groups"]]
+        aligned_centers_by_stack[stack] = [_group_center(group).tolist() for group in groups]
     before = np.asarray(before_centers)
     after = np.asarray(after_centers)
     pair_errors = []
@@ -187,6 +190,8 @@ def apply_global_rigid_alignment(
         "sax_normal_dot_lv_long_axis": float(np.dot(normals["sax"], long_axis)),
         "stack_plane_normals": {key: value.tolist() for key, value in normals.items()},
         "max_pairwise_center_distance_error_mm": float(max(pair_errors, default=0.0)),
+        "source_group_centers_mm": source_centers_by_stack,
+        "aligned_group_centers_mm": aligned_centers_by_stack,
     }
     if "2ch" in normals and "4ch" in normals:
         qc["2ch_4ch_plane_normal_dot"] = float(np.dot(normals["2ch"], normals["4ch"]))

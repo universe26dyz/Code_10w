@@ -1,21 +1,21 @@
-# Phase-1.2 cardiac-ROI quantitative XCAT runbook
+# Phase-1.2 final gated XCAT3D workflow
 
-Codex performs only local CPU validation. Hanson is the reference for the quantitative-XCAT generation mechanism (multiple full-3D activity-field runs with a shared XCAT anatomy, phase, rasterizer and geometry). Code_10w uses its own cardiac-ROI phantom specification; it is not a reproduction of Hanson phantom content. Do not use MRXCAT VTI files or a Patient1 mesh.
+Codex performs local CPU code checks only. Run licensed XCAT only in its licensed environment; do not run JEMRIS, GPU reconstruction, Phase-2, real-subject experiments, or MRXCAT/Patient1 mesh routes here. Hanson is the source of the full-3D activity-field mechanism, not the Code_10w phantom content.
 
-1. Inspect and freeze `xcat3d/cardiac_roi_phantom_spec.json`.
-2. Copy `xcat3d/cardiac_roi_geometry.template.json` to a placeholder-free licensed-XCAT geometry specification. Its matrix, `startslice` and `endslice` must be decided from the actual cardiac ROI.
-3. Locally freeze the four shared-geometry executable parameter files from the placeholder-free geometry JSON:
+1. Inspect `xcat3d/cardiac_roi_phantom_spec.json`.
+2. Copy `xcat3d/cardiac_roi_geometry.template.json` and fill a placeholder-free cardiac geometry, including XCAT build compatibility, matrix, slice range, static inputs, cm-to-mm convention, layout policy, centered synthetic-LPS origin policy, and PCA threshold.
+3. Freeze the formal handoff locally:
 
-   `python -m paper_experiments.joint_vs_2dfit.simulation.generate_phase1_2_xcat3d --stage prepare-xcat --geometry-spec /path/to/cardiac_roi_geometry.json --output-root /path/to/handoff_parent`
+   `python -m paper_experiments.joint_vs_2dfit.simulation.generate_phase1_2_xcat3d --stage freeze-xcat-handoff --geometry-spec /path/to/cardiac_roi_geometry.json --output-root /path/to/handoff_parent`
 
-4. In the licensed XCAT environment run `t1_phase1_2.par`, `t2_phase1_2.par`, `pd_phase1_2.par`, and `lv_mask_phase1_2.par` with that one frozen geometry. The LV-mask run is `myoLV=1` and every other declared cardiac-ROI structure `=0`.
-5. Record raw float32 paths/SHA256/dtype/shape/axis-order/spacing/origin/convention, XCAT version/build, cardiac and respiratory phase, each parameter-file SHA256, and shared cardiac-phantom/geometry-spec SHA256 in `xcat3d_inputs.json`. Placeholders are rejected.
-6. Validate the four raw runs, canonicalize them with nearest-neighbour tissue-map conversion to xyz/LPS/1-mm, and require the configured LV boundary margin:
-
-   `python -m paper_experiments.joint_vs_2dfit.simulation.generate_phase1_2_xcat3d --stage validate-xcat-inputs --xcat-input-manifest /path/to/xcat3d_inputs.json`
-
-7. Build GT, derive LV centroid/PCA and one shared SAX/2CH/4CH rigid transform, simulate HHZ, and render explicitly with 6x6x9 signal-space integration.
-8. Run `--stage validate-final`. It writes a final immutable manifest only after SHA256 closure over GT, QC, signal, timing, source manifest, all three observations, T1/T2/PD/LV-mask source hashes, and the cardiac specs.
-9. Only a complete, untampered `phase1_2_final_manifest.json` permits Phase-2 preflight.
-
-No formal reconstruction is included here.
+4. Review all four generated `.par` files and `parameter_contract_qc.json`; no placeholder is executable.
+5. Record parameter/spec/static-input path, SHA256, and role provenance in the formal `xcat3d_inputs.json`.
+6. In licensed XCAT run the audit-only structure-ID field where supported, then T1, T2, PD, and LV-mask with the exact same frozen anatomy/geometry block.
+7. Record raw file SHA256 values. The formal manifest derives `zyx` shape from `startslice..endslice` and `array_size`, derives spacing from cm × 10, and derives centered synthetic origin; do not enter an arbitrary raw origin.
+8. Validate parameter semantics, static-input hashes, raw unit/layout, quantitative tuple coverage, and structure audit status.
+9. Canonicalize to 1-mm synthetic xyz/LPS, validate LV crop margin and PCA stability, then build GT.
+10. Jointly select one real subject for SAX and the two orthogonal real-geometry-derived LAX templates (`2ch` and `4ch`; neither is claimed as a landmark-certified clinical cut), and apply one global rigid transform.
+11. Check every exact 6×6×9 midpoint quadrature node is in bounds; rendering is blocked otherwise.
+12. Simulate HHZ, render SAX/2ch/4ch observations, and independently revalidate signal and observation semantics.
+13. Write the immutable final manifest. It hashes all acceptance artifacts and cross-checks all final raw/spec/parameter/static provenance against the hashed source manifest.
+14. Only a complete `phase1_2_final_manifest.json` permits Phase-2 preflight.

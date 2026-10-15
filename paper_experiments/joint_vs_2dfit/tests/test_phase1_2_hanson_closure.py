@@ -118,6 +118,7 @@ def test_final_manifest_rejects_one_missing_required_artifact_hash(tmp_path: Pat
 def test_frozen_geometry_drives_placeholder_free_parameter_handoff(tmp_path: Path) -> None:
     """Formal XCAT files must come from the selected frozen geometry, not the template."""
     geometry = json.loads((Path(__file__).parents[1] / "xcat3d/cardiac_roi_geometry.template.json").read_text())
+    geometry["xcat_version_build_compatibility"] = "fixture-xcat"
     block = geometry["xcat_geometry_block"]
     block.update({"array_size": 256, "startslice": 500, "endslice": 780})
     frozen = tmp_path / "cardiac_roi_geometry.json"; frozen.write_text(json.dumps(geometry))

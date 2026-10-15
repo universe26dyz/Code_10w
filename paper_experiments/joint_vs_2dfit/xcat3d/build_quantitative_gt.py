@@ -10,16 +10,23 @@ from .canonicalize import canonicalize_volume
 from .contracts import FROZEN_B1, FROZEN_LV_T1_MS, FROZEN_LV_T2_MS, QuantitativeGT, XCATInputs
 
 
+def lv_boundary_margin_qc(myocardium: np.ndarray, geometry, required_margin_mm: float) -> dict:
+    indices = np.argwhere(myocardium)
+    lower = indices.min(axis=0)
+    upper = np.asarray(myocardium.shape) - 1 - indices.max(axis=0)
+    lower_mm, upper_mm = lower * np.asarray(geometry.spacing_mm), upper * np.asarray(geometry.spacing_mm)
+    minimum = np.minimum(lower_mm, upper_mm)
+    return {"lower_margin_mm": lower_mm.tolist(), "upper_margin_mm": upper_mm.tolist(), "minimum_margin_mm": minimum.tolist(), "minimum_margin_overall_mm": float(minimum.min()), "required_margin_mm": float(required_margin_mm), "gate": bool(np.all(minimum >= required_margin_mm))}
+
+
 def _validate_cardiac_roi_coverage(myocardium: np.ndarray, geometry, inputs: XCATInputs) -> None:
     record = inputs.manifest["xcat"]["geometry_spec"]
     specification = json.loads((inputs.manifest_path.parent / record["path"]).read_text())
     margin_mm = float(specification["minimum_lv_boundary_margin_mm"])
     if not np.isfinite(margin_mm) or margin_mm <= 0:
         raise ValueError("cardiac ROI geometry must define a positive LV boundary margin")
-    lower = np.argwhere(myocardium).min(axis=0)
-    upper = np.asarray(myocardium.shape) - 1 - np.argwhere(myocardium).max(axis=0)
-    margins_mm = np.minimum(lower, upper) * np.asarray(geometry.spacing_mm)
-    if np.any(margins_mm < margin_mm):
+    qc = lv_boundary_margin_qc(myocardium, geometry, margin_mm)
+    if not qc["gate"]:
         raise ValueError(f"LV myocardium boundary margin is below required {margin_mm:g} mm")
 
 

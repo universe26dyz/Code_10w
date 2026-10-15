@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 from .validate_quantitative_gt import check_active_phase1_2_wiring
+from .prepare_xcat_parameters import validate_geometry_spec, validate_phantom_spec
 
 
 def local_acceptance_report(repository_root: str | Path) -> dict:
@@ -19,11 +20,13 @@ def local_acceptance_report(repository_root: str | Path) -> dict:
     try:
         cardiac_spec = json.loads((xcat_root / "cardiac_roi_phantom_spec.json").read_text())
         geometry_spec = json.loads((xcat_root / "cardiac_roi_geometry.template.json").read_text())
-        cardiac_spec_ok = len(cardiac_spec.get("structures", {})) >= 12 and cardiac_spec.get("frozen_lv") == {"t1_ms": 1410.0, "t2_ms": 50.0, "b1": 1.0} and bool(geometry_spec.get("xcat_geometry_block"))
-    except (OSError, ValueError, TypeError):
+        validate_phantom_spec(cardiac_spec)
+        validate_geometry_spec(geometry_spec, formal=False)
+        cardiac_spec_ok = True
+    except (OSError, ValueError, TypeError, KeyError):
         cardiac_spec_ok = False
     reference_mechanism_ok = (xcat_root / "prepare_xcat_parameters.py").is_file()
-    pre_xcat_ok = reference_mechanism_ok and (root / "paper_experiments/joint_vs_2dfit/simulation/render_observations.py").is_file()
+    pre_xcat_ok = reference_mechanism_ok and all((xcat_root / name).is_file() for name in ("prepare_xcat_parameters.py", "finalize.py", "audits.py")) and all((root / "paper_experiments/joint_vs_2dfit/simulation" / name).is_file() for name in ("render_observations.py", "build_geometry.py", "write_observations_npz.py"))
     passed = wiring["passed"] and archived and tombstone_ok and cardiac_spec_ok and pre_xcat_ok
     return {
         "LOCAL_CODE_ACCEPTANCE": "PASS" if passed else "FAIL",

@@ -29,6 +29,27 @@ def validate_quantitative_gt(gt: QuantitativeGT) -> dict:
     return {"scientific_gt_geometry_gate": passed, "geometry_gates": checks, "summary": "PASS" if passed else "FAIL"}
 
 
+def lv_pca_qc(myocardium_mask: np.ndarray, origin_mm, spacing_mm, *, minimum_voxel_count: int, lambda1_lambda2_min: float) -> dict:
+    """Compute the deterministic LV axis and formally reject an unstable PCA."""
+    indices = np.argwhere(np.asarray(myocardium_mask, bool))
+    if len(indices) < minimum_voxel_count:
+        raise ValueError("LV PCA has fewer than the frozen minimum voxel count")
+    world = np.asarray(origin_mm, float)[None, :] + indices * np.asarray(spacing_mm, float)[None, :]
+    centroid = world.mean(axis=0)
+    covariance = np.cov((world - centroid).T)
+    values, vectors = np.linalg.eigh(covariance)
+    order = np.argsort(values)[::-1]; values, vectors = values[order], vectors[:, order]
+    long_axis = vectors[:, 0]
+    long_axis *= 1.0 if long_axis[np.argmax(np.abs(long_axis))] >= 0 else -1.0
+    ratio12 = float(values[0] / values[1]) if values[1] > 0 else float("inf")
+    ratio23 = float(values[1] / values[2]) if values[2] > 0 else float("inf")
+    passed = bool(np.isfinite(covariance).all() and np.isfinite(vectors).all() and np.isfinite(values).all() and values[1] > 0 and ratio12 >= lambda1_lambda2_min)
+    result = {"lv_voxel_count": int(len(indices)), "lv_centroid_mm": centroid.tolist(), "lv_pca_covariance": covariance.tolist(), "lv_pca_eigenvalues": values.tolist(), "lv_pca_axes": vectors.tolist(), "lv_pca_lambda1_lambda2": ratio12, "lv_pca_lambda2_lambda3": ratio23, "pca_stability_threshold": float(lambda1_lambda2_min), "pca_stability_gate": passed, "lv_long_axis": long_axis.tolist()}
+    if not passed:
+        raise ValueError("LV PCA stability gate failed")
+    return result
+
+
 def write_validation(qc: dict, output_root: str | Path) -> Path:
     root = Path(output_root)
     path = root / "geometry_qc.json"

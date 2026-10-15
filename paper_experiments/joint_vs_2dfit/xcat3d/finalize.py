@@ -7,6 +7,7 @@ import re
 from pathlib import Path
 
 import numpy as np
+from ..simulation.write_observations_npz import validate_observations_file
 
 
 REQUIRED_ARTIFACTS = (
@@ -33,7 +34,7 @@ def _require_sha(value: object, label: str) -> str:
     return value
 
 
-def _source_hashes(source: dict) -> tuple[dict[str, str], str, str]:
+def _source_hashes(source: dict) -> tuple[dict[str, str], str, str, dict[str, str], dict[str, str]]:
     xcat = source.get("xcat", {})
     raw = xcat.get("raw_volumes", {})
     if set(raw) != set(REQUIRED_RAW_XCAT_VOLUMES):
@@ -41,7 +42,17 @@ def _source_hashes(source: dict) -> tuple[dict[str, str], str, str]:
     raw_hashes = {name: _require_sha(raw[name].get("sha256"), f"raw XCAT {name}") for name in REQUIRED_RAW_XCAT_VOLUMES}
     phantom = _require_sha(xcat.get("phantom_spec", {}).get("sha256"), "source cardiac phantom spec")
     geometry = _require_sha(xcat.get("geometry_spec", {}).get("sha256"), "source cardiac geometry spec")
-    return raw_hashes, phantom, geometry
+    parameters = xcat.get("parameter_files", {})
+    if set(parameters) != {"t1_phase1_2.par", "t2_phase1_2.par", "pd_phase1_2.par", "lv_mask_phase1_2.par"}:
+        raise ValueError("source parameter files are incomplete")
+    parameter_hashes = {name: _require_sha(record.get("sha256"), f"source parameter {name}") for name, record in parameters.items()}
+    static = xcat.get("static_inputs", [])
+    if not isinstance(static, list) or not static:
+        raise ValueError("source static XCAT input provenance is incomplete")
+    static_hashes = {str(item.get("role")): _require_sha(item.get("sha256"), "source static XCAT input") for item in static}
+    if len(static_hashes) != len(static) or any(not role or role == "None" for role in static_hashes):
+        raise ValueError("source static XCAT input roles must be unique and non-empty")
+    return raw_hashes, phantom, geometry, parameter_hashes, static_hashes
 
 
 def finalize_phase1_2(output_root: str | Path) -> Path:
@@ -52,10 +63,21 @@ def finalize_phase1_2(output_root: str | Path) -> Path:
     source, qc, alignment = (json.loads((root / name).read_text()) for name in ("synthetic_source_manifest.json", "geometry_qc.json", "geometry_alignment_qc.json"))
     if source.get("scientific_gt_geometry_gate") is not True or qc.get("scientific_gt_geometry_gate") is not True:
         raise ValueError("Phase-1.2 GT geometry gate is not passing")
+    if source.get("lv_boundary_margin_qc", {}).get("gate") is not True:
+        raise ValueError("Phase-1.2 LV boundary-margin gate is not passing")
     if source.get("external_reference_provenance", {}).get("reference_commit") != "97558db05f4e344865f472de974b9f4d042a1a15":
         raise ValueError("Phase-1.2 source is not anchored to the required Hanson commit")
     if alignment.get("lv_alignment_gate") is not True:
         raise ValueError("Phase-1.2 LV alignment gate is not passing")
+    if alignment.get("pca_stability_gate") is not True or not alignment.get("template_subject"):
+        raise ValueError("Phase-1.2 PCA/template geometry gate is not passing")
+    if source.get("template_geometry", {}).get("template_subject") != alignment.get("template_subject") or set(source.get("template_geometry", {}).get("manifest_sha256", {})) != {"sax", "2ch", "4ch"}:
+        raise ValueError("final source manifest does not prove one coherent template subject")
+    coverage = json.loads((root / "observation_coverage_qc.json").read_text())
+    if coverage.get("observation_coverage_gate") is not True or any(item.get("gate") is not True for item in coverage.get("stacks", {}).values()):
+        raise ValueError("Phase-1.2 observation footprint coverage gate is not passing")
+    if source.get("code_provenance", {}).get("tracked_worktree_clean") is not True:
+        raise ValueError("formal finalization requires a clean tracked Code_10w worktree")
     maps, signal = np.load(root / "gt_maps.npz"), np.load(root / "clean_signal_field.npz")
     myo, support = maps["myocardium_mask"], maps["signal_support_mask"]
     if not np.array_equal(maps["spacing_mm"], np.ones(3)) or str(maps["axis_order"]) != "xyz" or str(maps["world_convention"]) != "LPS":
@@ -69,12 +91,26 @@ def finalize_phase1_2(output_root: str | Path) -> Path:
     integration = source.get("spatial_integration", {})
     if integration.get("inplane_samples_row_col") != [6, 6] or integration.get("thickness_samples") != 9:
         raise ValueError("formal renderer is not pinned to 6x6x9")
+    actual_centers, source_centers = [], []
+    sax_normal = None
     for stack in ("sax", "2ch", "4ch"):
-        obs = np.load(root / stack / "observations.npz")
-        required_obs = {"images", "masks", "group_idx", "weight_idx", "affine_lps_rc", "pixel_spacing_rc_mm", "slice_thickness_mm", "timing9_ms", "acquisition_time_ms", "tr_ms", "vps"}
-        if not required_obs <= set(obs.files) or obs["images"].shape[0] % 10 or not np.all(obs["tr_ms"] == 2.61) or not np.all(obs["vps"] == 87) or not np.all(np.isfinite(obs["images"])) or not np.all(np.isfinite(obs["affine_lps_rc"])) or not np.all(obs["masks"]):
-            raise ValueError(f"invalid {stack} observation contract")
-    raw_hashes, phantom_spec_sha256, geometry_spec_sha256 = _source_hashes(source)
+        validate_observations_file(root / stack / "observations.npz")
+        obs = np.load(root / stack / "observations.npz", allow_pickle=False)
+        for group in range(int(obs["group_idx"].max()) + 1):
+            index = np.flatnonzero(obs["group_idx"] == group)[0]
+            affine = np.asarray(obs["affine_lps_rc"][index], float)
+            rows, cols = obs["images"].shape[1:]
+            actual_centers.append(affine[:3, 3] + affine[:3, 0] * (rows - 1) / 2 + affine[:3, 1] * (cols - 1) / 2)
+            source_centers.append(np.asarray(alignment["source_group_centers_mm"][stack][group], float))
+            if stack == "sax" and group == 0:
+                sax_normal = np.cross(affine[:3, 0], affine[:3, 1]); sax_normal /= np.linalg.norm(sax_normal)
+    long_axis = np.asarray(alignment["lv_long_axis"], float); long_axis /= np.linalg.norm(long_axis)
+    if sax_normal is None or abs(float(np.dot(sax_normal, long_axis))) < 0.999:
+        raise ValueError("actual SAX observation affine does not align with LV long axis")
+    max_error = max((abs(np.linalg.norm(source_centers[i] - source_centers[j]) - np.linalg.norm(actual_centers[i] - actual_centers[j])) for i in range(len(actual_centers)) for j in range(i + 1, len(actual_centers))), default=0.0)
+    if max_error > 1e-6:
+        raise ValueError("actual observation affines do not preserve pairwise stack-center distances")
+    raw_hashes, phantom_spec_sha256, geometry_spec_sha256, parameter_hashes, static_hashes = _source_hashes(source)
     final = root / "phase1_2_final_manifest.json"
     if final.exists():
         raise FileExistsError(f"refusing to overwrite {final}")
@@ -84,6 +120,8 @@ def finalize_phase1_2(output_root: str | Path) -> Path:
         "raw_xcat_volume_sha256": raw_hashes,
         "cardiac_roi_phantom_spec_sha256": phantom_spec_sha256,
         "cardiac_roi_geometry_spec_sha256": geometry_spec_sha256,
+        "parameter_file_sha256": parameter_hashes,
+        "static_xcat_input_sha256": static_hashes,
     }, indent=2, sort_keys=True) + "\n")
     return final
 
@@ -104,8 +142,8 @@ def assert_final_manifest_ready(root: str | Path) -> dict:
         if not (root / item).is_file() or _sha256(root / item) != digest:
             raise ValueError(f"Phase-1.2 final artifact SHA mismatch: {item}")
     source = json.loads((root / "synthetic_source_manifest.json").read_text())
-    source_raw, source_phantom, source_geometry = _source_hashes(source)
-    if raw_hashes != source_raw or manifest.get("cardiac_roi_phantom_spec_sha256") != source_phantom or manifest.get("cardiac_roi_geometry_spec_sha256") != source_geometry:
+    source_raw, source_phantom, source_geometry, source_parameters, source_static = _source_hashes(source)
+    if raw_hashes != source_raw or manifest.get("cardiac_roi_phantom_spec_sha256") != source_phantom or manifest.get("cardiac_roi_geometry_spec_sha256") != source_geometry or manifest.get("parameter_file_sha256") != source_parameters or manifest.get("static_xcat_input_sha256") != source_static:
         raise ValueError("final provenance disagrees with hashed synthetic source manifest")
     for name in REQUIRED_RAW_XCAT_VOLUMES:
         _require_sha(raw_hashes[name], f"raw XCAT {name}")
