@@ -44,7 +44,7 @@ def _format(value: Any) -> str:
 
 
 def _placeholder(value: object) -> bool:
-    return not isinstance(value, (int, float)) and (not isinstance(value, str) or not value.strip() or any(token in value.upper() for token in ("REQUIRED", "TODO", "UNKNOWN", "SET_")))
+    return not isinstance(value, (int, float)) and (not isinstance(value, str) or not value.strip() or any(token in value.upper() for token in ("REQUIRED", "TODO", "UNKNOWN", "UNRESOLVED", "SET_")))
 
 
 def validate_phantom_spec(phantom: dict[str, Any]) -> None:

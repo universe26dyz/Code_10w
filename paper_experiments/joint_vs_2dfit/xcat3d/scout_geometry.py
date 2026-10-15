@@ -60,15 +60,16 @@ def inspect_xcat_scout_context(output_root: str | Path, *, search_roots: tuple[s
         # physical metadata in mm without importing it into the XCAT frame.
         lower = np.asarray(info.origin) * 1000.0; spacing = np.asarray(info.spacing) * 1000.0
         upper = lower + (np.asarray(info.shape) - 1) * spacing
-        mrxcat: dict[str, Any] = {"status": "VERIFIED_LOCAL", "path": str(path), "sha256": _sha256(path), "shape": list(info.shape), "spacing_mm": spacing.tolist(), "origin_mm": lower.tolist(), "direction": list(info.direction), "lower_mm": lower.tolist(), "upper_mm": upper.tolist(), "fov_mm": (upper - lower).tolist(), "git": _git(path.parent)}
+        mrxcat: dict[str, Any] = {"status": "VERIFIED_LOCAL", "path": str(path), "sha256": _sha256(path), "shape": list(info.shape), "spacing_mm": spacing.tolist(), "origin_mm": lower.tolist(), "direction": list(info.direction), "lower_mm": lower.tolist(), "upper_mm": upper.tolist(), "matrix_coverage_mm": (np.asarray(info.shape) * spacing).tolist(), "voxel_center_extent_mm": (upper - lower).tolist(), "git": _git(path.parent)}
     elif len(vti_matches) == 0:
         mrxcat = {"status": "UNAVAILABLE_LOCALLY", "historical_reported_fov_mm": [460.0, 460.0, 144.0]}
     else:
         mrxcat = {"status": "AMBIGUOUS_MULTIPLE_LOCAL_MATCHES", "paths": [str(path) for path in vti_matches]}
-    names = set(STATIC_FIELDS) | {"README", "VERSION", "version.txt"}
+    template = json.loads(GEOMETRY_TEMPLATE.read_text())
+    static_basenames = {str(template["xcat_geometry_block"][field]) for field in STATIC_FIELDS}
+    names = static_basenames | {"README", "VERSION", "version.txt"}
     candidates = [path for base in roots if base.is_dir() for path in base.rglob("*") if path.is_file() and path.name in names]
     static = {}
-    template = json.loads(GEOMETRY_TEMPLATE.read_text())
     for field, role in STATIC_FIELDS.items():
         basename = template["xcat_geometry_block"][field]
         matches = sorted({path.resolve() for path in candidates if path.name == basename})
@@ -86,7 +87,7 @@ def inspect_xcat_scout_context(output_root: str | Path, *, search_roots: tuple[s
     repo = Path(__file__).resolve().parents[3]
     contract = derive_raw_contract({**template, "xcat_version_build_compatibility": "SCOUT_UNRESOLVED", "xcat_geometry_block": {**template["xcat_geometry_block"], **SCOUT_BLOCK}})
     unresolved = ["exact licensed XCAT version/build"] + ([] if isinstance(prepared_status, dict) else ["prepared_root"])
-    report = {"code_10w": _git(repo), "tracked_worktree_clean": not bool(subprocess.check_output(["git", "-C", str(repo), "status", "--porcelain", "--untracked-files=no"], text=True).strip()), "mrxcat": mrxcat, "xcat_version_build": {"status": "UNRESOLVED_EXTERNAL_INFO", "metadata_candidates": version_evidence}, "static_inputs": static, "prepared_root": prepared_status, "geometry_template": {"path": str(GEOMETRY_TEMPLATE), "sha256": _sha256(GEOMETRY_TEMPLATE)}, "scout_candidate": {**SCOUT_BLOCK, "raw_shape_zyx": list(contract["raw_shape"]), "nominal_fov_mm_xyz": [480.0, 480.0, 401.0]}, "unresolved_items": unresolved}
+    report = {"code_10w": _git(repo), "tracked_worktree_clean": not bool(subprocess.check_output(["git", "-C", str(repo), "status", "--porcelain", "--untracked-files=no"], text=True).strip()), "mrxcat": mrxcat, "xcat_version_build": {"status": "UNRESOLVED_EXTERNAL_INFO", "metadata_candidates": version_evidence}, "static_inputs": static, "prepared_root": prepared_status, "geometry_template": {"path": str(GEOMETRY_TEMPLATE), "sha256": _sha256(GEOMETRY_TEMPLATE)}, "scout_candidate": {**SCOUT_BLOCK, "raw_shape_zyx": list(contract["raw_shape"]), "matrix_coverage_mm_xyz": [480.0, 480.0, 401.0], "voxel_center_extent_mm_xyz": [479.0, 479.0, 400.0]}, "unresolved_items": unresolved}
     root.mkdir(parents=True)
     (root / "xcat_scout_context.json").write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
     (root / "XCAT_SCOUT_CONTEXT.md").write_text("# XCAT scout context\n\nLocal-only discovery; no XCAT executable was run.\n\n```json\n" + json.dumps(report, indent=2, sort_keys=True) + "\n```\n")
@@ -108,7 +109,7 @@ def make_xcat_scout_geometry(output_root: str | Path, *, xcat_version_build: str
     path.write_text(json.dumps(geometry, indent=2, sort_keys=True) + "\n")
     if ready:
         validate_geometry_spec(geometry, formal=True)
-    report = {"scout_only": True, "ready_to_freeze": ready, "geometry_path": str(path), "geometry_sha256": _sha256(path), "source_template": str(GEOMETRY_TEMPLATE), "source_template_sha256": _sha256(GEOMETRY_TEMPLATE), "changed_fields": {"xcat_version_build_compatibility": geometry["xcat_version_build_compatibility"], **SCOUT_BLOCK}, "raw_shape_zyx": list(contract["raw_shape"]), "nominal_fov_mm_xyz": [480.0, 480.0, 401.0], "statement": "scout-only; not formal Phase-1.2 geometry"}
+    report = {"scout_only": True, "ready_to_freeze": ready, "geometry_path": str(path), "geometry_sha256": _sha256(path), "source_template": str(GEOMETRY_TEMPLATE), "source_template_sha256": _sha256(GEOMETRY_TEMPLATE), "changed_fields": {"xcat_version_build_compatibility": geometry["xcat_version_build_compatibility"], **SCOUT_BLOCK}, "raw_shape_zyx": list(contract["raw_shape"]), "matrix_coverage_mm_xyz": [480.0, 480.0, 401.0], "voxel_center_extent_mm_xyz": [479.0, 479.0, 400.0], "statement": "scout-only; not formal Phase-1.2 geometry"}
     (root / "scout_geometry_design.json").write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
     (root / "SCOUT_RUN_INSTRUCTIONS.md").write_text("# External scout boundary\n\nRUN ONLY `lv_mask_phase1_2.par` in licensed XCAT. Do not run T1/T2/PD. Return exact XCAT version/build, scout geometry path, LV-mask .par path, raw LV-mask path/SHA256, log, and static-input paths/SHA256. Scout data is never formal Phase-1.2 data.\n")
     return report
@@ -148,6 +149,16 @@ def analyze_xcat_scout(geometry_path: str | Path, lv_mask_raw: str | Path, *, dt
 
 def propose_final_xcat_geometry(scout_qc_path: str | Path, scout_geometry_path: str | Path, *, safety_margin_mm: float, output_root: str | Path) -> dict:
     scout = json.loads(Path(scout_qc_path).read_text()); geometry = json.loads(Path(scout_geometry_path).read_text())
+    if scout.get("scout_only") is not True:
+        raise ValueError("scout QC provenance is invalid: scout_only must be true")
+    if scout.get("geometry_sha256") != _sha256(Path(scout_geometry_path)):
+        raise ValueError("scout QC provenance error: geometry SHA256 does not match supplied scout geometry")
+    validate_geometry_spec(geometry, formal=True)
+    if {key: geometry["xcat_geometry_block"].get(key) for key in SCOUT_BLOCK} != SCOUT_BLOCK or geometry.get("formal_target_voxel_size_mm") != [1.0, 1.0, 1.0]:
+        raise ValueError("scout QC provenance error: supplied geometry is not the approved scout-v1 contract")
+    manifests = scout.get("template_manifest_sha256", {})
+    if not isinstance(scout.get("template_subject"), str) or set(manifests) != {"sax", "2ch", "4ch"} or not all(isinstance(value, str) and len(value) == 64 for value in manifests.values()):
+        raise ValueError("scout QC template provenance is incomplete or inconsistent")
     contract = derive_raw_contract(geometry); lv_box = np.asarray(scout["lv_mask"]["canonical_bbox_xyz"], float)
     lv_world = np.stack((np.asarray(contract["origin_mm_xyz"]) + lv_box[0], np.asarray(contract["origin_mm_xyz"]) + lv_box[1]))
     required = np.stack((np.minimum(lv_world[0], scout["acquisition_footprint_world_min_mm"]), np.maximum(lv_world[1], scout["acquisition_footprint_world_max_mm"])))
