@@ -16,7 +16,7 @@ def quantitative_tuple_audit(t1, t2, pd, lv_mask, phantom_spec: str | Path, tole
         unmatched += 0 if matches or background else int(count)
         entries.append({"tuple": value.tolist(), "voxel_count": int(count), "matching_declared_structures": matches, "background": bool(background)})
     lv_tuple = (1410.0, 50.0, float(spec["structures"]["lv_myocardium"]["pd"]))
-    lv_ok = np.allclose(np.stack((t1[lv_mask], t2[lv_mask], pd[lv_mask]), -1), lv_tuple, atol=tolerance, rtol=0).all()
+    lv_ok = bool(np.allclose(np.stack((t1[lv_mask], t2[lv_mask], pd[lv_mask]), -1), lv_tuple, atol=tolerance, rtol=0))
     if unmatched or not lv_ok: raise ValueError("quantitative tuple audit failed")
     return {"quantitative_tuple_gate": True, "unmatched_voxels": unmatched, "tuples": entries, "lv_mask_frozen_tuple_gate": bool(lv_ok)}
 
