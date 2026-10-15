@@ -109,6 +109,18 @@ def _footprint_bounds_extrema(shape, origin, spacing, group, inplane_samples, th
     return minimum, maximum, margin
 
 
+def midpoint_footprint_world_extrema(group: dict, inplane_samples: int = 6, thickness_samples: int = 9) -> dict:
+    """World extrema of the exact renderer midpoint support, without sampling."""
+    rows, cols = group["image_shape_rows_cols"]
+    affine = np.asarray(group["affine_lps_rc"], float)
+    ro = ((np.arange(inplane_samples) + 0.5) / inplane_samples - 0.5)
+    co = ((np.arange(inplane_samples) + 0.5) / inplane_samples - 0.5)
+    so = ((np.arange(thickness_samples) + 0.5) / thickness_samples - 0.5)
+    values = ((ro[0], rows - 1 + ro[-1]), (co[0], cols - 1 + co[-1]), (so[0], so[-1]))
+    points = np.asarray([affine[:3, 3] + row * affine[:3, 0] + col * affine[:3, 1] + slc * affine[:3, 2] for row in values[0] for col in values[1] for slc in values[2]])
+    return {"group_idx": int(group["group_idx"]), "world_min_mm": points.min(axis=0).tolist(), "world_max_mm": points.max(axis=0).tolist()}
+
+
 def _assert_footprint_in_bounds(shape, origin, spacing, group, inplane_samples, thickness_samples) -> float:
     minimum, maximum, margin = _footprint_bounds_extrema(shape, origin, spacing, group, inplane_samples, thickness_samples)
     upper = np.asarray(shape[:3]) - 1

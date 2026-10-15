@@ -11,6 +11,7 @@ import numpy as np
 from ..xcat3d.build_quantitative_gt import build_quantitative_gt, lv_boundary_margin_qc, write_quantitative_gt
 from ..xcat3d.prepare_xcat_parameters import freeze_xcat_parameter_hand_off, prepare_xcat_parameter_hand_off, validate_parameter_contract
 from ..xcat3d.read_xcat_volume import load_xcat_inputs
+from ..xcat3d.scout_geometry import analyze_xcat_scout, inspect_xcat_scout_context, make_xcat_scout_geometry, propose_final_xcat_geometry
 from ..xcat3d.audits import quantitative_tuple_audit, structure_id_audit_status
 from ..xcat3d.validate_quantitative_gt import assert_formal_code_provenance, assert_phase1_2_manifest_ready, lv_pca_qc, validate_quantitative_gt, write_validation
 from .build_geometry import apply_global_rigid_alignment, select_modal_geometry_templates
@@ -155,15 +156,32 @@ def render_observations(output_root: str | Path, prepared_root: str | Path) -> d
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--stage", required=True, choices=("prepare-xcat", "prepare-xcat-template", "freeze-xcat-handoff", "validate-xcat-inputs", "build-gt", "simulate-signal-field", "render-observations", "validate-final"))
+    parser.add_argument("--stage", required=True, choices=("inspect-xcat-scout-context", "make-xcat-scout-geometry", "analyze-xcat-scout", "propose-final-xcat-geometry", "prepare-xcat", "prepare-xcat-template", "freeze-xcat-handoff", "validate-xcat-inputs", "build-gt", "simulate-signal-field", "render-observations", "validate-final"))
     parser.add_argument("--output-root", default=str(DEFAULT_OUTPUT_ROOT))
     parser.add_argument("--xcat-input-manifest")
     parser.add_argument("--prepared-root")
     parser.add_argument("--approved-decoder")
     parser.add_argument("--geometry-spec")
     parser.add_argument("--phantom-spec")
+    parser.add_argument("--xcat-version-build")
+    parser.add_argument("--lv-mask-raw")
+    parser.add_argument("--dtype")
+    parser.add_argument("--scout-qc")
+    parser.add_argument("--safety-margin-mm", type=float, default=20.0)
     args = parser.parse_args()
-    if args.stage == "prepare-xcat-template":
+    if args.stage == "inspect-xcat-scout-context":
+        result = inspect_xcat_scout_context(args.output_root)
+    elif args.stage == "make-xcat-scout-geometry":
+        result = make_xcat_scout_geometry(args.output_root, xcat_version_build=args.xcat_version_build)
+    elif args.stage == "analyze-xcat-scout":
+        if not args.geometry_spec or not args.lv_mask_raw or not args.dtype or not args.prepared_root:
+            parser.error("--geometry-spec, --lv-mask-raw, --dtype, and --prepared-root are required")
+        result = analyze_xcat_scout(args.geometry_spec, args.lv_mask_raw, dtype=args.dtype, prepared_root=args.prepared_root, output_root=args.output_root)
+    elif args.stage == "propose-final-xcat-geometry":
+        if not args.geometry_spec or not args.scout_qc:
+            parser.error("--geometry-spec and --scout-qc are required")
+        result = propose_final_xcat_geometry(args.scout_qc, args.geometry_spec, safety_margin_mm=args.safety_margin_mm, output_root=args.output_root)
+    elif args.stage == "prepare-xcat-template":
         result = prepare_xcat_parameter_hand_off(args.output_root, phantom_spec=args.phantom_spec)
     elif args.stage in ("prepare-xcat", "freeze-xcat-handoff"):
         if not args.geometry_spec:
