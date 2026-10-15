@@ -1,0 +1,32 @@
+{
+  "schema": "code10w_phase1_2_cardiac_roi_phantom/v1",
+  "purpose": "Code_10w cardiac-ROI phantom content; not a reproduction of Hanson phantom content.",
+  "frozen_lv": {
+    "t1_ms": 1410.0,
+    "t2_ms": 50.0,
+    "b1": 1.0
+  },
+  "support_policy": "native_xcat_pd_positive",
+  "m0_policy": "controlled_binary_signal_support_m0_1",
+  "structures": {
+    "lv_myocardium": {"xcat_parameter": "myoLV_act", "meaning": "LV myocardium", "t1_ms": 1410.0, "t2_ms": 50.0, "pd": 1346.0, "signal_support": true, "lv_mask": 1, "provenance": "Code_10w frozen primary myocardial GT; PD from Hanson proton_density.par"},
+    "rv_myocardium": {"xcat_parameter": "myoRV_act", "meaning": "RV myocardium", "t1_ms": 1032.0, "t2_ms": 49.0, "pd": 1346.0, "signal_support": true, "lv_mask": 0, "provenance": "Hanson XCAT/t1.par, t2.par, proton_density.par"},
+    "la_myocardium": {"xcat_parameter": "myoLA_act", "meaning": "LA myocardium", "t1_ms": 1032.0, "t2_ms": 49.0, "pd": 1346.0, "signal_support": true, "lv_mask": 0, "provenance": "Hanson XCAT/t1.par, t2.par, proton_density.par"},
+    "ra_myocardium": {"xcat_parameter": "myoRA_act", "meaning": "RA myocardium", "t1_ms": 1032.0, "t2_ms": 49.0, "pd": 1346.0, "signal_support": true, "lv_mask": 0, "provenance": "Hanson XCAT/t1.par, t2.par, proton_density.par"},
+    "lv_blood": {"xcat_parameter": "bldplLV_act", "meaning": "LV blood pool", "t1_ms": 1200.0, "t2_ms": 50.0, "pd": 1397.0, "signal_support": true, "lv_mask": 0, "provenance": "Hanson XCAT/t1.par, t2.par, proton_density.par"},
+    "rv_blood": {"xcat_parameter": "bldplRV_act", "meaning": "RV blood pool", "t1_ms": 1200.0, "t2_ms": 50.0, "pd": 1397.0, "signal_support": true, "lv_mask": 0, "provenance": "Hanson XCAT/t1.par, t2.par, proton_density.par"},
+    "la_blood": {"xcat_parameter": "bldplLA_act", "meaning": "LA blood pool", "t1_ms": 1200.0, "t2_ms": 50.0, "pd": 1397.0, "signal_support": true, "lv_mask": 0, "provenance": "Hanson XCAT/t1.par, t2.par, proton_density.par"},
+    "ra_blood": {"xcat_parameter": "bldplRA_act", "meaning": "RA blood pool", "t1_ms": 1200.0, "t2_ms": 50.0, "pd": 1397.0, "signal_support": true, "lv_mask": 0, "provenance": "Hanson XCAT/t1.par, t2.par, proton_density.par"},
+    "coronary_arteries": {"xcat_parameter": "coronary_art_activity", "meaning": "coronary arterial blood", "t1_ms": 1200.0, "t2_ms": 50.0, "pd": 1397.0, "signal_support": true, "lv_mask": 0, "provenance": "Hanson XCAT/t1.par, t2.par, proton_density.par"},
+    "coronary_veins": {"xcat_parameter": "coronary_vein_activity", "meaning": "coronary venous blood", "t1_ms": 1200.0, "t2_ms": 50.0, "pd": 1397.0, "signal_support": true, "lv_mask": 0, "provenance": "Hanson XCAT/t1.par, t2.par, proton_density.par"},
+    "pericardium": {"xcat_parameter": "pericardium_activity", "meaning": "pericardium", "t1_ms": 1032.0, "t2_ms": 49.0, "pd": 1346.0, "signal_support": true, "lv_mask": 0, "provenance": "Hanson XCAT/t1.par, t2.par, proton_density.par"},
+    "chest_wall_muscle": {"xcat_parameter": "muscle_activity", "meaning": "skeletal/chest-wall muscle", "t1_ms": 825.0, "t2_ms": 30.0, "pd": 3195.0, "signal_support": true, "lv_mask": 0, "provenance": "Hanson XCAT/t1.par, t2.par, proton_density.par"},
+    "body_soft_tissue": {"xcat_parameter": "body_activity", "meaning": "fat/body soft tissue", "t1_ms": 376.0, "t2_ms": 70.0, "pd": 1336.0, "signal_support": true, "lv_mask": 0, "provenance": "Hanson XCAT/t1.par, t2.par, proton_density.par"},
+    "liver": {"xcat_parameter": "liver_activity", "meaning": "inferior cardiac-ROI liver", "t1_ms": 506.0, "t2_ms": 36.0, "pd": 2023.0, "signal_support": true, "lv_mask": 0, "provenance": "Hanson XCAT/t1.par, t2.par, proton_density.par"},
+    "right_lung": {"xcat_parameter": "r_lung_activity", "meaning": "right lung", "t1_ms": 0.0, "t2_ms": 0.0, "pd": 0.0, "signal_support": false, "lv_mask": 0, "provenance": "Hanson XCAT/t1.par, t2.par, proton_density.par"},
+    "left_lung": {"xcat_parameter": "l_lung_activity", "meaning": "left lung", "t1_ms": 0.0, "t2_ms": 0.0, "pd": 0.0, "signal_support": false, "lv_mask": 0, "provenance": "Hanson XCAT/t1.par, t2.par, proton_density.par"},
+    "ribs": {"xcat_parameter": "rib_activity", "meaning": "ribs", "t1_ms": 753.0, "t2_ms": 96.0, "pd": 1041.0, "signal_support": true, "lv_mask": 0, "provenance": "Hanson XCAT/t1.par, t2.par, proton_density.par"},
+    "cortical_bone": {"xcat_parameter": "cortical_bone_activity", "meaning": "cortical bone", "t1_ms": 753.0, "t2_ms": 96.0, "pd": 1041.0, "signal_support": true, "lv_mask": 0, "provenance": "Hanson XCAT/t1.par, t2.par, proton_density.par"},
+    "spine": {"xcat_parameter": "spine_activity", "meaning": "spine", "t1_ms": 753.0, "t2_ms": 96.0, "pd": 1041.0, "signal_support": true, "lv_mask": 0, "provenance": "Hanson XCAT/t1.par, t2.par, proton_density.par"}
+  }
+}

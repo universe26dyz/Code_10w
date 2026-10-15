@@ -15,10 +15,20 @@ def local_acceptance_report(repository_root: str | Path) -> dict:
     archived = all(path.is_file() for path in required_archive)
     tombstone = root / "paper_experiments/joint_vs_2dfit/simulation/generate_clean_dataset.py"
     tombstone_ok = tombstone.is_file() and "retired_phase1_1" in tombstone.read_text()
-    passed = wiring["passed"] and archived and tombstone_ok
+    xcat_root = root / "paper_experiments/joint_vs_2dfit/xcat3d"
+    try:
+        cardiac_spec = json.loads((xcat_root / "cardiac_roi_phantom_spec.json").read_text())
+        geometry_spec = json.loads((xcat_root / "cardiac_roi_geometry.template.json").read_text())
+        cardiac_spec_ok = len(cardiac_spec.get("structures", {})) >= 12 and cardiac_spec.get("frozen_lv") == {"t1_ms": 1410.0, "t2_ms": 50.0, "b1": 1.0} and bool(geometry_spec.get("xcat_geometry_block"))
+    except (OSError, ValueError, TypeError):
+        cardiac_spec_ok = False
+    reference_mechanism_ok = (xcat_root / "prepare_xcat_parameters.py").is_file()
+    passed = wiring["passed"] and archived and tombstone_ok and cardiac_spec_ok and reference_mechanism_ok
     return {
         "LOCAL_CODE_ACCEPTANCE": "PASS" if passed else "FAIL",
-        "REFERENCE_SOURCE_ANCHORING": "PASS" if (root / "paper_experiments/joint_vs_2dfit/xcat3d/prepare_xcat_parameters.py").is_file() else "FAIL",
+        "REFERENCE_SOURCE_ANCHORING": "PASS" if reference_mechanism_ok else "FAIL",
+        "REFERENCE_GENERATION_MECHANISM": "PASS" if reference_mechanism_ok else "FAIL",
+        "CARDIAC_PHANTOM_SPECIFICATION": "PASS" if cardiac_spec_ok else "FAIL",
         "EXTERNAL_XCAT_RUNTIME_GATE": "UNVERIFIED",
         "XCAT_RAW_VOLUME_GATE": "UNVERIFIED",
         "EXTERNAL_XCAT_INPUT_GATE": "UNVERIFIED",

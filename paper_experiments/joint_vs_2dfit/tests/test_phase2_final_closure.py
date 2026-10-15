@@ -17,6 +17,7 @@ from paper_experiments.joint_vs_2dfit.phase2_clean import baseline
 from paper_experiments.joint_vs_2dfit.phase2_clean import preflight_actual
 from paper_experiments.joint_vs_2dfit.phase2_clean.finalize_phase2_server_readiness import finalize_server_readiness
 from paper_experiments.joint_vs_2dfit.phase2_clean.historical_nesvor_runtime import verify_runtime
+from paper_experiments.joint_vs_2dfit.xcat3d.finalize import REQUIRED_ARTIFACTS, REQUIRED_RAW_XCAT_VOLUMES
 
 
 REPO = Path(__file__).resolve().parents[3]
@@ -36,7 +37,19 @@ def _write_phase1_2_manifest(root: Path, geometry_gate: bool = True) -> None:
         "source_family": "single_source_xcat_3d_quantitative",
         "scientific_gt_geometry_gate": geometry_gate,
     }))
-    (root / "phase1_2_final_manifest.json").write_text(json.dumps({"phase": "1.2", "formal_synthetic_ready": geometry_gate, "artifact_sha256": {}}))
+    for relative in REQUIRED_ARTIFACTS:
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if not path.exists():
+            path.write_bytes(relative.encode())
+    hashes = {relative: sha256(root / relative) for relative in REQUIRED_ARTIFACTS}
+    (root / "phase1_2_final_manifest.json").write_text(json.dumps({
+        "phase": "1.2", "formal_synthetic_ready": geometry_gate,
+        "artifact_sha256": hashes,
+        "raw_xcat_volume_sha256": {key: "a" * 64 for key in REQUIRED_RAW_XCAT_VOLUMES},
+        "cardiac_roi_phantom_spec_sha256": "b" * 64,
+        "cardiac_roi_geometry_spec_sha256": "c" * 64,
+    }))
 
 
 def _approved_decoder_audit(path: Path, digest: str, *, declared_path: str = "/data/dengyz/dataset/Code_10w_v1/Code_10w_runs/CYJ_decoder_comparison_20260924_clean_v1/inputs/mlp/signal_simulator_approved.pth") -> Path:
