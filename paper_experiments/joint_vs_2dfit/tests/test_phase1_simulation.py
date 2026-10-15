@@ -8,6 +8,7 @@ import pytest
 
 from paper_experiments.joint_vs_2dfit.simulation.render_observations import (
     integrate_signal_volume,
+    render_groups,
     lps_to_ras_affine,
     ras_to_lps_affine,
 )
@@ -57,6 +58,14 @@ def test_signal_space_thickness_integration_differs_from_centre_plane() -> None:
     )
     assert out.shape == (1, 1, 1)
     assert out[0, 0, 0] == pytest.approx(1.0)
+
+
+def test_strict_render_rejects_out_of_volume_quadrature_nodes() -> None:
+    """Formal rendering must not turn an out-of-bounds footprint into zero signal."""
+    group = {"image_shape_rows_cols": [1, 1], "affine_lps_rc": np.eye(4).tolist()}
+    group["affine_lps_rc"][0][3] = 2.0
+    with pytest.raises(ValueError, match="out-of-volume quadrature"):
+        render_groups(np.ones((2, 2, 2, 10), np.float32), np.zeros(3), np.ones(3), [group], inplane_samples=6, thickness_samples=9, require_in_bounds=True)
 
 
 def test_lps_ras_round_trip() -> None:

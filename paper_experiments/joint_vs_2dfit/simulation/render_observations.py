@@ -86,9 +86,26 @@ def foreground_mask(images: np.ndarray) -> np.ndarray:
     return mask.astype(bool)
 
 
-def render_groups(signal_volume: np.ndarray, volume_origin_mm: np.ndarray, volume_spacing_mm: np.ndarray, groups: list[dict], inplane_samples: int = 2, thickness_samples: int = 3) -> tuple[np.ndarray, np.ndarray]:
+def _assert_footprint_in_bounds(shape, origin, spacing, group, inplane_samples, thickness_samples) -> None:
+    rows, cols = group["image_shape_rows_cols"]
+    affine = np.asarray(group["affine_lps_rc"], float)
+    ro = ((np.arange(inplane_samples) + 0.5) / inplane_samples - 0.5)
+    co = ((np.arange(inplane_samples) + 0.5) / inplane_samples - 0.5)
+    so = ((np.arange(thickness_samples) + 0.5) / thickness_samples - 0.5)
+    rr, cc = np.meshgrid(np.arange(rows), np.arange(cols), indexing="ij")
+    base = affine[:3, 3] + rr[..., None] * affine[:3, 0] + cc[..., None] * affine[:3, 1]
+    offsets = np.asarray([[r, c, s] for r in ro for c in co for s in so])
+    points = base.reshape(-1, 3)[None] + offsets[:, None, 0, None] * affine[:3, 0] + offsets[:, None, 1, None] * affine[:3, 1] + offsets[:, None, 2, None] * affine[:3, 2]
+    coords = (points - np.asarray(origin)) / np.asarray(spacing)
+    if np.any(coords < 0) or np.any(coords > (np.asarray(shape[:3]) - 1)):
+        raise ValueError("out-of-volume quadrature footprint")
+
+
+def render_groups(signal_volume: np.ndarray, volume_origin_mm: np.ndarray, volume_spacing_mm: np.ndarray, groups: list[dict], inplane_samples: int = 2, thickness_samples: int = 3, require_in_bounds: bool = False) -> tuple[np.ndarray, np.ndarray]:
     images, masks = [], []
     for group in groups:
+        if require_in_bounds:
+            _assert_footprint_in_bounds(signal_volume.shape, volume_origin_mm, volume_spacing_mm, group, inplane_samples, thickness_samples)
         rows, cols = group["image_shape_rows_cols"]
         image = integrate_signal_volume(signal_volume, volume_origin_mm, volume_spacing_mm, np.asarray(group["affine_lps_rc"]), rows, cols, inplane_samples, thickness_samples)
         images.append(image)

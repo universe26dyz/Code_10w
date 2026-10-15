@@ -4,9 +4,9 @@ Codex performs only local CPU validation. Hanson is the reference for the quanti
 
 1. Inspect and freeze `xcat3d/cardiac_roi_phantom_spec.json`.
 2. Copy `xcat3d/cardiac_roi_geometry.template.json` to a placeholder-free licensed-XCAT geometry specification. Its matrix, `startslice` and `endslice` must be decided from the actual cardiac ROI.
-3. Locally produce the four shared-geometry parameter files:
+3. Locally freeze the four shared-geometry executable parameter files from the placeholder-free geometry JSON:
 
-   `python -m paper_experiments.joint_vs_2dfit.simulation.generate_phase1_2_xcat3d --stage prepare-xcat --output-root /path/to/handoff_parent`
+   `python -m paper_experiments.joint_vs_2dfit.simulation.generate_phase1_2_xcat3d --stage prepare-xcat --geometry-spec /path/to/cardiac_roi_geometry.json --output-root /path/to/handoff_parent`
 
 4. In the licensed XCAT environment run `t1_phase1_2.par`, `t2_phase1_2.par`, `pd_phase1_2.par`, and `lv_mask_phase1_2.par` with that one frozen geometry. The LV-mask run is `myoLV=1` and every other declared cardiac-ROI structure `=0`.
 5. Record raw float32 paths/SHA256/dtype/shape/axis-order/spacing/origin/convention, XCAT version/build, cardiac and respiratory phase, each parameter-file SHA256, and shared cardiac-phantom/geometry-spec SHA256 in `xcat3d_inputs.json`. Placeholders are rejected.

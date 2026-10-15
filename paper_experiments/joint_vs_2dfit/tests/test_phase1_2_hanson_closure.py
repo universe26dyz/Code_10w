@@ -113,3 +113,14 @@ def test_final_manifest_rejects_one_missing_required_artifact_hash(tmp_path: Pat
     (tmp_path / "phase1_2_final_manifest.json").write_text(json.dumps(payload))
     with pytest.raises(ValueError, match="artifact_sha256"):
         assert_final_manifest_ready(tmp_path)
+
+
+def test_frozen_geometry_drives_placeholder_free_parameter_handoff(tmp_path: Path) -> None:
+    """Formal XCAT files must come from the selected frozen geometry, not the template."""
+    geometry = json.loads((Path(__file__).parents[1] / "xcat3d/cardiac_roi_geometry.template.json").read_text())
+    block = geometry["xcat_geometry_block"]
+    block.update({"array_size": 256, "startslice": 500, "endslice": 780})
+    frozen = tmp_path / "cardiac_roi_geometry.json"; frozen.write_text(json.dumps(geometry))
+    handoff = Path(prepare_xcat_parameter_hand_off(tmp_path, geometry_spec=frozen)["handoff_root"])
+    parameter = (handoff / "parameter_templates/t1_phase1_2.par").read_text()
+    assert "array_size = 256" in parameter and "startslice = 500" in parameter and "REQUIRED_" not in parameter

@@ -2,6 +2,13 @@
   "schema": "code10w_phase1_2_cardiac_roi_geometry_template/v1",
   "formal_target_voxel_size_mm": [1.0, 1.0, 1.0],
   "minimum_lv_boundary_margin_mm": 5.0,
+  "minimum_lv_voxel_count": 64,
+  "pca_lambda1_lambda2_min": 1.1,
+  "xcat_length_unit": "cm",
+  "xcat_mm_per_length_unit": 10.0,
+  "raw_layout_policy": "hanson_4DPhantomMRI_97558db_zyx_slices_rows_cols",
+  "origin_policy": "centered_synthetic_lps",
+  "canonical_coordinate_policy": "xyz_synthetic_lps_mm",
   "xcat_geometry_block": {
     "mode": 0,
     "act_phan_each": 1,

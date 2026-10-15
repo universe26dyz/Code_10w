@@ -23,16 +23,22 @@ def local_acceptance_report(repository_root: str | Path) -> dict:
     except (OSError, ValueError, TypeError):
         cardiac_spec_ok = False
     reference_mechanism_ok = (xcat_root / "prepare_xcat_parameters.py").is_file()
-    passed = wiring["passed"] and archived and tombstone_ok and cardiac_spec_ok and reference_mechanism_ok
+    pre_xcat_ok = reference_mechanism_ok and (root / "paper_experiments/joint_vs_2dfit/simulation/render_observations.py").is_file()
+    passed = wiring["passed"] and archived and tombstone_ok and cardiac_spec_ok and pre_xcat_ok
     return {
         "LOCAL_CODE_ACCEPTANCE": "PASS" if passed else "FAIL",
         "REFERENCE_SOURCE_ANCHORING": "PASS" if reference_mechanism_ok else "FAIL",
         "REFERENCE_GENERATION_MECHANISM": "PASS" if reference_mechanism_ok else "FAIL",
         "CARDIAC_PHANTOM_SPECIFICATION": "PASS" if cardiac_spec_ok else "FAIL",
+        "PRE_XCAT_SCIENTIFIC_CLOSURE": "PASS" if pre_xcat_ok else "FAIL",
         "EXTERNAL_XCAT_RUNTIME_GATE": "UNVERIFIED",
+        "FROZEN_XCAT_GEOMETRY_GATE": "UNVERIFIED",
         "XCAT_RAW_VOLUME_GATE": "UNVERIFIED",
+        "ROI_STRUCTURE_COVERAGE_GATE": "UNVERIFIED",
+        "QUANTITATIVE_TUPLE_GATE": "UNVERIFIED",
         "EXTERNAL_XCAT_INPUT_GATE": "UNVERIFIED",
         "SCIENTIFIC_GT_GEOMETRY_GATE": "UNVERIFIED",
+        "OBSERVATION_COVERAGE_GATE": "UNVERIFIED",
         "FORMAL_SYNTHETIC_READY": "FAIL",
         "checks": {"active_wiring": wiring, "archive_present": archived, "tombstone_present": tombstone_ok},
     }

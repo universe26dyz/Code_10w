@@ -110,7 +110,7 @@ def render_observations(output_root: str | Path, prepared_root: str | Path) -> d
     acquisition = acquisition_times_from_timing9(timing)
     summaries = {}
     for stack, groups in aligned.items():
-        images, masks = render_groups(signal["signals"], signal["origin_mm"], signal["spacing_mm"], groups, inplane_samples=6, thickness_samples=9)
+        images, masks = render_groups(signal["signals"], signal["origin_mm"], signal["spacing_mm"], groups, inplane_samples=6, thickness_samples=9, require_in_bounds=True)
         metadata = {"group_idx": np.repeat(np.arange(len(groups)), 10), "weight_idx": np.tile(np.arange(10), len(groups)), "stack_idx": np.zeros(len(groups) * 10, dtype=np.int64), "acquisition_time_ms": np.tile(acquisition, len(groups)), "timing9_ms": np.repeat(timing[None, :], len(groups) * 10, axis=0), "affine_lps_rc": np.repeat(np.asarray([item["affine_lps_rc"] for item in groups]), 10, axis=0), "pixel_spacing_rc_mm": np.concatenate([np.repeat([item["pixel_spacing_rc_mm"]], 10, axis=0) for item in groups]), "slice_thickness_mm": np.concatenate([np.repeat([item["slice_thickness_mm"]], 10) for item in groups]), "tr_ms": np.repeat([2.61], len(groups) * 10), "vps": np.repeat([87], len(groups) * 10)}
         result = write_observations(root / stack, images, masks, metadata, {"phase": "1.2", "stack": stack, "signal_field": str(root / "clean_signal_field.npz")})
         summaries[stack] = result
@@ -124,9 +124,11 @@ def main() -> None:
     parser.add_argument("--xcat-input-manifest")
     parser.add_argument("--prepared-root")
     parser.add_argument("--approved-decoder")
+    parser.add_argument("--geometry-spec")
+    parser.add_argument("--phantom-spec")
     args = parser.parse_args()
     if args.stage == "prepare-xcat":
-        result = prepare_xcat_parameter_hand_off(args.output_root)
+        result = prepare_xcat_parameter_hand_off(args.output_root, geometry_spec=args.geometry_spec, phantom_spec=args.phantom_spec)
     elif args.stage == "validate-xcat-inputs":
         if not args.xcat_input_manifest:
             parser.error("--xcat-input-manifest is required")
