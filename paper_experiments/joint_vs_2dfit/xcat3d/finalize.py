@@ -11,6 +11,7 @@ import numpy as np
 
 REQUIRED_ARTIFACTS = (
     "gt_maps.npz", "geometry_qc.json", "geometry_alignment_qc.json",
+    "parameter_contract_qc.json", "quantitative_tuple_qc.json", "observation_coverage_qc.json",
     "clean_signal_field.npz", "timing_selection.json", "synthetic_source_manifest.json",
     "sax/observations.npz", "2ch/observations.npz", "4ch/observations.npz",
 )
@@ -63,12 +64,15 @@ def finalize_phase1_2(output_root: str | Path) -> Path:
         raise ValueError("frozen LV quantitative values failed")
     if not np.array_equal(signal["signals"][~support], np.zeros((int((~support).sum()), 10), dtype=np.float32)):
         raise ValueError("signal background is not exactly zero")
+    if signal["signals"].shape != maps["t1_ms"].shape + (10,) or not np.array_equal(signal["origin_mm"], maps["origin_mm"]) or not np.array_equal(signal["spacing_mm"], maps["spacing_mm"]) or not np.array_equal(signal["signal_support_mask"], support) or not np.isfinite(signal["signals"][support]).all():
+        raise ValueError("signal semantic contract failed")
     integration = source.get("spatial_integration", {})
     if integration.get("inplane_samples_row_col") != [6, 6] or integration.get("thickness_samples") != 9:
         raise ValueError("formal renderer is not pinned to 6x6x9")
     for stack in ("sax", "2ch", "4ch"):
         obs = np.load(root / stack / "observations.npz")
-        if obs["images"].shape[0] % 10 or not np.all(obs["tr_ms"] == 2.61) or not np.all(obs["vps"] == 87) or not np.all(np.isfinite(obs["images"])):
+        required_obs = {"images", "masks", "group_idx", "weight_idx", "affine_lps_rc", "pixel_spacing_rc_mm", "slice_thickness_mm", "timing9_ms", "acquisition_time_ms", "tr_ms", "vps"}
+        if not required_obs <= set(obs.files) or obs["images"].shape[0] % 10 or not np.all(obs["tr_ms"] == 2.61) or not np.all(obs["vps"] == 87) or not np.all(np.isfinite(obs["images"])) or not np.all(np.isfinite(obs["affine_lps_rc"])) or not np.all(obs["masks"]):
             raise ValueError(f"invalid {stack} observation contract")
     raw_hashes, phantom_spec_sha256, geometry_spec_sha256 = _source_hashes(source)
     final = root / "phase1_2_final_manifest.json"
@@ -99,6 +103,10 @@ def assert_final_manifest_ready(root: str | Path) -> dict:
         digest = _require_sha(artifact_hashes[item], f"artifact {item}")
         if not (root / item).is_file() or _sha256(root / item) != digest:
             raise ValueError(f"Phase-1.2 final artifact SHA mismatch: {item}")
+    source = json.loads((root / "synthetic_source_manifest.json").read_text())
+    source_raw, source_phantom, source_geometry = _source_hashes(source)
+    if raw_hashes != source_raw or manifest.get("cardiac_roi_phantom_spec_sha256") != source_phantom or manifest.get("cardiac_roi_geometry_spec_sha256") != source_geometry:
+        raise ValueError("final provenance disagrees with hashed synthetic source manifest")
     for name in REQUIRED_RAW_XCAT_VOLUMES:
         _require_sha(raw_hashes[name], f"raw XCAT {name}")
     _require_sha(manifest.get("cardiac_roi_phantom_spec_sha256"), "cardiac phantom spec")

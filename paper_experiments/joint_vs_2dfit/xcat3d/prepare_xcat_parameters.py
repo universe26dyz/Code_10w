@@ -53,6 +53,34 @@ def _parameter(phantom: dict[str, Any], geometry: dict[str, Any], kind: str) -> 
     return "\n".join(lines) + "\n"
 
 
+def parse_parameter_assignments(path: str | Path) -> dict[str, str]:
+    assignments: dict[str, str] = {}
+    for raw in Path(path).read_text().splitlines():
+        line = raw.split("#", 1)[0].strip()
+        if not line or "=" not in line:
+            continue
+        key, value = (part.strip() for part in line.split("=", 1))
+        if key in assignments:
+            raise ValueError(f"duplicate XCAT parameter assignment: {key}")
+        if not value or any(token in value.upper() for token in ("REQUIRED", "TODO", "UNKNOWN", "SET_")):
+            raise ValueError(f"placeholder XCAT parameter assignment: {key}")
+        assignments[key] = value
+    return assignments
+
+
+def validate_parameter_contract(parameter_dir: str | Path, phantom: dict[str, Any], geometry: dict[str, Any]) -> dict:
+    expected_geometry = {key: _format(value) for key, value in geometry["xcat_geometry_block"].items()}
+    result = {"parameter_contract_gate": True, "files": {}}
+    for filename, kind in _KINDS.items():
+        actual = parse_parameter_assignments(Path(parameter_dir) / filename)
+        expected = dict(expected_geometry)
+        expected.update({item["xcat_parameter"]: _format(item["lv_mask"] if kind == "lv_mask" else item[kind]) for item in phantom["structures"].values()})
+        if actual != expected:
+            raise ValueError(f"XCAT parameter semantic contract mismatch: {filename}")
+        result["files"][filename] = {"sha256": _sha256(Path(parameter_dir) / filename), "assignment_count": len(actual)}
+    return result
+
+
 def prepare_xcat_parameter_hand_off(output_root: str | Path, *, geometry_spec: str | Path | None = None, phantom_spec: str | Path | None = None) -> dict:
     """Write four same-geometry parameter files from the centralized cardiac specs."""
     root = Path(output_root) / "phase1_2_xcat_handoff"
@@ -71,6 +99,9 @@ def prepare_xcat_parameter_hand_off(output_root: str | Path, *, geometry_spec: s
     (root / GEOMETRY_TEMPLATE.name).write_bytes(geometry_path.read_bytes())
     for filename, kind in _KINDS.items():
         (params / filename).write_text(_parameter(phantom, geometry, kind))
+    if formal:
+        contract_qc = validate_parameter_contract(params, phantom, geometry)
+        (root / "parameter_contract_qc.json").write_text(json.dumps(contract_qc, indent=2, sort_keys=True) + "\n")
     mechanism = {
             "repository": "https://github.com/hmhanson/4DPhantomMRI",
             "commit": "97558db05f4e344865f472de974b9f4d042a1a15",

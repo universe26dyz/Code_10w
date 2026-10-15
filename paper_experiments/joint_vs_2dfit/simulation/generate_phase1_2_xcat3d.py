@@ -8,11 +8,12 @@ from pathlib import Path
 import numpy as np
 
 from ..xcat3d.build_quantitative_gt import build_quantitative_gt, write_quantitative_gt
-from ..xcat3d.prepare_xcat_parameters import prepare_xcat_parameter_hand_off
+from ..xcat3d.prepare_xcat_parameters import prepare_xcat_parameter_hand_off, validate_parameter_contract
 from ..xcat3d.read_xcat_volume import load_xcat_inputs
+from ..xcat3d.audits import quantitative_tuple_audit, structure_id_audit_status
 from ..xcat3d.validate_quantitative_gt import assert_phase1_2_manifest_ready, validate_quantitative_gt, write_validation
 from .build_geometry import apply_global_rigid_alignment, select_modal_geometry_templates
-from .render_observations import render_groups
+from .render_observations import render_groups, coverage_preflight
 from .select_timing_template import choose_timing_template, collect_manifest_candidates
 from .simulate_hhz_signals import generate_signal_field
 from .write_observations_npz import write_observations
@@ -65,9 +66,18 @@ def build_gt(xcat_input_manifest: str | Path, output_root: str | Path = DEFAULT_
     if not qc["scientific_gt_geometry_gate"]:
         raise ValueError("Phase-1.2 geometry acceptance failed")
     root = Path(output_root)
+    if any((root / name).exists() for name in ("gt_maps.npz", "geometry_qc.json", "synthetic_source_manifest.json", "quantitative_tuple_qc.json")):
+        raise FileExistsError("refusing partial build-gt overwrite")
     gt_path = write_quantitative_gt(gt, root)
     qc_path = write_validation(qc, root)
     manifest = _write_source_manifest(root, inputs, gt, qc)
+    params = inputs.manifest_path.parent / inputs.manifest["xcat"]["parameter_files"]["t1_phase1_2.par"]["path"]
+    parameter_qc = validate_parameter_contract(params.parent, json.loads((inputs.manifest_path.parent / inputs.manifest["xcat"]["phantom_spec"]["path"]).read_text()), json.loads((inputs.manifest_path.parent / inputs.manifest["xcat"]["geometry_spec"]["path"]).read_text()))
+    (root / "parameter_contract_qc.json").write_text(json.dumps(parameter_qc, indent=2) + "\n")
+    spec = Path(xcat_input_manifest).parent / inputs.manifest["xcat"]["phantom_spec"]["path"]
+    tuple_qc = quantitative_tuple_audit(inputs.t1_ms.data, inputs.t2_ms.data, inputs.pd_m0.data, inputs.myocardium_mask.data.astype(bool), spec)
+    tuple_qc["structure_id_audit"] = structure_id_audit_status()
+    (root / "quantitative_tuple_qc.json").write_text(json.dumps(tuple_qc, indent=2) + "\n")
     return {"gt_maps": str(gt_path), "geometry_qc": str(qc_path), "synthetic_source_manifest": str(manifest), "scientific_gt_geometry_gate": True}
 
 
@@ -75,8 +85,8 @@ def simulate_signal_field(output_root: str | Path, prepared_root: str | Path, ap
     root = Path(output_root)
     manifest = assert_phase1_2_manifest_ready(root / "synthetic_source_manifest.json")
     output = root / "clean_signal_field.npz"
-    if output.exists():
-        raise FileExistsError(f"refusing to overwrite {output}")
+    if any((root / name).exists() for name in ("clean_signal_field.npz", "timing_selection.json", "signal_field_status.json")):
+        raise FileExistsError("refusing partial signal-field overwrite")
     maps = np.load(root / "gt_maps.npz")
     approved = json.loads(Path(approved_decoder).read_text())
     selection = choose_timing_template(collect_manifest_candidates(prepared_root), approved)
@@ -95,16 +105,23 @@ def simulate_signal_field(output_root: str | Path, prepared_root: str | Path, ap
 def render_observations(output_root: str | Path, prepared_root: str | Path) -> dict:
     root = Path(output_root)
     assert_phase1_2_manifest_ready(root / "synthetic_source_manifest.json")
+    if any((root / name).exists() for name in ("geometry_alignment_qc.json", "observation_coverage_qc.json", "sax", "2ch", "4ch")):
+        raise FileExistsError("refusing partial observation-render overwrite")
     signal = np.load(root / "clean_signal_field.npz")
     selection = json.loads((root / "timing_selection.json").read_text())
     maps = np.load(root / "gt_maps.npz"); myo = maps["myocardium_mask"].astype(bool)
     indices = np.argwhere(myo); world = np.asarray(maps["origin_mm"], float)[None, :] + indices * np.asarray(maps["spacing_mm"], float)[None, :]
-    center = world.mean(axis=0); eigenvalues, eigenvectors = np.linalg.eigh(np.cov((world - center).T)); long_axis = eigenvectors[:, np.argmax(eigenvalues)]
+    center = world.mean(axis=0); covariance = np.cov((world - center).T); eigenvalues, eigenvectors = np.linalg.eigh(covariance); order = np.argsort(eigenvalues)[::-1]; eigenvalues, eigenvectors = eigenvalues[order], eigenvectors[:, order]; long_axis = eigenvectors[:, 0]
     if long_axis[np.argmax(np.abs(long_axis))] < 0: long_axis *= -1
     templates = select_modal_geometry_templates(prepared_root)
     aligned, alignment_qc = apply_global_rigid_alignment(templates, center, long_axis)
-    alignment_qc.update({"lv_centroid_mm": center.tolist(), "lv_pca_eigenvalues": eigenvalues.tolist(), "lv_long_axis": long_axis.tolist(), "lv_alignment_gate": bool(abs(alignment_qc["sax_normal_dot_lv_long_axis"]) >= 0.999 and alignment_qc["max_pairwise_center_distance_error_mm"] <= 1e-6)})
+    pca_gate = bool(len(indices) >= 64 and np.isfinite(covariance).all() and eigenvalues[1] > 0 and eigenvalues[0] / eigenvalues[1] >= 1.1)
+    alignment_qc.update({"lv_voxel_count": int(len(indices)), "lv_centroid_mm": center.tolist(), "lv_pca_covariance": covariance.tolist(), "lv_pca_eigenvalues": eigenvalues.tolist(), "lv_pca_axes": eigenvectors.tolist(), "lv_pca_lambda1_lambda2": float(eigenvalues[0]/eigenvalues[1]), "pca_stability_gate": pca_gate, "lv_long_axis": long_axis.tolist(), "lv_alignment_gate": bool(pca_gate and abs(alignment_qc["sax_normal_dot_lv_long_axis"]) >= 0.999 and alignment_qc["max_pairwise_center_distance_error_mm"] <= 1e-6)})
     if not alignment_qc["lv_alignment_gate"]: raise ValueError("LV PCA geometry alignment gate failed")
+    coverage = {"observation_coverage_gate": True, "stacks": {}}
+    for stack, groups in aligned.items():
+        coverage["stacks"][stack] = coverage_preflight(signal["signals"].shape, signal["origin_mm"], signal["spacing_mm"], groups)
+    (root / "observation_coverage_qc.json").write_text(json.dumps(coverage, indent=2) + "\n")
     (root / "geometry_alignment_qc.json").write_text(json.dumps(alignment_qc, indent=2) + "\n")
     timing = np.asarray(selection["timing9_ms"], dtype=float)
     acquisition = acquisition_times_from_timing9(timing)

@@ -32,11 +32,8 @@ def _write_observations(root: Path, value: int = 1) -> None:
 
 
 def _write_phase1_2_manifest(root: Path, geometry_gate: bool = True) -> None:
-    (root / "synthetic_source_manifest.json").write_text(json.dumps({
-        "phase": "1.2",
-        "source_family": "single_source_xcat_3d_quantitative",
-        "scientific_gt_geometry_gate": geometry_gate,
-    }))
+    source = {"phase": "1.2", "source_family": "single_source_xcat_3d_quantitative", "scientific_gt_geometry_gate": geometry_gate, "xcat": {"raw_volumes": {name: {"sha256": "a" * 64} for name in REQUIRED_RAW_XCAT_VOLUMES}, "phantom_spec": {"sha256": "b" * 64}, "geometry_spec": {"sha256": "c" * 64}}}
+    (root / "synthetic_source_manifest.json").write_text(json.dumps(source))
     for relative in REQUIRED_ARTIFACTS:
         path = root / relative
         path.parent.mkdir(parents=True, exist_ok=True)

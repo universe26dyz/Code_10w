@@ -101,6 +101,14 @@ def _assert_footprint_in_bounds(shape, origin, spacing, group, inplane_samples, 
         raise ValueError("out-of-volume quadrature footprint")
 
 
+def coverage_preflight(shape, origin, spacing, groups, inplane_samples=6, thickness_samples=9) -> dict:
+    records = []
+    for group in groups:
+        _assert_footprint_in_bounds(shape, origin, spacing, group, inplane_samples, thickness_samples)
+        records.append({"group_idx": int(group["group_idx"]), "coverage_fraction": 1.0, "out_of_volume_quadrature_points": 0, "minimum_boundary_margin_voxel": 0.0})
+    return {"gate": True, "groups": records}
+
+
 def render_groups(signal_volume: np.ndarray, volume_origin_mm: np.ndarray, volume_spacing_mm: np.ndarray, groups: list[dict], inplane_samples: int = 2, thickness_samples: int = 3, require_in_bounds: bool = False) -> tuple[np.ndarray, np.ndarray]:
     images, masks = [], []
     for group in groups:

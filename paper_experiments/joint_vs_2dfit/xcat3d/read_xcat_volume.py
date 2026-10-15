@@ -104,6 +104,21 @@ def _validate_provenance(manifest: dict[str, Any], root: Path) -> None:
             _reject_placeholders(json.loads(spec_path.read_text()), f"XCAT {key}")
         except json.JSONDecodeError as error:
             raise ValueError(f"XCAT {key} must be valid JSON") from error
+    geometry_payload = json.loads((root / xcat["geometry_spec"]["path"]).read_text())
+    block = geometry_payload.get("xcat_geometry_block", {})
+    if geometry_payload.get("raw_layout_policy") == "hanson_4DPhantomMRI_97558db_zyx_slices_rows_cols":
+        expected_shape = (int(block["endslice"]) - int(block["startslice"]) + 1, int(block["array_size"]), int(block["array_size"]))
+        expected_spacing = (float(block["slice_width"]) * float(geometry_payload["xcat_mm_per_length_unit"]), float(block["pixel_width"]) * float(geometry_payload["xcat_mm_per_length_unit"]), float(block["pixel_width"]) * float(geometry_payload["xcat_mm_per_length_unit"]))
+        for name, record in manifest["volumes"].items():
+            if tuple(record["shape"]) != expected_shape or record.get("axis_order") != "zyx" or not np.allclose(record["spacing_mm"], expected_spacing):
+                raise ValueError(f"{name} violates frozen XCAT unit/layout contract")
+    if geometry_payload.get("origin_policy") == "centered_synthetic_lps":
+        for name, record in manifest["volumes"].items():
+            spacing = np.asarray(record["spacing_mm"], float)
+            shape = np.asarray(record["shape"], float)
+            expected_origin = -0.5 * (shape - 1) * spacing
+            if not np.allclose(record["origin_mm"], expected_origin):
+                raise ValueError(f"{name} violates centered synthetic LPS origin policy")
     records = manifest.get("volumes", {})
     if set(records) != set(_PARAMETER_FOR_VOLUME):
         raise ValueError("input manifest requires exactly T1, T2, PD and LV-mask raw volumes")
