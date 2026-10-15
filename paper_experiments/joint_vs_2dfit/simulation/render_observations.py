@@ -86,26 +86,35 @@ def foreground_mask(images: np.ndarray) -> np.ndarray:
     return mask.astype(bool)
 
 
-def _footprint_coordinates(shape, origin, spacing, group, inplane_samples, thickness_samples) -> np.ndarray:
+def _footprint_bounds_extrema(shape, origin, spacing, group, inplane_samples, thickness_samples) -> tuple[np.ndarray, np.ndarray, float]:
+    """Exact voxel-coordinate extrema for renderer midpoint nodes, in O(1) memory.
+
+    The renderer samples an affine Cartesian product.  Each coordinate is
+    linear in row, column, and slice offsets, so all extrema are attained at
+    the two outermost *midpoint* nodes of each dimension (eight points).
+    """
     rows, cols = group["image_shape_rows_cols"]
     affine = np.asarray(group["affine_lps_rc"], float)
     ro = ((np.arange(inplane_samples) + 0.5) / inplane_samples - 0.5)
     co = ((np.arange(inplane_samples) + 0.5) / inplane_samples - 0.5)
     so = ((np.arange(thickness_samples) + 0.5) / thickness_samples - 0.5)
-    rr, cc = np.meshgrid(np.arange(rows), np.arange(cols), indexing="ij")
-    base = affine[:3, 3] + rr[..., None] * affine[:3, 0] + cc[..., None] * affine[:3, 1]
-    offsets = np.asarray([[r, c, s] for r in ro for c in co for s in so])
-    points = base.reshape(-1, 3)[None] + offsets[:, None, 0, None] * affine[:3, 0] + offsets[:, None, 1, None] * affine[:3, 1] + offsets[:, None, 2, None] * affine[:3, 2]
-    coords = (points - np.asarray(origin)) / np.asarray(spacing)
-    return coords
+    values = ((ro[0], rows - 1 + ro[-1]), (co[0], cols - 1 + co[-1]), (so[0], so[-1]))
+    points = np.asarray([
+        affine[:3, 3] + row * affine[:3, 0] + col * affine[:3, 1] + slc * affine[:3, 2]
+        for row in values[0] for col in values[1] for slc in values[2]
+    ])
+    coords = (points - np.asarray(origin, float)) / np.asarray(spacing, float)
+    minimum, maximum = coords.min(axis=0), coords.max(axis=0)
+    margin = float(np.minimum(minimum, (np.asarray(shape[:3], float) - 1) - maximum).min())
+    return minimum, maximum, margin
 
 
 def _assert_footprint_in_bounds(shape, origin, spacing, group, inplane_samples, thickness_samples) -> float:
-    coords = _footprint_coordinates(shape, origin, spacing, group, inplane_samples, thickness_samples)
+    minimum, maximum, margin = _footprint_bounds_extrema(shape, origin, spacing, group, inplane_samples, thickness_samples)
     upper = np.asarray(shape[:3]) - 1
-    if np.any(coords < 0) or np.any(coords > upper):
+    if np.any(minimum < 0) or np.any(maximum > upper):
         raise ValueError("out-of-volume quadrature footprint")
-    return float(np.minimum(coords, upper - coords).min())
+    return margin
 
 
 def coverage_preflight(shape, origin, spacing, groups, inplane_samples=6, thickness_samples=9) -> dict:

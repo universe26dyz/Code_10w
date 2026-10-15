@@ -24,13 +24,14 @@ _GEOMETRY_FIELDS = (
     "heart_curve_file", "vessel_flag", "coronary_art_flag",
     "coronary_vein_flag", "phan_rotx", "phan_roty", "phan_rotz",
     "pixel_width", "slice_width", "array_size", "startslice", "endslice",
-    "activity_unit",
+    "activity_unit", "subvoxel_index",
 )
 _GEOMETRY_TOP_LEVEL = (
     "minimum_lv_boundary_margin_mm", "minimum_lv_voxel_count",
     "pca_lambda1_lambda2_min", "xcat_length_unit", "xcat_mm_per_length_unit",
     "raw_layout_policy", "origin_policy", "canonical_coordinate_policy",
     "xcat_version_build_compatibility",
+    "formal_target_voxel_size_mm",
 )
 
 
@@ -101,10 +102,17 @@ def validate_geometry_spec(geometry: dict[str, Any], *, formal: bool) -> None:
         raise ValueError("formal XCAT route requires centered synthetic LPS xyz/mm coordinates")
     if float(geometry["minimum_lv_boundary_margin_mm"]) <= 0 or int(geometry["minimum_lv_voxel_count"]) <= 0 or float(geometry["pca_lambda1_lambda2_min"]) <= 1:
         raise ValueError("geometry acceptance thresholds are invalid")
+    if tuple(float(value) for value in geometry["formal_target_voxel_size_mm"]) != (1.0, 1.0, 1.0):
+        raise ValueError("formal Phase-1.2 target voxel size must be exactly 1x1x1 mm")
+    subvoxel = block["subvoxel_index"]
+    if isinstance(subvoxel, bool) or not isinstance(subvoxel, int) or subvoxel <= 0:
+        raise ValueError("subvoxel_index must be a positive integer")
     if formal and (_placeholder(geometry["xcat_version_build_compatibility"]) or any(_placeholder(block[key]) for key in _GEOMETRY_FIELDS)):
         raise ValueError("formal cardiac geometry spec contains placeholders")
     if formal:
-        derive_raw_contract(geometry)
+        contract = derive_raw_contract(geometry)
+        if contract["canonical_spacing_mm_xyz"] != (1.0, 1.0, 1.0):
+            raise ValueError("formal Phase-1.2 requires direct 1-mm XCAT spacing; resampling is not permitted")
 
 
 def derive_raw_contract(geometry: dict[str, Any]) -> dict[str, Any]:
@@ -114,7 +122,14 @@ def derive_raw_contract(geometry: dict[str, Any]) -> dict[str, Any]:
     if start > end or size <= 1:
         raise ValueError("invalid frozen XCAT startslice/endslice/array_size")
     mm = float(geometry["xcat_mm_per_length_unit"])
-    return {"shape": (end - start + 1, size, size), "spacing_mm": (float(block["slice_width"]) * mm, float(block["pixel_width"]) * mm, float(block["pixel_width"]) * mm), "axis_order": "zyx", "origin_policy": geometry["origin_policy"]}
+    raw_shape = (end - start + 1, size, size)
+    raw_spacing = (float(block["slice_width"]) * mm, float(block["pixel_width"]) * mm, float(block["pixel_width"]) * mm)
+    raw_axis_order = "zyx"
+    reorder = tuple(raw_axis_order.index(axis) for axis in "xyz")
+    canonical_shape = tuple(raw_shape[index] for index in reorder)
+    canonical_spacing = tuple(raw_spacing[index] for index in reorder)
+    origin = tuple(-0.5 * (dimension - 1) * spacing for dimension, spacing in zip(canonical_shape, canonical_spacing))
+    return {"raw_shape": raw_shape, "raw_spacing_mm": raw_spacing, "raw_axis_order": raw_axis_order, "canonical_shape_xyz": canonical_shape, "canonical_spacing_mm_xyz": canonical_spacing, "world_convention": "LPS", "origin_policy": geometry["origin_policy"], "origin_mm_xyz": origin}
 
 
 def _load_specs(phantom_spec: Path = PHANTOM_SPEC, geometry_spec: Path = GEOMETRY_TEMPLATE) -> tuple[dict[str, Any], dict[str, Any]]:

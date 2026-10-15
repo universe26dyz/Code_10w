@@ -115,16 +115,15 @@ def _validate_provenance(manifest: dict[str, Any], root: Path) -> None:
         if _require_text(xcat.get("version_build"), "XCAT provenance version_build") != geometry_payload["xcat_version_build_compatibility"]:
             raise ValueError("licensed XCAT version/build disagrees with frozen geometry compatibility")
         contract = derive_raw_contract(geometry_payload)
-        expected_shape, expected_spacing = contract["shape"], contract["spacing_mm"]
+        expected_shape, expected_spacing = contract["raw_shape"], contract["raw_spacing_mm"]
         for name, record in manifest["volumes"].items():
-            if tuple(record["shape"]) != expected_shape or record.get("axis_order") != contract["axis_order"] or not np.allclose(record["spacing_mm"], expected_spacing):
+            if tuple(record["shape"]) != expected_shape or record.get("axis_order") != contract["raw_axis_order"] or not np.allclose(record["spacing_mm"], expected_spacing) or record.get("world_convention") != contract["world_convention"]:
                 raise ValueError(f"{name} violates frozen XCAT unit/layout contract")
     if geometry_payload.get("origin_policy") == "centered_synthetic_lps":
         for name, record in manifest["volumes"].items():
             spacing = np.asarray(record["spacing_mm"], float)
             shape = np.asarray(record["shape"], float)
-            expected_origin = -0.5 * (shape - 1) * spacing
-            if not np.allclose(record["origin_mm"], expected_origin):
+            if not np.allclose(record["origin_mm"], contract["origin_mm_xyz"]):
                 raise ValueError(f"{name} violates centered synthetic LPS origin policy")
         validate_parameter_contract(root / Path(next(iter(parameter_files.values()))["path"]).parent, phantom_payload, geometry_payload)
         static_inputs = xcat.get("static_inputs")

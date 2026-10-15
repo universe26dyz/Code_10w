@@ -8,6 +8,8 @@ def canonicalize_volume(data: np.ndarray, *, shape: tuple[int, int, int], spacin
     array = np.asarray(data)
     if array.shape != tuple(shape): raise ValueError("raw XCAT data shape does not match declared shape")
     order = tuple(axis_order.index(axis) for axis in "xyz")
+    # Spacing follows array axes and must transpose with the array.  Origin is
+    # already a world xyz tuple, so it must never be permuted with raw zyx.
     array = np.transpose(array, order); spacing = np.asarray([spacing_mm[i] for i in order], float); origin = np.asarray(origin_mm, float)
     if world_convention == "RAS":
         array = np.flip(array, axis=(0, 1)); origin[:2] = -origin[:2] - (np.asarray(array.shape[:2]) - 1) * spacing[:2]

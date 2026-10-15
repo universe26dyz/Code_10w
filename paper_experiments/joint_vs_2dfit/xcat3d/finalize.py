@@ -8,6 +8,7 @@ from pathlib import Path
 
 import numpy as np
 from ..simulation.write_observations_npz import validate_observations_file
+from .validate_quantitative_gt import assert_formal_code_provenance
 
 
 REQUIRED_ARTIFACTS = (
@@ -61,6 +62,7 @@ def finalize_phase1_2(output_root: str | Path) -> Path:
         if not (root / item).is_file():
             raise FileNotFoundError(f"required Phase-1.2 artifact is missing: {item}")
     source, qc, alignment = (json.loads((root / name).read_text()) for name in ("synthetic_source_manifest.json", "geometry_qc.json", "geometry_alignment_qc.json"))
+    assert_formal_code_provenance(source, Path(__file__).resolve().parents[3])
     if source.get("scientific_gt_geometry_gate") is not True or qc.get("scientific_gt_geometry_gate") is not True:
         raise ValueError("Phase-1.2 GT geometry gate is not passing")
     if source.get("lv_boundary_margin_qc", {}).get("gate") is not True:
@@ -73,9 +75,28 @@ def finalize_phase1_2(output_root: str | Path) -> Path:
         raise ValueError("Phase-1.2 PCA/template geometry gate is not passing")
     if source.get("template_geometry", {}).get("template_subject") != alignment.get("template_subject") or set(source.get("template_geometry", {}).get("manifest_sha256", {})) != {"sax", "2ch", "4ch"}:
         raise ValueError("final source manifest does not prove one coherent template subject")
+    raw_hashes, phantom_spec_sha256, geometry_spec_sha256, parameter_hashes, static_hashes = _source_hashes(source)
+    parameter_qc = json.loads((root / "parameter_contract_qc.json").read_text())
+    if parameter_qc.get("parameter_contract_gate") is not True or set(parameter_qc.get("files", {})) != set(parameter_hashes):
+        raise ValueError("parameter contract QC is incomplete or failing")
+    for name, item in parameter_qc["files"].items():
+        if _require_sha(item.get("sha256"), f"parameter QC {name}") != parameter_hashes[name]:
+            raise ValueError("parameter contract QC SHA disagrees with source provenance")
+    tuple_qc = json.loads((root / "quantitative_tuple_qc.json").read_text())
+    if tuple_qc.get("quantitative_tuple_gate") is not True or tuple_qc.get("unmatched_voxels") != 0 or tuple_qc.get("lv_mask_frozen_tuple_gate") is not True:
+        raise ValueError("quantitative tuple QC is incomplete or failing")
+    if tuple_qc.get("lv_tuple_unique") is True and tuple_qc.get("lv_mask_equals_lv_tuple") is not True:
+        raise ValueError("unique LV tuple does not equal the LV mask")
     coverage = json.loads((root / "observation_coverage_qc.json").read_text())
-    if coverage.get("observation_coverage_gate") is not True or any(item.get("gate") is not True for item in coverage.get("stacks", {}).values()):
+    stacks = coverage.get("stacks", {})
+    if coverage.get("observation_coverage_gate") is not True or set(stacks) != {"sax", "2ch", "4ch"} or any(item.get("gate") is not True for item in stacks.values()):
         raise ValueError("Phase-1.2 observation footprint coverage gate is not passing")
+    if not np.isfinite(coverage.get("minimum_sampling_coordinate_margin_voxel", np.nan)) or coverage["minimum_sampling_coordinate_margin_voxel"] < 0 or coverage.get("worst_stack") not in stacks or coverage.get("worst_group") is None:
+        raise ValueError("observation coverage QC extrema are incomplete or invalid")
+    for stack, stack_qc in stacks.items():
+        groups = stack_qc.get("groups", [])
+        if not groups or any(record.get("coverage_fraction") != 1.0 or record.get("out_of_volume_quadrature_points") != 0 or not np.isfinite(record.get("minimum_boundary_margin_voxel", np.nan)) or record["minimum_boundary_margin_voxel"] < 0 for record in groups):
+            raise ValueError(f"observation coverage QC groups are incomplete for {stack}")
     if source.get("code_provenance", {}).get("tracked_worktree_clean") is not True:
         raise ValueError("formal finalization requires a clean tracked Code_10w worktree")
     maps, signal = np.load(root / "gt_maps.npz"), np.load(root / "clean_signal_field.npz")
@@ -110,7 +131,6 @@ def finalize_phase1_2(output_root: str | Path) -> Path:
     max_error = max((abs(np.linalg.norm(source_centers[i] - source_centers[j]) - np.linalg.norm(actual_centers[i] - actual_centers[j])) for i in range(len(actual_centers)) for j in range(i + 1, len(actual_centers))), default=0.0)
     if max_error > 1e-6:
         raise ValueError("actual observation affines do not preserve pairwise stack-center distances")
-    raw_hashes, phantom_spec_sha256, geometry_spec_sha256, parameter_hashes, static_hashes = _source_hashes(source)
     final = root / "phase1_2_final_manifest.json"
     if final.exists():
         raise FileExistsError(f"refusing to overwrite {final}")
@@ -122,6 +142,7 @@ def finalize_phase1_2(output_root: str | Path) -> Path:
         "cardiac_roi_geometry_spec_sha256": geometry_spec_sha256,
         "parameter_file_sha256": parameter_hashes,
         "static_xcat_input_sha256": static_hashes,
+        "code_10w_git_commit": source["code_provenance"]["git_commit"],
     }, indent=2, sort_keys=True) + "\n")
     return final
 
@@ -145,6 +166,8 @@ def assert_final_manifest_ready(root: str | Path) -> dict:
     source_raw, source_phantom, source_geometry, source_parameters, source_static = _source_hashes(source)
     if raw_hashes != source_raw or manifest.get("cardiac_roi_phantom_spec_sha256") != source_phantom or manifest.get("cardiac_roi_geometry_spec_sha256") != source_geometry or manifest.get("parameter_file_sha256") != source_parameters or manifest.get("static_xcat_input_sha256") != source_static:
         raise ValueError("final provenance disagrees with hashed synthetic source manifest")
+    if manifest.get("code_10w_git_commit") != source.get("code_provenance", {}).get("git_commit"):
+        raise ValueError("final code commit disagrees with hashed synthetic source manifest")
     for name in REQUIRED_RAW_XCAT_VOLUMES:
         _require_sha(raw_hashes[name], f"raw XCAT {name}")
     _require_sha(manifest.get("cardiac_roi_phantom_spec_sha256"), "cardiac phantom spec")

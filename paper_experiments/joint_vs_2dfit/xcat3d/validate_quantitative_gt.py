@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
 import numpy as np
@@ -68,6 +69,19 @@ def assert_phase1_2_manifest_ready(path: str | Path) -> dict:
     if manifest.get("scientific_gt_geometry_gate") is not True:
         raise ValueError("Phase-1.2 scientific GT geometry gate is not passing")
     return manifest
+
+
+def assert_formal_code_provenance(source_manifest: dict, repository_root: str | Path) -> None:
+    """Require every formal downstream stage to use build-GT's clean commit."""
+    provenance = source_manifest.get("code_provenance", {})
+    expected = provenance.get("git_commit")
+    root = Path(repository_root)
+    current = subprocess.check_output(["git", "-C", str(root), "rev-parse", "HEAD"], text=True).strip()
+    tracked_dirty = subprocess.check_output(["git", "-C", str(root), "status", "--porcelain", "--untracked-files=no"], text=True).strip()
+    if current != expected:
+        raise ValueError("formal Phase-1.2 code commit differs from the source manifest")
+    if tracked_dirty:
+        raise ValueError("formal Phase-1.2 requires a clean tracked Code_10w worktree")
 
 
 def check_active_phase1_2_wiring(repository_root: str | Path) -> dict:

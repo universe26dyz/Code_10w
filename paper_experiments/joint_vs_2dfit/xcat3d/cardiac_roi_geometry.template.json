@@ -45,6 +45,7 @@
     "papillary_flag": 0,
     "pixel_width": 0.1,
     "slice_width": 0.1,
+    "subvoxel_index": 2,
     "array_size": "REQUIRED_LICENSED_XCAT_CARDIAC_ROI_MATRIX",
     "startslice": "REQUIRED_LICENSED_XCAT_CARDIAC_ROI_START_SLICE",
     "endslice": "REQUIRED_LICENSED_XCAT_CARDIAC_ROI_END_SLICE",

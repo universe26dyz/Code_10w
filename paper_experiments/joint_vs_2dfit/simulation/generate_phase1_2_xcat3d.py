@@ -12,7 +12,7 @@ from ..xcat3d.build_quantitative_gt import build_quantitative_gt, lv_boundary_ma
 from ..xcat3d.prepare_xcat_parameters import freeze_xcat_parameter_hand_off, prepare_xcat_parameter_hand_off, validate_parameter_contract
 from ..xcat3d.read_xcat_volume import load_xcat_inputs
 from ..xcat3d.audits import quantitative_tuple_audit, structure_id_audit_status
-from ..xcat3d.validate_quantitative_gt import assert_phase1_2_manifest_ready, lv_pca_qc, validate_quantitative_gt, write_validation
+from ..xcat3d.validate_quantitative_gt import assert_formal_code_provenance, assert_phase1_2_manifest_ready, lv_pca_qc, validate_quantitative_gt, write_validation
 from .build_geometry import apply_global_rigid_alignment, select_modal_geometry_templates
 from .render_observations import render_groups, coverage_preflight
 from .select_timing_template import choose_timing_template, collect_manifest_candidates
@@ -43,7 +43,7 @@ def _write_source_manifest(root: Path, inputs, gt, qc: dict) -> Path:
         raise FileExistsError(f"refusing to overwrite {path}")
     geometry = gt.geometry
     frozen_geometry = json.loads((inputs.manifest_path.parent / inputs.manifest["xcat"]["geometry_spec"]["path"]).read_text())
-    repository = Path(__file__).resolve().parents[4]
+    repository = Path(__file__).resolve().parents[3]
     manifest = {
         "phase": "1.2",
         "scientific_status": "candidate_until_geometry_acceptance",
@@ -92,6 +92,7 @@ def build_gt(xcat_input_manifest: str | Path, output_root: str | Path = DEFAULT_
 def simulate_signal_field(output_root: str | Path, prepared_root: str | Path, approved_decoder: str | Path) -> dict:
     root = Path(output_root)
     manifest = assert_phase1_2_manifest_ready(root / "synthetic_source_manifest.json")
+    assert_formal_code_provenance(manifest, Path(__file__).resolve().parents[3])
     output = root / "clean_signal_field.npz"
     if any((root / name).exists() for name in ("clean_signal_field.npz", "timing_selection.json", "signal_field_status.json")):
         raise FileExistsError("refusing partial signal-field overwrite")
@@ -112,7 +113,8 @@ def simulate_signal_field(output_root: str | Path, prepared_root: str | Path, ap
 
 def render_observations(output_root: str | Path, prepared_root: str | Path) -> dict:
     root = Path(output_root)
-    assert_phase1_2_manifest_ready(root / "synthetic_source_manifest.json")
+    source_manifest = assert_phase1_2_manifest_ready(root / "synthetic_source_manifest.json")
+    assert_formal_code_provenance(source_manifest, Path(__file__).resolve().parents[3])
     if any((root / name).exists() for name in ("geometry_alignment_qc.json", "observation_coverage_qc.json", "sax", "2ch", "4ch")):
         raise FileExistsError("refusing partial observation-render overwrite")
     signal = np.load(root / "clean_signal_field.npz")
