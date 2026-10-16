@@ -6,7 +6,9 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from paper_experiments.joint_vs_2dfit.phase2_clean.aggregate_real import bland_altman, summarize_r1_subjects
+from paper_experiments.joint_vs_2dfit.phase2_clean.aggregate_real import (
+    bland_altman, paired_r0_comparison, pooled_r1_fold_metrics, summarize_r1_subjects,
+)
 from paper_experiments.joint_vs_2dfit.phase2_clean.evaluation import heldout_quantitative_metrics, real_native_agreement
 from paper_experiments.joint_vs_2dfit.phase2_clean.sparse import build_sparse_condition
 
@@ -66,6 +68,15 @@ def test_sparse_builder_marks_too_few_retained_groups_ineligible(tmp_path: Path)
     assert "fewer than two retained" in manifest["reason"]
 
 
+def test_l100_manifest_reuses_original_observations_without_copying_them(tmp_path: Path) -> None:
+    source = _prepared(tmp_path / "prepared")
+    result = build_sparse_condition(source, "CYJ", "L100", 0, tmp_path / "runs", git_sha="abc")
+    manifest = json.loads(Path(result["manifest_path"]).read_text())
+    assert manifest["identity_source"] == "R0_full_prepared_observations"
+    assert Path(result["prepared_root"]) == source / "CYJ"
+    assert not (tmp_path / "runs" / "CYJ" / "L100_fold0" / "2ch" / "observations.npz").exists()
+
+
 def test_heldout_metrics_use_common_method_neutral_support() -> None:
     reference = np.array([[1000.0, 1100.0], [np.nan, 1200.0]])
     proposed = np.array([[1010.0, 1110.0], [999.0, np.nan]])
@@ -90,7 +101,32 @@ def test_r0_metrics_means_bland_altman_and_subject_aggregation() -> None:
     ba = bland_altman([1000.0, 1100.0, 1200.0, 1300.0], [1010.0, 1090.0, 1210.0, 1290.0])
     assert ba["n_subjects"] == 4 and ba["mean_difference_ms"] == 0.0
     summary = summarize_r1_subjects([
-        {"subject": "CYJ", "method": "proposed", "level": "L50", "rmse": 10.0},
-        {"subject": "CYJ", "method": "proposed", "level": "L50", "rmse": 14.0},
+        {"subject": "CYJ", "method": "proposed", "level": "L50", "parameter": "t1_ms", "phase": 0, "pooled_rmse": 10.0},
+        {"subject": "CYJ", "method": "proposed", "level": "L50", "parameter": "t1_ms", "phase": 1, "pooled_rmse": 14.0},
     ])
     assert summary[0]["rmse"] == 12.0 and summary[0]["fold_count"] == 2
+
+
+def test_r1_subject_uses_equal_fold_weighting_not_plane_weighting() -> None:
+    planes = [
+        {"subject": "CYJ", "method": "proposed", "level": "L50", "parameter": "t1_ms", "phase": 0, "support_voxels": 1, "sum_squared_error": 100.0, "sum_absolute_error": 10.0, "sum_signed_error": 10.0},
+        *[{"subject": "CYJ", "method": "proposed", "level": "L50", "parameter": "t1_ms", "phase": 1, "support_voxels": 1, "sum_squared_error": 900.0, "sum_absolute_error": 30.0, "sum_signed_error": 30.0} for _ in range(3)],
+    ]
+    folds = pooled_r1_fold_metrics(planes)
+    assert [row["pooled_rmse"] for row in folds] == [10.0, 30.0]
+    subject = summarize_r1_subjects(folds)
+    assert subject[0]["rmse_mean_over_folds"] == 20.0
+    assert subject[0]["fold_values"] == [10.0, 30.0]
+
+
+def test_r0_paired_deltas_require_matched_subjects_and_reference_means() -> None:
+    records = []
+    for subject, proposed, baseline in (("CYJ", 10.0, 12.0), ("DYZ", 20.0, 24.0), ("HHZ", 30.0, 29.0), ("HJL", 40.0, 45.0)):
+        for method, rmse in (("proposed", proposed), ("fit_first", baseline)):
+            records.append({"subject": subject, "method": method, "parameter": "t1_ms", "rmse": rmse, "mae": rmse / 2, "bias": 0.0, "reference_mean_ms": 1000.0, "prediction_mean_ms": 1000.0 + rmse})
+    paired, summary = paired_r0_comparison(records)
+    assert [row["delta_rmse"] for row in paired] == [-2.0, -4.0, 1.0, -5.0]
+    assert summary["t1_ms"]["mean_delta"] == pytest.approx(-2.5)
+    records[-1]["reference_mean_ms"] = 1001.0
+    with pytest.raises(ValueError, match="reference mean mismatch"):
+        paired_r0_comparison(records)

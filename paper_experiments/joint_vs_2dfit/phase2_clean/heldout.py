@@ -34,10 +34,11 @@ def evaluate_heldout(
     output.mkdir(parents=True)
     proposed_images = {"t1_ms": nib.load(str(proposed_t1)), "t2_ms": nib.load(str(proposed_t2))}
     fit_images = {"t1_ms": nib.load(str(fit_first_t1)), "t2_ms": nib.load(str(fit_first_t2))}
-    result: dict[str, object] = {"subject": manifest["subject"], "condition": manifest["condition"], "phase": manifest["phase"], "endpoint": "held-out native-plane quantitative agreement/generalization, not true 3-D accuracy", "r1_signal_domain_evaluation": "DEFERRED_BY_DESIGN", "stacks": {}}
+    l100 = manifest.get("condition") == "L100"
+    result: dict[str, object] = {"subject": manifest["subject"], "condition": manifest["condition"], "phase": manifest["phase"], "endpoint": "full-data LAX agreement reference point; not held-out generalization" if l100 else "held-out native-plane quantitative agreement/generalization, not true 3-D accuracy", "l100_reconstruction_source": "R0_full" if l100 else None, "r1_signal_domain_evaluation": "DEFERRED_BY_DESIGN", "stacks": {}}
     for stack in ("2ch", "4ch"):
         spec = manifest["stacks"][stack]
-        if manifest.get("condition") == "L100":
+        if l100:
             with np.load(spec["source_observation"]["path"], allow_pickle=False) as source:
                 heldout = [int(value) for value in np.unique(source["group_idx"])]
         else:
