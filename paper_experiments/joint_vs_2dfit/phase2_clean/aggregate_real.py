@@ -120,9 +120,14 @@ def main() -> None:
     if args.r0_evaluation_root:
         records = []
         for path in sorted(Path(args.r0_evaluation_root).glob("*_*.json")):
-            subject, separator, method = path.stem.partition("_")
-            if not separator or method not in ("proposed", "fit_first"): raise ValueError(f"unexpected R0 evaluation filename: {path.name}")
-            records.append((subject, method, json.loads(path.read_text())))
+            subject, separator, method = path.stem.partition("_"); payload = json.loads(path.read_text())
+            if not separator: raise ValueError(f"unexpected R0 evaluation filename: {path.name}")
+            if method == "paired":
+                if payload.get("pairwise_common_support") is not True: raise ValueError(f"R0 paired evaluation lacks common-support provenance: {path}")
+                for paired_method, metrics in payload["methods"].items(): records.append((subject, paired_method, {"metrics": metrics}))
+            elif method in ("proposed", "fit_first"):
+                records.append((subject, method, payload))
+            else: raise ValueError(f"unexpected R0 evaluation filename: {path.name}")
         rows, summary = summarize_r0_evaluations(records); output.mkdir(parents=True)
         _write_csv(output / "R0_real_full_subject_table.csv", rows, ["subject", "method", "parameter"])
         _write_csv(output / "R0_real_full_paired_subject_table.csv", summary.pop("paired_subject_rows"), ["subject", "parameter", "delta_rmse"])

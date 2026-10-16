@@ -39,6 +39,16 @@ def synthetic_metrics(reference: np.ndarray, prediction: np.ndarray, myocardium_
 def real_native_agreement(reference: np.ndarray, prediction: np.ndarray, myocardium_mask: np.ndarray) -> dict:
     report=_metrics(reference,prediction,np.asarray(myocardium_mask,bool)&np.isfinite(reference)&np.isfinite(prediction)); report["endpoint"]="native-reference agreement/consistency, not accuracy versus ground truth"; return report
 
+def real_native_paired_agreement(reference: np.ndarray, proposed: np.ndarray, fit_first: np.ndarray, myocardium_mask: np.ndarray, proposed_valid: np.ndarray, fit_first_valid: np.ndarray) -> dict:
+    """R0 pair metrics on one common SAX-myocardium support, never private supports."""
+    reference, proposed, fit_first = (np.asarray(value, float) for value in (reference, proposed, fit_first))
+    myocardium_mask, proposed_valid, fit_first_valid = (np.asarray(value, bool) for value in (myocardium_mask, proposed_valid, fit_first_valid))
+    if not (reference.shape == proposed.shape == fit_first.shape == myocardium_mask.shape == proposed_valid.shape == fit_first_valid.shape): raise ValueError("R0 paired arrays must share one plane shape")
+    common = myocardium_mask & np.isfinite(reference) & proposed_valid & fit_first_valid & np.isfinite(proposed) & np.isfinite(fit_first)
+    if not common.any(): raise ValueError("empty common R0 SAX myocardium support")
+    result = {"endpoint":"native-reference agreement/consistency, not accuracy versus ground truth","primary_region":"common_sax_myocardium","support_equation":"SAX_myocardium AND finite(reference) AND proposed_reprojection_valid AND fit_first_reprojection_valid AND finite(proposed, fit_first)","common_support_voxels":int(common.sum()),"proposed":_metrics(reference, proposed, common),"fit_first":_metrics(reference, fit_first, common)}
+    return result
+
 def heldout_quantitative_metrics(reference: np.ndarray, proposed: np.ndarray, fit_first: np.ndarray, source_support: np.ndarray, reprojection_valid: np.ndarray) -> dict:
     """Evaluate both methods on one immutable, common held-out-plane support.
 
@@ -62,9 +72,23 @@ def heldout_quantitative_metrics(reference: np.ndarray, proposed: np.ndarray, fi
 def main() -> None:
     import argparse, json, nibabel as nib
     from pathlib import Path
-    parser=argparse.ArgumentParser(description=__doc__); parser.add_argument('--mode', choices=('synthetic','real'), required=True); parser.add_argument('--synthetic-t1'); parser.add_argument('--synthetic-t2'); parser.add_argument('--gt-maps'); parser.add_argument('--subject'); parser.add_argument('--real-t1'); parser.add_argument('--real-t2'); parser.add_argument('--native-reference'); parser.add_argument('--myocardium-bundle'); parser.add_argument('--output', required=True); args=parser.parse_args()
+    parser=argparse.ArgumentParser(description=__doc__); parser.add_argument('--mode', choices=('synthetic','real','real-paired'), required=True); parser.add_argument('--synthetic-t1'); parser.add_argument('--synthetic-t2'); parser.add_argument('--gt-maps'); parser.add_argument('--subject'); parser.add_argument('--real-t1'); parser.add_argument('--real-t2'); parser.add_argument('--proposed-t1'); parser.add_argument('--proposed-t2'); parser.add_argument('--fit-first-t1'); parser.add_argument('--fit-first-t2'); parser.add_argument('--native-reference'); parser.add_argument('--myocardium-bundle'); parser.add_argument('--output', required=True); args=parser.parse_args()
     output=Path(args.output)
     if output.exists(): raise FileExistsError(f'refusing overwrite: {output}')
+    if args.mode == 'real-paired':
+        if not all((args.subject,args.proposed_t1,args.proposed_t2,args.fit_first_t1,args.fit_first_t2,args.native_reference,args.myocardium_bundle)): raise ValueError('paired real evaluation requires both methods, references, and masks')
+        ref_root=Path(args.native_reference); reference=np.load(ref_root/'sax.npz'); masks=np.load(Path(args.myocardium_bundle)/'sax_myocardium_masks.npz'); methods={'proposed':{},'fit_first':{}}
+        volumes={'proposed':{'t1_ms':nib.load(args.proposed_t1),'t2_ms':nib.load(args.proposed_t2)},'fit_first':{'t1_ms':nib.load(args.fit_first_t1),'t2_ms':nib.load(args.fit_first_t2)}}
+        for parameter in ('t1_ms','t2_ms'):
+            native=nib.load(str(ref_root/('sax_T1_stack_ms.nii.gz' if parameter=='t1_ms' else 'sax_T2_stack_ms.nii.gz'))); rows=[]; aggregate_reference=[]; aggregate_predictions={'proposed':[],'fit_first':[]}; total_support=0; common_support=0
+            for group in range(reference[parameter].shape[0]):
+                proposed,pvalid=reproject_volume_to_native_plane(volumes['proposed'][parameter].get_fdata(),volumes['proposed'][parameter].affine,native.affine,reference[parameter].shape[1:],group); baseline,bvalid=reproject_volume_to_native_plane(volumes['fit_first'][parameter].get_fdata(),volumes['fit_first'][parameter].affine,native.affine,reference[parameter].shape[1:],group); support=masks['myocardium_full'][group].astype(bool); total_support+=int(support.sum()); common=support & np.isfinite(reference[parameter][group]) & pvalid & bvalid & np.isfinite(proposed) & np.isfinite(baseline)
+                if not common.any(): rows.append({'group_index':int(group),'status':'no_common_myocardium_support','support_voxels':0,'coverage_fraction':0.0}); continue
+                pair=real_native_paired_agreement(reference[parameter][group],proposed,baseline,support,pvalid,bvalid); common_support+=int(common.sum()); pair.update({'group_index':int(group),'support_pixel_count':int(support.sum()),'coverage_fraction':float(common.sum()/support.sum())}); rows.append(pair); aggregate_reference.append(reference[parameter][group][common]); aggregate_predictions['proposed'].append(proposed[common]); aggregate_predictions['fit_first'].append(baseline[common])
+            if not aggregate_reference: raise ValueError(f'{args.subject}/{parameter} has no common SAX myocardium support')
+            for method in ('proposed','fit_first'):
+                aggregate=_metrics(np.concatenate(aggregate_reference),np.concatenate(aggregate_predictions[method]),np.ones(sum(map(len,aggregate_reference)),bool)); aggregate.update({'endpoint':'native-reference agreement/consistency, not accuracy versus ground truth','primary_region':'common_sax_myocardium','support_equation':'SAX_myocardium AND finite(reference) AND proposed_reprojection_valid AND fit_first_reprojection_valid AND finite(proposed, fit_first)','statistical_unit':'subject; common valid SAX myocardium pixels aggregated; pixels are not inferential samples','coverage_fraction':common_support/total_support,'common_support_count':common_support,'total_myocardium_support_count':total_support}); methods[method][parameter]={'subject_level':aggregate,'per_native_sax_plane':[{**{key:value for key,value in row.items() if key not in ('proposed','fit_first')},**row[method]} for row in rows]}
+        output.parent.mkdir(parents=True,exist_ok=True); output.write_text(json.dumps({'subject':args.subject,'endpoint':'agreement/consistency, not 3-D ground-truth accuracy','pairwise_common_support':True,'methods':methods},indent=2)); print(output); return
     if args.mode == 'real':
         if not all((args.subject,args.real_t1,args.real_t2,args.native_reference,args.myocardium_bundle)): raise ValueError('real evaluation requires subject, T1/T2 volumes, current reference, and masks')
         ref_root=Path(args.native_reference); reference=np.load(ref_root/'sax.npz'); masks=np.load(Path(args.myocardium_bundle)/'sax_myocardium_masks.npz'); result={}

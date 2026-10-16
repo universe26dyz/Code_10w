@@ -9,7 +9,7 @@ import pytest
 from paper_experiments.joint_vs_2dfit.phase2_clean.aggregate_real import (
     bland_altman, paired_r0_comparison, pooled_r1_fold_metrics, summarize_r1_subjects,
 )
-from paper_experiments.joint_vs_2dfit.phase2_clean.evaluation import heldout_quantitative_metrics, real_native_agreement
+from paper_experiments.joint_vs_2dfit.phase2_clean.evaluation import heldout_quantitative_metrics, real_native_agreement, real_native_paired_agreement
 from paper_experiments.joint_vs_2dfit.phase2_clean.sparse import build_sparse_condition
 
 
@@ -105,6 +105,19 @@ def test_r0_metrics_means_bland_altman_and_subject_aggregation() -> None:
         {"subject": "CYJ", "method": "proposed", "level": "L50", "parameter": "t1_ms", "phase": 1, "pooled_rmse": 14.0},
     ])
     assert summary[0]["rmse"] == 12.0 and summary[0]["fold_count"] == 2
+
+
+def test_r0_paired_evaluation_uses_identical_common_myocardium_support() -> None:
+    reference = np.array([[1000.0, 1100.0], [1200.0, 1300.0]])
+    proposed = reference + 10.0
+    baseline = reference - 10.0
+    myocardium = np.ones_like(reference, bool)
+    proposed_valid = np.array([[True, True], [True, False]])
+    baseline_valid = np.array([[True, True], [False, True]])
+    report = real_native_paired_agreement(reference, proposed, baseline, myocardium, proposed_valid, baseline_valid)
+    assert report["common_support_voxels"] == 2
+    assert report["proposed"]["support_voxels"] == report["fit_first"]["support_voxels"] == 2
+    assert report["proposed"]["reference_mean_ms"] == report["fit_first"]["reference_mean_ms"] == 1050.0
 
 
 def test_r1_subject_uses_equal_fold_weighting_not_plane_weighting() -> None:
