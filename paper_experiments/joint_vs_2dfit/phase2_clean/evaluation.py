@@ -30,7 +30,7 @@ def _metrics(reference: np.ndarray, prediction: np.ndarray, mask: np.ndarray, co
     pearson=float(np.corrcoef(r,p)[0,1]) if len(r)>1 and np.std(r)>0 and np.std(p)>0 else float("nan")
     ncc=float(np.dot(r-r.mean(),p-p.mean())/(np.linalg.norm(r-r.mean())*np.linalg.norm(p-p.mean()))) if np.std(r)>0 and np.std(p)>0 else float("nan")
     constant = np.std(r) == 0
-    return {"bias":float(diff.mean()),"mae":float(np.abs(diff).mean()),"rmse":rmse,"relative_nrmse":rmse/(float(constant_normalization) if constant_normalization is not None else (rng if rng else float('nan'))),"valid_mape":float(np.mean(np.abs(diff[r!=0]/r[r!=0]))*100) if np.any(r!=0) else float("nan"),"pearson_r":None if constant else pearson,"ncc":None if constant else ncc,"correlation_status":"not_applicable_constant_reference" if constant else "applicable","ssim":None,"support_voxels":int(len(r))}
+    return {"bias":float(diff.mean()),"mae":float(np.abs(diff).mean()),"rmse":rmse,"relative_nrmse":rmse/(float(constant_normalization) if constant_normalization is not None else (rng if rng else float('nan'))),"valid_mape":float(np.mean(np.abs(diff[r!=0]/r[r!=0]))*100) if np.any(r!=0) else float("nan"),"pearson_r":None if constant else pearson,"ncc":None if constant else ncc,"correlation_status":"not_applicable_constant_reference" if constant else "applicable","ssim":None,"ssim_status":"not_implemented","support_voxels":int(len(r)),"reference_mean_ms":float(r.mean()),"prediction_mean_ms":float(p.mean()),"mean_difference_ms":float(diff.mean())}
 
 def synthetic_metrics(reference: np.ndarray, prediction: np.ndarray, myocardium_full: np.ndarray, valid: np.ndarray, normalization: float | None = None) -> dict:
     support=np.asarray(myocardium_full,bool)&np.asarray(valid,bool)&np.isfinite(reference)&np.isfinite(prediction)
@@ -38,6 +38,26 @@ def synthetic_metrics(reference: np.ndarray, prediction: np.ndarray, myocardium_
 
 def real_native_agreement(reference: np.ndarray, prediction: np.ndarray, myocardium_mask: np.ndarray) -> dict:
     report=_metrics(reference,prediction,np.asarray(myocardium_mask,bool)&np.isfinite(reference)&np.isfinite(prediction)); report["endpoint"]="native-reference agreement/consistency, not accuracy versus ground truth"; return report
+
+def heldout_quantitative_metrics(reference: np.ndarray, proposed: np.ndarray, fit_first: np.ndarray, source_support: np.ndarray, reprojection_valid: np.ndarray) -> dict:
+    """Evaluate both methods on one immutable, common held-out-plane support.
+
+    The support is derived from native source masks/dictionary validity and
+    geometry, then intersected with both prediction finiteness gates.  Thus a
+    non-finite value is excluded equally from both methods and neither method
+    receives a private support mask.
+    """
+    reference, proposed, fit_first = (np.asarray(value, float) for value in (reference, proposed, fit_first))
+    source_support, reprojection_valid = (np.asarray(value, bool) for value in (source_support, reprojection_valid))
+    if not (reference.shape == proposed.shape == fit_first.shape == source_support.shape == reprojection_valid.shape):
+        raise ValueError("held-out arrays must share one plane shape")
+    common = source_support & reprojection_valid & np.isfinite(reference) & np.isfinite(proposed) & np.isfinite(fit_first)
+    if not common.any():
+        raise ValueError("empty common held-out quantitative support")
+    result = {"endpoint":"held-out native-plane quantitative agreement/generalization, not true 3-D accuracy","primary_region":"heldout_full_valid_slice","support_equation":"source_foreground AND native_dictionary_finite AND common_world_reprojection_valid AND finite(reference, proposed, fit_first)","common_support_voxels":int(common.sum()),"source_support_voxels":int(source_support.sum()),"proposed":_metrics(reference,proposed,common),"fit_first":_metrics(reference,fit_first,common)}
+    for value in result.values():
+        if isinstance(value, dict): value["coverage_fraction"] = float(common.sum() / source_support.sum()) if source_support.any() else 0.0
+    return result
 
 def main() -> None:
     import argparse, json, nibabel as nib
@@ -54,11 +74,11 @@ def main() -> None:
                 predicted, valid = reproject_volume_to_native_plane(image.get_fdata(),image.affine,native.affine,reference[parameter].shape[1:],group)
                 support=masks['myocardium_full'][group].astype(bool); total_support += int(support.sum()); valid_plane=support & valid & np.isfinite(reference[parameter][group]) & np.isfinite(predicted); valid_support += int(valid_plane.sum())
                 if valid_plane.any():
-                    row=real_native_agreement(reference[parameter][group],predicted,valid_plane); row['group_index']=int(group); rows.append(row)
+                    row=real_native_agreement(reference[parameter][group],predicted,valid_plane); row['group_index']=int(group); row['support_pixel_count']=int(support.sum()); row['coverage_fraction']=float(valid_plane.sum()/support.sum()); rows.append(row)
                     aggregate_reference.append(reference[parameter][group][valid_plane]); aggregate_prediction.append(predicted[valid_plane])
                 else: rows.append({'group_index':int(group),'status':'no_valid_myocardium_support','support_voxels':0,'coverage_fraction':0.0})
             if not aggregate_reference: raise ValueError(f'{args.subject}/{parameter} has no valid myocardium support')
-            aggregate=_metrics(np.concatenate(aggregate_reference),np.concatenate(aggregate_prediction),np.ones(sum(map(len,aggregate_reference)),bool)); aggregate.update({'endpoint':'native-reference agreement/consistency, not accuracy versus ground truth','statistical_unit':'subject; all valid SAX myocardium pixels aggregated','coverage_fraction':valid_support/total_support,'valid_support_count':valid_support,'total_myocardium_support_count':total_support})
+            aggregate=_metrics(np.concatenate(aggregate_reference),np.concatenate(aggregate_prediction),np.ones(sum(map(len,aggregate_reference)),bool)); aggregate.update({'endpoint':'native-reference agreement/consistency, not accuracy versus ground truth','statistical_unit':'subject; all valid SAX myocardium pixels aggregated; pixels are not inferential samples','coverage_fraction':valid_support/total_support,'valid_support_count':valid_support,'total_myocardium_support_count':total_support})
             result[parameter]={'subject_level':aggregate,'per_native_sax_plane':rows}
         output.parent.mkdir(parents=True,exist_ok=True); output.write_text(json.dumps({'subject':args.subject,'endpoint':'agreement/consistency, not 3-D ground-truth accuracy','metrics':result},indent=2)); print(output); return
     if not all((args.synthetic_t1,args.synthetic_t2,args.gt_maps)): raise ValueError('synthetic evaluation requires T1/T2 NIfTI and Phase-1.2 GT maps')
