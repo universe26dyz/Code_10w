@@ -25,6 +25,9 @@ from trad.evaluation.scmr.quality_control import (
 from .evaluation import _world_sample, reproject_volume_to_native_plane
 
 
+R0_SUBJECTS = ("CYJ", "DYZ", "HHZ", "HJL")
+
+
 @dataclass(frozen=True)
 class Panel:
     data: np.ndarray
@@ -309,6 +312,53 @@ def validate_fit_first_scale(run_root: str | Path, parameter: str, normalized: s
     return {"result_json": str(result), "output_intensity_mean": mean, "normalized": str(normalized), "ms": str(ms), "model": str(root / "model.pt"), "scale_ms": scale}
 
 
+def _require_file(path: Path, label: str) -> Path:
+    if not path.is_file():
+        raise FileNotFoundError(f"missing required {label}: {path}")
+    return path
+
+
+def r0_reference_mask_provenance(native_reference: str | Path, myocardium_bundle: str | Path) -> dict[str, str]:
+    """Hash actual R0 reference and mask artifacts under unambiguous field names."""
+    reference, masks = Path(native_reference), Path(myocardium_bundle)
+    files = {
+        "native_reference_manifest_path": _require_file(reference / "native_reference_manifest.json", "native reference manifest"),
+        "native_reference_sax_npz_path": _require_file(reference / "sax.npz", "native reference sax npz"),
+        "myocardium_manifest_path": _require_file(masks / "manifest.json", "myocardium mask manifest"),
+        "myocardium_masks_npz_path": _require_file(masks / "sax_myocardium_masks.npz", "myocardium masks npz"),
+    }
+    result: dict[str, str] = {}
+    for name, path in files.items():
+        result[name] = str(path.resolve())
+        result[name.removesuffix("_path") + "_sha256"] = _sha256(path)
+    return result
+
+
+def preflight_r0_inputs(proposed_root: str | Path, fit_first_root: str | Path, data_root: str | Path) -> dict[str, Any]:
+    """Validate every formal R0 input without creating output directories."""
+    proposed_root, fit_first_root, data_root = (Path(value) for value in (proposed_root, fit_first_root, data_root))
+    subjects: dict[str, dict[str, Any]] = {}
+    for subject in R0_SUBJECTS:
+        proposed = proposed_root / subject
+        proposed_t1 = _require_file(proposed / "T1_3D.nii.gz", "proposed T1")
+        proposed_t2 = _require_file(proposed / "T2_3D.nii.gz", "proposed T2")
+        fit = fit_first_root / subject / "nesvor"
+        fit_t1, fit_t2 = fit / "t1", fit / "t2"
+        reference = data_root / "reference_data" / "phase2_clean" / subject / "native_reference_2d"
+        masks = data_root / "reference_data" / "phase2_clean" / subject / "myocardium_masks_v1"
+        for path, label in ((reference / "sax.npz", "native reference sax npz"), (reference / "sax_T1_stack_ms.nii.gz", "native reference T1 stack"), (reference / "sax_T2_stack_ms.nii.gz", "native reference T2 stack")):
+            _require_file(path, label)
+        provenance = r0_reference_mask_provenance(reference, masks)
+        subjects[subject] = {
+            "proposed_t1": str(proposed_t1.resolve()), "proposed_t2": str(proposed_t2.resolve()),
+            "fit_first_t1": validate_fit_first_scale(fit_t1, "T1"),
+            "fit_first_t2": validate_fit_first_scale(fit_t2, "T2"),
+            "native_reference": str(reference.resolve()), "myocardium_bundle": str(masks.resolve()),
+            "reference_mask_provenance": provenance,
+        }
+    return {"subjects": subjects, "status": "PASS", "output_creation": "none"}
+
+
 def finite_value_summary(values: np.ndarray) -> dict[str, Any]:
     finite = np.asarray(values, float)[np.isfinite(values)]
     if not finite.size:
@@ -349,6 +399,7 @@ def render_r0(
     if root.exists():
         raise FileExistsError(f"refusing overwrite: {root}")
     ref_root, mask_root = Path(native_reference), Path(myocardium_bundle)
+    reference_mask_provenance = r0_reference_mask_provenance(ref_root, mask_root)
     reference, masks = np.load(ref_root / "sax.npz"), np.load(mask_root / "sax_myocardium_masks.npz")
     native_images = {"T1": nib.load(str(ref_root / "sax_T1_stack_ms.nii.gz")), "T2": nib.load(str(ref_root / "sax_T2_stack_ms.nii.gz"))}
     proposed_images = {"T1": nib.load(str(proposed_t1)), "T2": nib.load(str(proposed_t2))}
@@ -385,7 +436,7 @@ def render_r0(
         records[parameter] = [{"group_index": item["group_index"], "common_support_voxels": item["common_support_voxels"]} for item in planes]
         if all_slices:
             outputs[parameter]["all_slice_montage"] = render_all_slice_montage(parameter, planes, root / parameter / "all_slices" / f"{parameter}_all_slice_montage.png", title=f"{subject} R0 SAX all-slice QC — {parameter}", metadata=metadata)
-    provenance = {"subject": subject, "mode": "R0", "method_paths": {"proposed_t1": str(proposed_t1), "proposed_t2": str(proposed_t2), "fit_first_t1": str(fit_first_t1), "fit_first_t2": str(fit_first_t2)}, "fit_first_scale_contract": fit_scale, "range_unit_audit": {"proposed": {parameter: finite_value_summary(proposed_images[parameter].get_fdata()) for parameter in ("T1", "T2")}, "fit_first": {parameter: finite_value_summary(fit_images[parameter].get_fdata()) for parameter in ("T1", "T2")}, "units": "ms"}, "metric_contract_audit": metric_contract_audit(), "reference_manifest_hash": _sha256(ref_root / "sax.npz"), "myocardium_bundle_hash": _sha256(mask_root / "sax_myocardium_masks.npz"), "source_git_sha": _git_sha(), "selected_groups": selected, "all_groups": records, "outputs": outputs, "colorbars": colorbars().metadata, "endpoint_semantics": "R0 primary region is common SAX myocardium; figures are publication/QC visualization only"}
+    provenance = {"subject": subject, "mode": "R0", "method_paths": {"proposed_t1": str(proposed_t1), "proposed_t2": str(proposed_t2), "fit_first_t1": str(fit_first_t1), "fit_first_t2": str(fit_first_t2)}, "fit_first_scale_contract": fit_scale, "range_unit_audit": {"proposed": {parameter: finite_value_summary(proposed_images[parameter].get_fdata()) for parameter in ("T1", "T2")}, "fit_first": {parameter: finite_value_summary(fit_images[parameter].get_fdata()) for parameter in ("T1", "T2")}, "units": "ms"}, "metric_contract_audit": metric_contract_audit(), **reference_mask_provenance, "source_git_sha": _git_sha(), "selected_groups": selected, "all_groups": records, "outputs": outputs, "colorbars": colorbars().metadata, "endpoint_semantics": "R0 primary region is common SAX myocardium; figures are publication/QC visualization only"}
     (root / "formal_figure_metadata.json").write_text(json.dumps(provenance, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return root
 
@@ -441,26 +492,31 @@ def render_r1_from_heldout(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--mode", choices=("r0", "r1"), required=True)
-    parser.add_argument("--subject", required=True)
+    parser.add_argument("--mode", choices=("r0", "r1", "r0-preflight"), required=True)
+    parser.add_argument("--subject")
     parser.add_argument("--native-reference")
     parser.add_argument("--myocardium-bundle")
-    parser.add_argument("--proposed-t1", required=True); parser.add_argument("--proposed-t2", required=True)
-    parser.add_argument("--fit-first-t1", required=True); parser.add_argument("--fit-first-t2", required=True)
-    parser.add_argument("--output", required=True); parser.add_argument("--group", type=int); parser.add_argument("--all-slices", action="store_true"); parser.add_argument("--heldout-root"); parser.add_argument("--stack")
+    parser.add_argument("--proposed-t1"); parser.add_argument("--proposed-t2")
+    parser.add_argument("--fit-first-t1"); parser.add_argument("--fit-first-t2")
+    parser.add_argument("--output"); parser.add_argument("--group", type=int); parser.add_argument("--all-slices", action="store_true"); parser.add_argument("--heldout-root"); parser.add_argument("--stack")
+    parser.add_argument("--proposed-root"); parser.add_argument("--fit-first-root"); parser.add_argument("--data-root")
     args = parser.parse_args()
-    if args.mode == "r0":
-        if not args.native_reference or not args.myocardium_bundle:
-            raise ValueError("R0 requires --native-reference and --myocardium-bundle")
+    if args.mode == "r0-preflight":
+        if not all((args.proposed_root, args.fit_first_root, args.data_root)):
+            raise ValueError("R0 preflight requires --proposed-root, --fit-first-root, and --data-root")
+        print(json.dumps(preflight_r0_inputs(args.proposed_root, args.fit_first_root, args.data_root), indent=2, sort_keys=True))
+    elif args.mode == "r0":
+        if not all((args.subject, args.native_reference, args.myocardium_bundle, args.proposed_t1, args.proposed_t2, args.fit_first_t1, args.fit_first_t2, args.output)):
+            raise ValueError("R0 requires subject, reference/mask, both method maps, and output")
         values = vars(args).copy()
-        for key in ("mode", "heldout_root", "stack"):
+        for key in ("mode", "heldout_root", "stack", "proposed_root", "fit_first_root", "data_root"):
             values.pop(key)
         print(render_r0(**values))
     else:
-        if not args.heldout_root or not args.stack:
-            raise ValueError("R1 requires --heldout-root and --stack")
+        if not all((args.heldout_root, args.stack, args.proposed_t1, args.proposed_t2, args.fit_first_t1, args.fit_first_t2, args.output)):
+            raise ValueError("R1 requires heldout root, stack, both method maps, and output")
         values = vars(args).copy()
-        for key in ("mode", "native_reference", "myocardium_bundle", "all_slices", "subject"):
+        for key in ("mode", "native_reference", "myocardium_bundle", "all_slices", "subject", "proposed_root", "fit_first_root", "data_root"):
             values.pop(key)
         print(render_r1_from_heldout(**values))
 

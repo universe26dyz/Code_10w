@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
+import shutil
+import subprocess
 
 import numpy as np
 import pytest
@@ -69,7 +72,7 @@ def _fit_layout(root: Path, *, mean: float, scale: float) -> tuple[Path, Path]:
     import nibabel as nib
 
     normalized, ms = root / "volume_normalized.nii.gz", root / "volume_ms.nii.gz"
-    root.mkdir()
+    root.mkdir(parents=True)
     nib.save(nib.Nifti1Image(np.full((2, 2, 2), 0.4), np.eye(4)), normalized)
     nib.save(nib.Nifti1Image(np.full((2, 2, 2), 0.4 * scale), np.eye(4)), ms)
     (root / "result.json").write_text(json.dumps({"output_intensity_mean": mean}))
@@ -104,3 +107,96 @@ def test_heldout_support_matches_evaluator_support() -> None:
     expected = source & valid & np.isfinite(reference) & np.isfinite(proposed) & np.isfinite(fit_first)
     actual = viz.paired_common_support("2ch", reference, proposed, fit_first, source, reprojection_valid=valid)
     assert np.array_equal(actual, expected)
+
+
+def _r0_inputs(root: Path, *, mean: float = 0, t1_scale: float = 2500.0, t2_scale: float = 200.0) -> tuple[Path, Path, Path]:
+    proposed, fit, data = root / "proposed", root / "fit", root / "data"
+    for subject in ("CYJ", "DYZ", "HHZ", "HJL"):
+        subject_proposed = proposed / subject
+        subject_proposed.mkdir(parents=True)
+        (subject_proposed / "T1_3D.nii.gz").write_bytes(b"proposed")
+        (subject_proposed / "T2_3D.nii.gz").write_bytes(b"proposed")
+        for parameter, scale in (("t1", t1_scale), ("t2", t2_scale)):
+            normalized, ms = _fit_layout(fit / subject / "nesvor" / parameter, mean=mean, scale=scale)
+            assert normalized.is_file() and ms.is_file()
+        reference = data / "reference_data" / "phase2_clean" / subject / "native_reference_2d"
+        reference.mkdir(parents=True)
+        for name in ("sax.npz", "sax_T1_stack_ms.nii.gz", "sax_T2_stack_ms.nii.gz", "native_reference_manifest.json"):
+            (reference / name).write_text(name)
+        masks = data / "reference_data" / "phase2_clean" / subject / "myocardium_masks_v1"
+        masks.mkdir()
+        (masks / "sax_myocardium_masks.npz").write_text("masks")
+        (masks / "manifest.json").write_text("mask manifest")
+    return proposed, fit, data
+
+
+def test_r0_preflight_rejects_mean_700_before_any_output(tmp_path: Path) -> None:
+    proposed, fit, data = _r0_inputs(tmp_path, mean=700)
+    output = tmp_path / "formal_output"
+    with pytest.raises(ValueError, match="mean-700"):
+        viz.preflight_r0_inputs(proposed, fit, data)
+    assert not output.exists()
+
+
+def test_direct_r0_evaluation_script_rejects_mean_700_before_output_creation(tmp_path: Path) -> None:
+    proposed, fit, data = _r0_inputs(tmp_path, mean=700)
+    script = Path(__file__).resolve().parents[1] / "phase2_clean" / "server_commands" / "evaluate_real_full.sh"
+    output = tmp_path / "formal_evaluation"
+    completed = subprocess.run(["bash", str(script), str(proposed), str(fit), str(output)], env={**os.environ, "REPO": str(Path(__file__).resolve().parents[3]), "DATA": str(data), "PHASE4R_PYTHON": os.sys.executable}, capture_output=True, text=True)
+    assert completed.returncode != 0
+    assert "mean-700" in completed.stderr
+    assert not output.exists()
+
+
+@pytest.mark.parametrize(("parameter", "scale"), (("t1", 2499.0), ("t2", 199.0)))
+def test_r0_preflight_rejects_wrong_scale_before_any_output(tmp_path: Path, parameter: str, scale: float) -> None:
+    proposed, fit, data = _r0_inputs(tmp_path, **{f"{parameter}_scale": scale})
+    with pytest.raises(ValueError, match="does not satisfy"):
+        viz.preflight_r0_inputs(proposed, fit, data)
+    assert not (tmp_path / "formal_output").exists()
+
+
+def test_r0_preflight_accepts_all_four_valid_subjects(tmp_path: Path) -> None:
+    proposed, fit, data = _r0_inputs(tmp_path)
+    report = viz.preflight_r0_inputs(proposed, fit, data)
+    assert list(report["subjects"]) == ["CYJ", "DYZ", "HHZ", "HJL"]
+
+
+@pytest.mark.parametrize(("relative", "expected"), (("proposed/CYJ/T1_3D.nii.gz", "proposed"), ("data/reference_data/phase2_clean/CYJ/native_reference_2d/sax.npz", "reference"), ("data/reference_data/phase2_clean/CYJ/myocardium_masks_v1/manifest.json", "mask")))
+def test_r0_preflight_rejects_missing_required_input(tmp_path: Path, relative: str, expected: str) -> None:
+    proposed, fit, data = _r0_inputs(tmp_path)
+    (tmp_path / relative).unlink()
+    with pytest.raises(FileNotFoundError, match=expected):
+        viz.preflight_r0_inputs(proposed, fit, data)
+
+
+def test_r0_provenance_names_manifests_and_npz_hashes_correctly(tmp_path: Path) -> None:
+    proposed, fit, data = _r0_inputs(tmp_path)
+    report = viz.preflight_r0_inputs(proposed, fit, data)
+    subject = report["subjects"]["CYJ"]
+    provenance = viz.r0_reference_mask_provenance(Path(subject["native_reference"]), Path(subject["myocardium_bundle"]))
+    assert provenance["native_reference_manifest_sha256"] == viz._sha256(provenance["native_reference_manifest_path"])
+    assert provenance["native_reference_sax_npz_sha256"] == viz._sha256(provenance["native_reference_sax_npz_path"])
+    assert provenance["myocardium_manifest_sha256"] == viz._sha256(provenance["myocardium_manifest_path"])
+    assert provenance["myocardium_masks_npz_sha256"] == viz._sha256(provenance["myocardium_masks_npz_path"])
+
+
+def test_combined_wrapper_cleans_staging_and_never_publishes_on_late_failure(tmp_path: Path) -> None:
+    source = Path(__file__).resolve().parents[1] / "phase2_clean" / "server_commands" / "evaluate_and_visualize_real_full.sh"
+    repo = tmp_path / "repo"
+    target = repo / "paper_experiments" / "joint_vs_2dfit" / "phase2_clean" / "server_commands"
+    target.mkdir(parents=True)
+    wrapper = target / source.name
+    shutil.copy2(source, wrapper)
+    evaluation = target / "evaluate_real_full.sh"
+    evaluation.write_text("#!/usr/bin/env bash\nset -eu\nmkdir -p \"$3\"\ntouch \"$3/CYJ_paired.json\"\n")
+    evaluation.chmod(0o755)
+    fake_python = tmp_path / "fake_python.sh"
+    fake_python.write_text("#!/usr/bin/env bash\ncase \"$*\" in *r0-preflight*) exit 0;; *) exit 9;; esac\n")
+    fake_python.chmod(0o755)
+    final_evaluation, final_figures = tmp_path / "evaluation", tmp_path / "figures"
+    completed = subprocess.run(["bash", str(wrapper), "proposed", "fit", str(final_evaluation), str(final_figures)], env={**os.environ, "REPO": str(repo), "PHASE4R_PYTHON": str(fake_python)}, capture_output=True, text=True)
+    assert completed.returncode == 9
+    assert not final_evaluation.exists() and not final_figures.exists()
+    assert not list(tmp_path.glob(".evaluation.staging-*"))
+    assert not list(tmp_path.glob(".figures.staging-*"))
