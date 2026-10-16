@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import shlex
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -11,6 +13,8 @@ from paper_experiments.joint_vs_2dfit.phase2_clean.aggregate_real import (
 )
 from paper_experiments.joint_vs_2dfit.phase2_clean.evaluation import heldout_quantitative_metrics, paired_per_plane_records, real_native_agreement, real_native_paired_agreement
 from paper_experiments.joint_vs_2dfit.phase2_clean.sparse import build_sparse_condition
+from paper_experiments.joint_vs_2dfit.phase2_clean import proposed
+from paper_experiments.joint_vs_2dfit.phase2_clean.contracts import APPROVED_DECODER_SHA256
 
 
 def _observations(path: Path, group_ids: tuple[int, ...], *, missing_weight: bool = False) -> None:
@@ -135,6 +139,12 @@ def test_r0_aggregation_rejects_legacy_individual_method_json(tmp_path: Path) ->
     (tmp_path / "CYJ_proposed.json").write_text("{}")
     with pytest.raises(ValueError, match="paired common-support"):
         load_r0_paired_records(tmp_path)
+
+
+def test_proposed_command_uses_current_adapter_interpreter(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(proposed, "sha256", lambda _: APPROVED_DECODER_SHA256)
+    command = proposed.build_proposed_command("/prepared", "/decoder.pth", "/b6.pt", "/output")
+    assert shlex.split(command)[0] == sys.executable
 
 
 def test_r1_subject_uses_equal_fold_weighting_not_plane_weighting() -> None:
