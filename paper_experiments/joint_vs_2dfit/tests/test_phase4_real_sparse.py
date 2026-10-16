@@ -15,7 +15,8 @@ from paper_experiments.joint_vs_2dfit.phase2_clean.evaluation import heldout_qua
 from paper_experiments.joint_vs_2dfit.phase2_clean.sparse import build_sparse_condition
 from paper_experiments.joint_vs_2dfit.phase2_clean import proposed
 from paper_experiments.joint_vs_2dfit.phase2_clean.contracts import APPROVED_DECODER_SHA256
-from paper_experiments.joint_vs_2dfit.phase2_clean.fit_first import build_independent_nesvor_commands
+from paper_experiments.joint_vs_2dfit.phase2_clean import fit_first
+from paper_experiments.joint_vs_2dfit.phase2_clean.fit_first import build_independent_nesvor_commands, reuse_native_maps
 
 
 def _observations(path: Path, group_ids: tuple[int, ...], *, missing_weight: bool = False) -> None:
@@ -157,6 +158,78 @@ def test_fit_first_commands_disable_default_700_rescaling_and_save_models() -> N
         assert "--output-intensity-mean 700" not in command
         assert f"--scale {scale}" in command
         assert "--registration stack" in command and "--n-iter 10000" in command
+
+
+def _fake_dictionary(*_args: object) -> dict[str, np.ndarray]:
+    return {
+        "fingerprints": np.ones((1, 10), dtype=float),
+        "t1_ms": np.asarray([1111.0]),
+        "t2_ms": np.asarray([55.0]),
+        "b1": np.asarray([0.9]),
+    }
+
+
+def _full_native_maps(source: Path, destination: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    monkeypatch.setattr(fit_first, "frozen_dictionary", _fake_dictionary)
+    for stack in ("sax", "2ch", "4ch"):
+        fit_first.fit_native(source / "CYJ" / stack / "observations.npz", destination / stack)
+    return destination
+
+
+def test_r1_reuses_exact_retained_native_groups_without_heldout_leakage(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    source = _prepared(tmp_path / "prepared")
+    sparse = build_sparse_condition(source, "CYJ", "L50", 0, tmp_path / "sparse", git_sha="abc", audit_stack=lambda _: {"regular_gap": True, "gap_mm": 10.0, "group_count": 2})
+    full = _full_native_maps(source, tmp_path / "r0_native", monkeypatch)
+    reused = reuse_native_maps(full, sparse["manifest_path"], tmp_path / "r1_native")
+    direct = fit_first.fit_native(Path(sparse["prepared_root"]) / "2ch" / "observations.npz", tmp_path / "direct")
+    with np.load(reused / "2ch" / "native_maps.npz") as actual, np.load(direct / "native_maps.npz") as expected:
+        assert actual["group_idx"].tolist() == [4, 6]
+        for name in ("t1_ms", "t2_ms", "b1"):
+            assert np.array_equal(actual[name], expected[name], equal_nan=True)
+    with np.load(reused / "sax" / "native_maps.npz") as sax:
+        assert sax["group_idx"].tolist() == [4, 5, 6, 7]
+    provenance = json.loads((reused / "reuse_manifest.json").read_text())
+    assert provenance["native_fit_reuse_is_group_local"] is True
+    assert provenance["stacks"]["2ch"]["retained_original_group_ids"] == [4, 6]
+    assert provenance["stacks"]["2ch"]["heldout_original_group_ids"] == [5, 7]
+    assert provenance["stacks"]["2ch"]["nesvor_input_original_group_ids"] == [4, 6]
+
+
+def test_r1_native_reuse_rejects_hash_ineligible_and_duplicate_group_gates(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    source = _prepared(tmp_path / "prepared")
+    sparse = build_sparse_condition(source, "CYJ", "L50", 0, tmp_path / "sparse", git_sha="abc", audit_stack=lambda _: {"regular_gap": True, "gap_mm": 10.0, "group_count": 2})
+    full = _full_native_maps(source, tmp_path / "r0_native", monkeypatch)
+    manifest_path = Path(sparse["manifest_path"])
+    manifest = json.loads(manifest_path.read_text())
+    manifest["stacks"]["2ch"]["source_observation"]["sha256"] = "wrong"
+    bad_hash = tmp_path / "bad_hash.json"; bad_hash.write_text(json.dumps(manifest))
+    with pytest.raises(ValueError, match="source observation SHA256 mismatch"):
+        reuse_native_maps(full, bad_hash, tmp_path / "bad_hash")
+    manifest["status"] = "INELIGIBLE"
+    ineligible = tmp_path / "ineligible.json"; ineligible.write_text(json.dumps(manifest))
+    with pytest.raises(ValueError, match="ELIGIBLE"):
+        reuse_native_maps(full, ineligible, tmp_path / "ineligible")
+    with np.load(full / "2ch" / "native_maps.npz") as maps:
+        np.savez_compressed(full / "2ch" / "replacement.npz", t1_ms=maps["t1_ms"], t2_ms=maps["t2_ms"], b1=maps["b1"], group_idx=np.asarray([4, 4, 6, 7]))
+    (full / "2ch" / "native_maps.npz").unlink()
+    (full / "2ch" / "replacement.npz").rename(full / "2ch" / "native_maps.npz")
+    cached = json.loads((full / "2ch" / "manifest.json").read_text())
+    cached["native_maps_sha256"] = fit_first.sha256(full / "2ch" / "native_maps.npz")
+    (full / "2ch" / "manifest.json").write_text(json.dumps(cached))
+    with pytest.raises(ValueError, match="exactly once"):
+        reuse_native_maps(full, manifest_path, tmp_path / "duplicate")
+
+
+def test_r1_native_reuse_refuses_l100_and_sparse_runners_use_r0_cache(tmp_path: Path) -> None:
+    source = _prepared(tmp_path / "prepared")
+    l100 = build_sparse_condition(source, "CYJ", "L100", 0, tmp_path / "sparse", git_sha="abc")
+    with pytest.raises(ValueError, match="L100 reuses R0"):
+        reuse_native_maps(tmp_path / "missing", l100["manifest_path"], tmp_path / "r1_native")
+    root = Path(__file__).resolve().parents[1] / "phase2_clean" / "server_commands"
+    for name in ("run_real_sparse_fit_first.sh", "run_real_sparse_pilot_fit_first.sh"):
+        text = (root / name).read_text()
+        assert "--reuse-native-maps-root" in text
+        assert "--sparse-manifest" in text
 
 
 def test_r1_subject_uses_equal_fold_weighting_not_plane_weighting() -> None:
