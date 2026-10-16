@@ -13,14 +13,36 @@ import numpy as np
 from .contracts import BASELINE_POSE_POLICY, sha256, write_immutable_json
 from .fit_first import NATIVE_FIT_METHOD, STACKS, _complete_source_group, _dictionary_contract, _native_group_audit
 
+HISTORICAL_DICTIONARY_DECLARATION = 'frozen current HHZ/TRAD grid; normalized cosine; no interpolation/refinement'
 
-def _migrate_stack(old_root: Path, prepared_root: Path, target: Path, stack: str, expected_observation_sha256: str | None) -> None:
+
+def _historical_manifest(old_root: Path, prepared_root: Path) -> tuple[Path, dict[str, object]]:
+    path = old_root.parent / 'input_manifest.json'
+    if not path.is_file():
+        raise FileNotFoundError(f'missing historical formal input_manifest.json: {path}')
+    historical = json.loads(path.read_text())
+    if historical.get('method') != 'fit_first':
+        raise ValueError('historical input_manifest method must be fit_first')
+    if historical.get('dictionary') != HISTORICAL_DICTIONARY_DECLARATION:
+        raise ValueError('historical input_manifest dictionary declaration does not match frozen current HHZ/TRAD contract')
+    declared_subject = historical.get('subject_id', historical.get('subject'))
+    if declared_subject is not None and str(declared_subject) != prepared_root.name:
+        raise ValueError('historical input_manifest subject identity does not match prepared artifact')
+    observations = historical.get('observations')
+    if not isinstance(observations, dict) or set(observations) != set(STACKS):
+        raise ValueError('historical input_manifest observations must contain SAX/2CH/4CH SHA256 values')
+    if any(not isinstance(observations[stack], str) for stack in STACKS):
+        raise ValueError('historical input_manifest observations must contain SHA256 strings')
+    return path, historical
+
+
+def _migrate_stack(old_root: Path, prepared_root: Path, target: Path, stack: str, historical_path: Path, historical: dict[str, object]) -> None:
     source = prepared_root / stack / 'observations.npz'
     old_stack, new_stack = old_root / stack, target / stack
     maps_path, geometry_path = old_stack / 'native_maps.npz', old_stack / 'geometry.npz'
     if not source.is_file() or not maps_path.is_file() or not geometry_path.is_file():
         raise FileNotFoundError(f'{stack}: migration requires prepared observations plus native maps and geometry')
-    if expected_observation_sha256 is not None and sha256(source) != expected_observation_sha256:
+    if sha256(source) != historical['observations'][stack]:
         raise ValueError(f'{stack}: prepared observation SHA256 does not match historical R0 provenance')
     with np.load(source, allow_pickle=False) as observations, np.load(maps_path, allow_pickle=False) as maps, np.load(geometry_path, allow_pickle=False) as geometry:
         for name in ('t1_ms', 't2_ms', 'b1', 'group_idx'):
@@ -52,10 +74,14 @@ def _migrate_stack(old_root: Path, prepared_root: Path, target: Path, stack: str
         'geometry_sha256': sha256(new_stack / 'geometry.npz'),
         'code_git_sha': subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip(),
         'migration_source_path': str(old_stack.resolve()),
-        'migration_source_sha256': sha256(maps_path),
         'migration_source_native_maps_sha256': sha256(maps_path),
         'migration_source_geometry_sha256': sha256(geometry_path),
         'migration_git_sha': subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip(),
+        'historical_input_manifest_path': str(historical_path.resolve()),
+        'historical_input_manifest_sha256': sha256(historical_path),
+        'historical_method': historical['method'],
+        'historical_dictionary_declaration': historical['dictionary'],
+        'historical_source_acceptance': 'accepted specifically as a pre-7a84b33 formal fit-first native fit',
         'numerical_fitting_rerun': False,
         'migration_statement': 'Audited copy of pre-7a84b33 native maps; numerical fitting was NOT rerun.',
         'baseline_pose_policy': BASELINE_POSE_POLICY,
@@ -71,10 +97,9 @@ def migrate_native_fit_cache(old_native_maps_root: str | Path, prepared_root: st
     target.parent.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(prefix=f'.{target.name}.staging-', dir=target.parent))
     try:
-        legacy_input_manifest = old_root.parent / 'input_manifest.json'
-        historical_observations = json.loads(legacy_input_manifest.read_text()).get('observations', {}) if legacy_input_manifest.is_file() else {}
+        historical_path, historical = _historical_manifest(old_root, prepared)
         for stack in STACKS:
-            _migrate_stack(old_root, prepared, staging, stack, historical_observations.get(stack))
+            _migrate_stack(old_root, prepared, staging, stack, historical_path, historical)
         if target.exists():
             raise FileExistsError(f'refusing overwrite: {target}')
         staging.rename(target)

@@ -232,7 +232,19 @@ def _legacy_native_maps(source: Path, destination: Path, monkeypatch: pytest.Mon
     shutil.copytree(full, destination)
     for stack in ("sax", "2ch", "4ch"):
         (destination / stack / "manifest.json").unlink()
+    (destination.parent / "input_manifest.json").write_text(json.dumps({
+        "method": "fit_first", "subject_id": "CYJ",
+        "dictionary": "frozen current HHZ/TRAD grid; normalized cosine; no interpolation/refinement",
+        "observations": {stack: fit_first.sha256(source / "CYJ" / stack / "observations.npz") for stack in ("sax", "2ch", "4ch")},
+    }))
     return destination
+
+
+def _update_historical_observation_hash(legacy: Path, source: Path, stack: str) -> None:
+    path = legacy.parent / "input_manifest.json"
+    payload = json.loads(path.read_text())
+    payload["observations"][stack] = fit_first.sha256(source / "CYJ" / stack / "observations.npz")
+    path.write_text(json.dumps(payload))
 
 
 def test_native_cache_migration_copies_without_refitting_and_is_reusable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -246,6 +258,9 @@ def test_native_cache_migration_copies_without_refitting_and_is_reusable(tmp_pat
         manifest = json.loads((migrated / stack / "manifest.json").read_text())
         assert manifest["numerical_fitting_rerun"] is False
         assert manifest["migration_source_path"] == str((legacy / stack).resolve())
+        assert manifest["historical_input_manifest_sha256"] == fit_first.sha256(legacy.parent / "input_manifest.json")
+        assert manifest["historical_method"] == "fit_first"
+        assert manifest["historical_dictionary_declaration"] == "frozen current HHZ/TRAD grid; normalized cosine; no interpolation/refinement"
     sparse = build_sparse_condition(source, "CYJ", "L50", 0, tmp_path / "sparse", git_sha="abc", audit_stack=lambda _: {"regular_gap": True, "gap_mm": 10.0, "group_count": 2})
     assert reuse_native_maps(migrated, sparse["manifest_path"], tmp_path / "reused").is_dir()
 
@@ -257,6 +272,7 @@ def test_native_cache_migration_rejects_invalid_source_and_leaves_no_partial_des
         data = {name: original[name] for name in original.files}
     data["tr_ms"] = np.full_like(data["tr_ms"], 2.5)
     np.savez_compressed(source / "CYJ" / "2ch" / "observations.npz", **data)
+    _update_historical_observation_hash(legacy, source, "2ch")
     destination = tmp_path / "migrated"
     with pytest.raises(ValueError, match="frozen timing/TR/VPS"):
         migrate_native_fit_cache(legacy, source / "CYJ", destination)
@@ -282,6 +298,7 @@ def test_native_cache_migration_rejects_group_and_vps_mismatches(tmp_path: Path,
         observations = {name: original[name] for name in original.files}
     observations["vps"] = np.full_like(observations["vps"], 86)
     np.savez_compressed(vps_source / "CYJ" / "sax" / "observations.npz", **observations)
+    _update_historical_observation_hash(vps_legacy, vps_source, "sax")
     with pytest.raises(ValueError, match="frozen timing/TR/VPS"):
         migrate_native_fit_cache(vps_legacy, vps_source / "CYJ", tmp_path / "bad_vps")
 
@@ -289,9 +306,32 @@ def test_native_cache_migration_rejects_group_and_vps_mismatches(tmp_path: Path,
 def test_native_cache_migration_rejects_historical_observation_identity_mismatch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     source = _prepared(tmp_path / "prepared")
     legacy = _legacy_native_maps(source, tmp_path / "legacy", monkeypatch)
-    (legacy.parent / "input_manifest.json").write_text(json.dumps({"observations": {stack: "wrong" for stack in ("sax", "2ch", "4ch")}}))
+    historical = legacy.parent / "input_manifest.json"
+    payload = json.loads(historical.read_text()); payload["observations"] = {stack: "wrong" for stack in ("sax", "2ch", "4ch")}; historical.write_text(json.dumps(payload))
     with pytest.raises(ValueError, match="historical R0 provenance"):
         migrate_native_fit_cache(legacy, source / "CYJ", tmp_path / "migrated")
+
+
+def test_native_cache_migration_requires_expected_historical_manifest_contract(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    source = _prepared(tmp_path / "prepared")
+    legacy = _legacy_native_maps(source, tmp_path / "legacy", monkeypatch)
+    historical = legacy.parent / "input_manifest.json"
+    historical.unlink()
+    with pytest.raises(FileNotFoundError, match="input_manifest"):
+        migrate_native_fit_cache(legacy, source / "CYJ", tmp_path / "missing")
+    _legacy_native_maps(source, tmp_path / "method_legacy", monkeypatch)
+    historical = tmp_path / "input_manifest.json"
+    payload = json.loads(historical.read_text()); payload["method"] = "proposed"; historical.write_text(json.dumps(payload))
+    with pytest.raises(ValueError, match="method"):
+        migrate_native_fit_cache(tmp_path / "method_legacy", source / "CYJ", tmp_path / "wrong_method")
+    _legacy_native_maps(source, tmp_path / "dictionary_legacy", monkeypatch)
+    payload = json.loads(historical.read_text()); payload["dictionary"] = "other"; historical.write_text(json.dumps(payload))
+    with pytest.raises(ValueError, match="dictionary"):
+        migrate_native_fit_cache(tmp_path / "dictionary_legacy", source / "CYJ", tmp_path / "wrong_dictionary")
+    _legacy_native_maps(source, tmp_path / "subject_legacy", monkeypatch)
+    payload = json.loads(historical.read_text()); payload["subject_id"] = "DYZ"; historical.write_text(json.dumps(payload))
+    with pytest.raises(ValueError, match="subject"):
+        migrate_native_fit_cache(tmp_path / "subject_legacy", source / "CYJ", tmp_path / "wrong_subject")
 
 
 def test_r0_cache_resolver_precedence_and_cohort_subject_paths() -> None:
