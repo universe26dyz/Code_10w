@@ -111,6 +111,19 @@ def paired_r0_comparison(rows: list[dict[str, object]], tolerance: float = 1e-6)
     return paired, summary
 
 
+def load_r0_paired_records(root: str | Path) -> list[tuple[str, str, dict[str, object]]]:
+    """Load only current common-support R0 records; legacy split-method JSON is forbidden."""
+    root = Path(root); legacy = sorted([*root.glob("*_proposed.json"), *root.glob("*_fit_first.json")])
+    if legacy: raise ValueError(f"R0 aggregation requires paired common-support JSON, not legacy split outputs: {legacy[0].name}")
+    records = []
+    for path in sorted(root.glob("*_paired.json")):
+        subject, _, suffix = path.stem.partition("_"); payload = json.loads(path.read_text())
+        if suffix != "paired" or payload.get("pairwise_common_support") is not True: raise ValueError(f"R0 paired evaluation lacks common-support provenance: {path}")
+        for method, metrics in payload["methods"].items(): records.append((subject, method, {"metrics": metrics}))
+    if not records: raise ValueError("R0 aggregation requires *_paired.json common-support evaluations")
+    return records
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--r1-plane-metrics"); parser.add_argument("--r1-evaluation-root"); parser.add_argument("--r0-evaluation-root"); parser.add_argument("--output-root", required=True)
@@ -118,16 +131,7 @@ def main() -> None:
     if output.exists(): raise FileExistsError(f"refusing overwrite: {output}")
     if sum(bool(value) for value in (args.r1_plane_metrics, args.r1_evaluation_root, args.r0_evaluation_root)) != 1: raise ValueError("provide exactly one input mode")
     if args.r0_evaluation_root:
-        records = []
-        for path in sorted(Path(args.r0_evaluation_root).glob("*_*.json")):
-            subject, separator, method = path.stem.partition("_"); payload = json.loads(path.read_text())
-            if not separator: raise ValueError(f"unexpected R0 evaluation filename: {path.name}")
-            if method == "paired":
-                if payload.get("pairwise_common_support") is not True: raise ValueError(f"R0 paired evaluation lacks common-support provenance: {path}")
-                for paired_method, metrics in payload["methods"].items(): records.append((subject, paired_method, {"metrics": metrics}))
-            elif method in ("proposed", "fit_first"):
-                records.append((subject, method, payload))
-            else: raise ValueError(f"unexpected R0 evaluation filename: {path.name}")
+        records = load_r0_paired_records(args.r0_evaluation_root)
         rows, summary = summarize_r0_evaluations(records); output.mkdir(parents=True)
         _write_csv(output / "R0_real_full_subject_table.csv", rows, ["subject", "method", "parameter"])
         _write_csv(output / "R0_real_full_paired_subject_table.csv", summary.pop("paired_subject_rows"), ["subject", "parameter", "delta_rmse"])

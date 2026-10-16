@@ -7,9 +7,9 @@ import numpy as np
 import pytest
 
 from paper_experiments.joint_vs_2dfit.phase2_clean.aggregate_real import (
-    bland_altman, paired_r0_comparison, pooled_r1_fold_metrics, summarize_r1_subjects,
+    bland_altman, load_r0_paired_records, paired_r0_comparison, pooled_r1_fold_metrics, summarize_r1_subjects,
 )
-from paper_experiments.joint_vs_2dfit.phase2_clean.evaluation import heldout_quantitative_metrics, real_native_agreement, real_native_paired_agreement
+from paper_experiments.joint_vs_2dfit.phase2_clean.evaluation import heldout_quantitative_metrics, paired_per_plane_records, real_native_agreement, real_native_paired_agreement
 from paper_experiments.joint_vs_2dfit.phase2_clean.sparse import build_sparse_condition
 
 
@@ -118,6 +118,23 @@ def test_r0_paired_evaluation_uses_identical_common_myocardium_support() -> None
     assert report["common_support_voxels"] == 2
     assert report["proposed"]["support_voxels"] == report["fit_first"]["support_voxels"] == 2
     assert report["proposed"]["reference_mean_ms"] == report["fit_first"]["reference_mean_ms"] == 1050.0
+
+
+def test_r0_zero_common_support_plane_is_retained_without_metric_key_error() -> None:
+    rows = [
+        {"group_index": 0, "proposed": {"rmse": 1.0}, "fit_first": {"rmse": 2.0}},
+        {"group_index": 1, "status": "no_common_myocardium_support", "support_voxels": 0, "coverage_fraction": 0.0},
+    ]
+    proposed = paired_per_plane_records(rows, "proposed")
+    baseline = paired_per_plane_records(rows, "fit_first")
+    assert proposed[1]["status"] == baseline[1]["status"] == "no_common_myocardium_support"
+    assert proposed[1]["support_voxels"] == baseline[1]["support_voxels"] == 0
+
+
+def test_r0_aggregation_rejects_legacy_individual_method_json(tmp_path: Path) -> None:
+    (tmp_path / "CYJ_proposed.json").write_text("{}")
+    with pytest.raises(ValueError, match="paired common-support"):
+        load_r0_paired_records(tmp_path)
 
 
 def test_r1_subject_uses_equal_fold_weighting_not_plane_weighting() -> None:

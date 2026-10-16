@@ -49,6 +49,15 @@ def real_native_paired_agreement(reference: np.ndarray, proposed: np.ndarray, fi
     result = {"endpoint":"native-reference agreement/consistency, not accuracy versus ground truth","primary_region":"common_sax_myocardium","support_equation":"SAX_myocardium AND finite(reference) AND proposed_reprojection_valid AND fit_first_reprojection_valid AND finite(proposed, fit_first)","common_support_voxels":int(common.sum()),"proposed":_metrics(reference, proposed, common),"fit_first":_metrics(reference, fit_first, common)}
     return result
 
+def paired_per_plane_records(rows: list[dict], method: str) -> list[dict]:
+    """Expand common-support plane records safely, retaining zero-support status rows."""
+    if method not in ("proposed", "fit_first"): raise ValueError(f"unknown paired method: {method}")
+    records = []
+    for row in rows:
+        base = {key: value for key, value in row.items() if key not in ("proposed", "fit_first")}
+        records.append({**base, **row[method]} if method in row else base)
+    return records
+
 def heldout_quantitative_metrics(reference: np.ndarray, proposed: np.ndarray, fit_first: np.ndarray, source_support: np.ndarray, reprojection_valid: np.ndarray) -> dict:
     """Evaluate both methods on one immutable, common held-out-plane support.
 
@@ -87,7 +96,7 @@ def main() -> None:
                 pair=real_native_paired_agreement(reference[parameter][group],proposed,baseline,support,pvalid,bvalid); common_support+=int(common.sum()); pair.update({'group_index':int(group),'support_pixel_count':int(support.sum()),'coverage_fraction':float(common.sum()/support.sum())}); rows.append(pair); aggregate_reference.append(reference[parameter][group][common]); aggregate_predictions['proposed'].append(proposed[common]); aggregate_predictions['fit_first'].append(baseline[common])
             if not aggregate_reference: raise ValueError(f'{args.subject}/{parameter} has no common SAX myocardium support')
             for method in ('proposed','fit_first'):
-                aggregate=_metrics(np.concatenate(aggregate_reference),np.concatenate(aggregate_predictions[method]),np.ones(sum(map(len,aggregate_reference)),bool)); aggregate.update({'endpoint':'native-reference agreement/consistency, not accuracy versus ground truth','primary_region':'common_sax_myocardium','support_equation':'SAX_myocardium AND finite(reference) AND proposed_reprojection_valid AND fit_first_reprojection_valid AND finite(proposed, fit_first)','statistical_unit':'subject; common valid SAX myocardium pixels aggregated; pixels are not inferential samples','coverage_fraction':common_support/total_support,'common_support_count':common_support,'total_myocardium_support_count':total_support}); methods[method][parameter]={'subject_level':aggregate,'per_native_sax_plane':[{**{key:value for key,value in row.items() if key not in ('proposed','fit_first')},**row[method]} for row in rows]}
+                aggregate=_metrics(np.concatenate(aggregate_reference),np.concatenate(aggregate_predictions[method]),np.ones(sum(map(len,aggregate_reference)),bool)); aggregate.update({'endpoint':'native-reference agreement/consistency, not accuracy versus ground truth','primary_region':'common_sax_myocardium','support_equation':'SAX_myocardium AND finite(reference) AND proposed_reprojection_valid AND fit_first_reprojection_valid AND finite(proposed, fit_first)','statistical_unit':'subject; common valid SAX myocardium pixels aggregated; pixels are not inferential samples','coverage_fraction':common_support/total_support,'common_support_count':common_support,'total_myocardium_support_count':total_support}); methods[method][parameter]={'subject_level':aggregate,'per_native_sax_plane':paired_per_plane_records(rows, method)}
         output.parent.mkdir(parents=True,exist_ok=True); output.write_text(json.dumps({'subject':args.subject,'endpoint':'agreement/consistency, not 3-D ground-truth accuracy','pairwise_common_support':True,'methods':methods},indent=2)); print(output); return
     if args.mode == 'real':
         if not all((args.subject,args.real_t1,args.real_t2,args.native_reference,args.myocardium_bundle)): raise ValueError('real evaluation requires subject, T1/T2 volumes, current reference, and masks')
