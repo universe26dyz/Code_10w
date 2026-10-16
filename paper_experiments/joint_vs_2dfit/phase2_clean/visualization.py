@@ -1,0 +1,469 @@
+"""Read-only Phase-4R publication/QC rendering on the current paired support.
+
+This module deliberately retains the current world-coordinate evaluation and
+its support definitions.  It imports the legacy SCMR *visual* contract only.
+"""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import subprocess
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Mapping
+
+import numpy as np
+
+from trad.evaluation.scmr.quality_control import (
+    DISPLAY_RANGES_MS,
+    RESIDUAL_RANGES_MS,
+    SCMRColorbars,
+    load_legacy_scmr_colorbars,
+)
+
+from .evaluation import _world_sample, reproject_volume_to_native_plane
+
+
+@dataclass(frozen=True)
+class Panel:
+    data: np.ndarray
+    mask: np.ndarray
+
+
+def colorbars() -> SCMRColorbars:
+    """Return the exact vendored SCMR LUTs and fixed display limits."""
+    return load_legacy_scmr_colorbars()
+
+
+def _sha256(path: str | Path) -> str:
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _crop_bounds(mask: np.ndarray, margin: int = 3) -> tuple[int, int, int, int]:
+    rows, cols = np.where(np.asarray(mask, bool))
+    if not rows.size:
+        raise ValueError("cannot crop an empty paired support")
+    return (
+        max(0, int(rows.min()) - margin),
+        min(mask.shape[0], int(rows.max()) + margin + 1),
+        max(0, int(cols.min()) - margin),
+        min(mask.shape[1], int(cols.max()) + margin + 1),
+    )
+
+
+def paired_common_support(
+    stack: str,
+    reference: np.ndarray,
+    proposed: np.ndarray,
+    fit_first: np.ndarray,
+    source_support: np.ndarray,
+    *,
+    reprojection_valid: np.ndarray | None = None,
+    myocardium_mask: np.ndarray | None = None,
+) -> np.ndarray:
+    """Build the evaluator's immutable paired support for one native plane."""
+    arrays = (reference, proposed, fit_first, source_support)
+    if len({np.asarray(item).shape for item in arrays}) != 1:
+        raise ValueError("native comparison arrays must share one plane shape")
+    stack = str(stack).lower()
+    if stack != "sax" and myocardium_mask is not None:
+        raise ValueError("SAX myocardium masks must never be applied to 2CH/4CH")
+    support = np.asarray(source_support, bool)
+    if myocardium_mask is not None:
+        support &= np.asarray(myocardium_mask, bool)
+    if reprojection_valid is not None:
+        support &= np.asarray(reprojection_valid, bool)
+    return support & np.isfinite(reference) & np.isfinite(proposed) & np.isfinite(fit_first)
+
+
+def prepare_native_comparison_panels(
+    reference: np.ndarray, proposed: np.ndarray, fit_first: np.ndarray, support: np.ndarray
+) -> tuple[dict[str, Panel], tuple[int, int, int, int]]:
+    """Crop all maps/errors once from the paired support, with the SCMR margin."""
+    crop = _crop_bounds(support)
+    r0, r1, c0, c1 = crop
+    mask = np.asarray(support, bool)[r0:r1, c0:c1]
+    values = {
+        "native": np.asarray(reference, float)[r0:r1, c0:c1],
+        "proposed": np.asarray(proposed, float)[r0:r1, c0:c1],
+        "fit_first": np.asarray(fit_first, float)[r0:r1, c0:c1],
+        "proposed_error": np.abs(np.asarray(proposed, float) - np.asarray(reference, float))[r0:r1, c0:c1],
+        "fit_first_error": np.abs(np.asarray(fit_first, float) - np.asarray(reference, float))[r0:r1, c0:c1],
+    }
+    return {key: Panel(value, mask.copy()) for key, value in values.items()}, crop
+
+
+def select_representative_group(records: list[Mapping[str, Any]], override: int | None = None) -> int:
+    """Choose a central largest-support group deterministically, or honour an override."""
+    if override is not None:
+        return int(override)
+    usable = [item for item in records if int(item.get("common_support_voxels", item.get("support_voxels", 0))) > 0]
+    if not usable:
+        raise ValueError("no non-empty groups are available for representative selection")
+    ordered = sorted(usable, key=lambda item: int(item["group_index"]))
+    maximum = max(int(item.get("common_support_voxels", item.get("support_voxels", 0))) for item in ordered)
+    candidates = [item for item in ordered if int(item.get("common_support_voxels", item.get("support_voxels", 0))) == maximum]
+    central = (len(ordered) - 1) / 2.0
+    return int(min(candidates, key=lambda item: (abs(ordered.index(item) - central), int(item["group_index"]))) ["group_index"])
+
+
+def sample_same_world_through_plane(
+    native: np.ndarray,
+    native_affine: np.ndarray,
+    proposed: np.ndarray,
+    proposed_affine: np.ndarray,
+    fit_first: np.ndarray,
+    fit_first_affine: np.ndarray,
+    *,
+    cut_column: int | None = None,
+) -> dict[str, Any]:
+    """Sample one world plane: nearest native, linear reconstructed volumes."""
+    native = np.asarray(native, float)
+    if native.ndim != 3:
+        raise ValueError("Figure-1 native stack must be a 3-D [row,col,group] array")
+    column = native.shape[1] // 2 if cut_column is None else int(cut_column)
+    if not 0 <= column < native.shape[1]:
+        raise ValueError("cut column is outside the native plane")
+    rows, groups = np.indices((native.shape[0], native.shape[2]), dtype=float)
+    native_indices = np.vstack((rows.ravel(), np.full(rows.size, column), groups.ravel(), np.ones(rows.size)))
+    world = np.asarray(native_affine, float) @ native_indices
+    shape = (native.shape[0], native.shape[2])
+    native_values, _ = _world_sample(native, native_affine, world.reshape(4, *shape), order=0)
+    proposed_values, _ = _world_sample(proposed, proposed_affine, world.reshape(4, *shape), order=1)
+    fit_values, _ = _world_sample(fit_first, fit_first_affine, world.reshape(4, *shape), order=1)
+    return {
+        "world": world.reshape(4, *shape), "proposed_world": world.reshape(4, *shape), "fit_first_world": world.reshape(4, *shape),
+        "native": native_values, "proposed": proposed_values, "fit_first": fit_values,
+        "cut_column": column, "interpolation": {"native": "nearest", "reconstructions": "linear"},
+    }
+
+
+def _masked(panel: Panel) -> np.ma.MaskedArray:
+    return np.ma.masked_where(~panel.mask, panel.data)
+
+
+def _write_figure(figure: Any, target: Path) -> dict[str, str]:
+    figure.savefig(target, dpi=320, bbox_inches="tight")
+    pdf = target.with_suffix(".pdf")
+    figure.savefig(pdf, bbox_inches="tight")
+    return {"png": str(target), "pdf": str(pdf)}
+
+
+def render_native_plane_comparison(
+    parameter: str, panels: Mapping[str, Panel], output: str | Path, *, title: str, metadata: Mapping[str, Any]
+) -> dict[str, str]:
+    """Render the formal five-panel native-plane comparison and two colorbars."""
+    import matplotlib.pyplot as plt
+
+    parameter = parameter.upper()
+    if parameter not in DISPLAY_RANGES_MS:
+        raise ValueError(f"unsupported parameter: {parameter}")
+    target = Path(output)
+    if target.exists() or target.with_suffix(".pdf").exists():
+        raise FileExistsError(f"refusing overwrite: {target}")
+    target.parent.mkdir(parents=True, exist_ok=False)
+    bars = colorbars()
+    figure, axes = plt.subplots(1, 7, figsize=(15.5, 3.0), gridspec_kw={"width_ratios": [1, 1, 1, 1, 1, .07, .07]})
+    map_limits, err_limits = DISPLAY_RANGES_MS[parameter], RESIDUAL_RANGES_MS[parameter]
+    definitions = (("native", "Native 2-D", bars.mapping[parameter], map_limits), ("proposed", "Proposed 3-D → native plane", bars.mapping[parameter], map_limits), ("fit_first", "Fit-first 3-D → native plane", bars.mapping[parameter], map_limits), ("proposed_error", "|Proposed − Native|", bars.residual, err_limits), ("fit_first_error", "|Fit-first − Native|", bars.residual, err_limits))
+    map_handle = error_handle = None
+    for axis, (key, label, cmap, limits) in zip(axes[:5], definitions):
+        handle = axis.imshow(_masked(panels[key]), cmap=cmap, vmin=limits[0], vmax=limits[1], origin="lower", interpolation="nearest", aspect="equal")
+        axis.set_title(label, fontsize=8)
+        axis.axis("off")
+        if "error" in key:
+            error_handle = handle
+        else:
+            map_handle = handle
+    figure.colorbar(map_handle, cax=axes[5], label=f"{parameter} (ms)")
+    figure.colorbar(error_handle, cax=axes[6], label="|Δ| (ms)")
+    figure.suptitle(title, fontsize=10)
+    written = _write_figure(figure, target)
+    plt.close(figure)
+    (target.parent / "metadata.json").write_text(json.dumps(dict(metadata) | {"outputs": written}, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return written
+
+
+def render_through_plane_continuity(
+    parameter: str,
+    native: np.ndarray,
+    native_affine: np.ndarray,
+    proposed: np.ndarray,
+    proposed_affine: np.ndarray,
+    fit_first: np.ndarray,
+    fit_first_affine: np.ndarray,
+    output: str | Path,
+    *,
+    reference_group: int,
+    metadata: Mapping[str, Any],
+) -> dict[str, str]:
+    """Render the same-world-plane through-plane continuity QC figure."""
+    import matplotlib.pyplot as plt
+
+    parameter = parameter.upper()
+    target = Path(output)
+    if target.exists() or target.with_suffix(".pdf").exists():
+        raise FileExistsError(f"refusing overwrite: {target}")
+    sampled = sample_same_world_through_plane(native, native_affine, proposed, proposed_affine, fit_first, fit_first_affine)
+    bars = colorbars()
+    figure, axes = plt.subplots(1, 5, figsize=(12, 3), gridspec_kw={"width_ratios": [1, 1, 1, 1, .07]})
+    limit = DISPLAY_RANGES_MS[parameter]
+    reference = np.asarray(native, float)[:, :, int(reference_group)]
+    h0 = axes[0].imshow(reference, cmap=bars.mapping[parameter], vmin=limit[0], vmax=limit[1], origin="lower", interpolation="nearest", aspect="equal")
+    axes[0].axvline(sampled["cut_column"], color="white", linewidth=.75)
+    axes[0].set_title("Native SAX + cut line", fontsize=8)
+    for axis, value, label in zip(axes[1:4], (sampled["native"], sampled["proposed"], sampled["fit_first"]), ("Native through-plane", "Proposed 3-D through-plane", "Fit-first 3-D through-plane")):
+        axis.imshow(value, cmap=bars.mapping[parameter], vmin=limit[0], vmax=limit[1], origin="lower", interpolation="nearest", aspect="equal")
+        axis.set_title(label, fontsize=8)
+    for axis in axes[:4]:
+        axis.axis("off")
+    figure.colorbar(h0, cax=axes[4], label=f"{parameter} (ms)")
+    figure.suptitle("Through-plane continuity QC; not native-plane quantitative accuracy", fontsize=10)
+    written = _write_figure(figure, target)
+    plt.close(figure)
+    (target.parent / "through_plane_metadata.json").write_text(json.dumps(dict(metadata) | {"interpolation": sampled["interpolation"], "reference_group": int(reference_group), "outputs": written}, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return written
+
+
+def render_all_slice_montage(
+    parameter: str, planes: list[Mapping[str, Any]], output: str | Path, *, title: str, metadata: Mapping[str, Any]
+) -> dict[str, str]:
+    """Render all non-empty native planes as supplemental/QC rows on paired support."""
+    import matplotlib.pyplot as plt
+
+    parameter = parameter.upper()
+    target = Path(output)
+    if target.exists() or target.with_suffix(".pdf").exists():
+        raise FileExistsError(f"refusing overwrite: {target}")
+    usable = [plane for plane in planes if int(plane["common_support_voxels"]) > 0]
+    if not usable:
+        raise ValueError("all-slice montage has no non-empty paired support")
+    target.parent.mkdir(parents=True, exist_ok=False)
+    bars = colorbars()
+    figure, axes = plt.subplots(len(usable), 7, figsize=(15.5, max(3, 2.7 * len(usable))), squeeze=False, gridspec_kw={"width_ratios": [1, 1, 1, 1, 1, .07, .07]})
+    titles = ("Native 2-D", "Proposed 3-D → native plane", "Fit-first 3-D → native plane", "|Proposed − Native|", "|Fit-first − Native|")
+    map_handle = error_handle = None
+    annotations = []
+    for row, plane in enumerate(usable):
+        panels, _ = prepare_native_comparison_panels(plane["reference"], plane["proposed"], plane["fit_first"], plane["support"])
+        keys = ("native", "proposed", "fit_first", "proposed_error", "fit_first_error")
+        for column, key in enumerate(keys):
+            is_error = key.endswith("error")
+            limits = RESIDUAL_RANGES_MS[parameter] if is_error else DISPLAY_RANGES_MS[parameter]
+            handle = axes[row, column].imshow(_masked(panels[key]), cmap=bars.residual if is_error else bars.mapping[parameter], vmin=limits[0], vmax=limits[1], origin="lower", interpolation="nearest", aspect="equal")
+            axes[row, column].axis("off")
+            if row == 0:
+                axes[row, column].set_title(titles[column], fontsize=8)
+            if is_error:
+                error_handle = handle
+            else:
+                map_handle = handle
+        support = np.asarray(plane["support"], bool)
+        reference, proposed, fit_first = (np.asarray(plane[key], float)[support] for key in ("reference", "proposed", "fit_first"))
+        proposed_rmse, fit_rmse = (float(np.sqrt(np.mean((prediction - reference) ** 2))) for prediction in (proposed, fit_first))
+        text = f"group={int(plane['group_index'])}; N={int(support.sum())}; Proposed RMSE={proposed_rmse:.1f}; Fit-first RMSE={fit_rmse:.1f}; ΔRMSE={proposed_rmse-fit_rmse:+.1f}"
+        axes[row, 0].text(.01, .01, text, transform=axes[row, 0].transAxes, fontsize=5.4, color="black", va="bottom", ha="left", bbox={"facecolor": "white", "edgecolor": "none", "alpha": .82, "pad": 1.3})
+        annotations.append(text)
+        axes[row, 5].axis("off"); axes[row, 6].axis("off")
+    figure.colorbar(map_handle, cax=axes[0, 5], label=f"{parameter} (ms)")
+    figure.colorbar(error_handle, cax=axes[-1, 6], label="|Δ| (ms)")
+    figure.suptitle(title, fontsize=10)
+    written = _write_figure(figure, target)
+    plt.close(figure)
+    (target.parent / "all_slice_metadata.json").write_text(json.dumps(dict(metadata) | {"purpose": "non-primary all-slice QC", "row_annotations": annotations, "outputs": written}, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return written
+
+
+def validate_fit_first_scale(run_root: str | Path, parameter: str, normalized: str | Path | None = None, ms: str | Path | None = None) -> dict[str, Any]:
+    """Fail closed if a fit-first export is stale or violates the normalized-to-ms contract."""
+    import nibabel as nib
+
+    root = Path(run_root)
+    result = root / "result.json"
+    normalized = Path(normalized) if normalized is not None else root / "volume_normalized.nii.gz"
+    ms = Path(ms) if ms is not None else root / "volume_ms.nii.gz"
+    required = (result, normalized, ms, root / "model.pt")
+    missing = [str(path) for path in required if not path.is_file()]
+    if missing:
+        raise FileNotFoundError("fit-first formal export is incomplete: " + ", ".join(missing))
+    payload = json.loads(result.read_text(encoding="utf-8"))
+    mean = payload.get("output_intensity_mean")
+    if mean != 0:
+        if mean == 700:
+            raise ValueError("stale mean-700 fit-first output is forbidden")
+        raise ValueError(f"fit-first output_intensity_mean must be 0, got {mean!r}")
+    parameter = parameter.upper()
+    scale = {"T1": 2500.0, "T2": 200.0}.get(parameter)
+    if scale is None:
+        raise ValueError("parameter must be T1 or T2")
+    normalized_data = nib.load(str(normalized)).get_fdata(dtype=np.float32)
+    ms_data = nib.load(str(ms)).get_fdata(dtype=np.float32)
+    finite = np.isfinite(normalized_data) & np.isfinite(ms_data)
+    if not finite.any() or not np.allclose(ms_data[finite], normalized_data[finite] * scale, rtol=1e-4, atol=1e-3):
+        raise ValueError(f"fit-first {parameter} ms volume does not satisfy normalized × {scale:g}")
+    return {"result_json": str(result), "output_intensity_mean": mean, "normalized": str(normalized), "ms": str(ms), "model": str(root / "model.pt"), "scale_ms": scale}
+
+
+def finite_value_summary(values: np.ndarray) -> dict[str, Any]:
+    finite = np.asarray(values, float)[np.isfinite(values)]
+    if not finite.size:
+        raise ValueError("range audit received no finite map values")
+    return {"n_finite": int(finite.size), "p0": float(np.min(finite)), "p1": float(np.quantile(finite, .01)), "p50": float(np.median(finite)), "p99": float(np.quantile(finite, .99)), "p100": float(np.max(finite))}
+
+
+def metric_contract_audit() -> dict[str, Any]:
+    """Record the deliberate distinction from the historical SCMR aggregator."""
+    return {
+        "current_phase4r_authoritative_metrics": ["RMSE", "MAE", "bias", "relative_NRMSE", "valid_MAPE", "Pearson_r", "NCC", "coverage", "reference_mean", "prediction_mean"],
+        "historical_scmr_agreement_metrics": ["N", "bias", "MAE", "RMSE", "NRMSE", "Pearson_r", "NCC", "SSIM"],
+        "differences": [
+            "Phase-4R uses its frozen R0 common-SAX-myocardium and R1 full-valid-held-out-plane supports, not historical SCMR aggregation.",
+            "Phase-4R aggregates inferential results by subject (and equal-weighted R1 phase fold), not voxel-pooled cohort inference.",
+            "Phase-4R SSIM remains explicitly not implemented; the historical implementation is optional bounded-support 2-D SSIM and is not a primary endpoint.",
+            "The renderer reuses only legacy visual ranges, palettes, invalid display, crop, and export conventions.",
+        ],
+    }
+
+
+def _git_sha() -> str | None:
+    try:
+        return subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+    except (OSError, subprocess.CalledProcessError):
+        return None
+
+
+def render_r0(
+    *, subject: str, native_reference: str | Path, myocardium_bundle: str | Path,
+    proposed_t1: str | Path, proposed_t2: str | Path, fit_first_t1: str | Path, fit_first_t2: str | Path,
+    output: str | Path, group: int | None = None, all_slices: bool = False,
+) -> Path:
+    """Render R0 SAX figures from existing maps; this does not reconstruct or refit."""
+    import nibabel as nib
+
+    root = Path(output)
+    if root.exists():
+        raise FileExistsError(f"refusing overwrite: {root}")
+    ref_root, mask_root = Path(native_reference), Path(myocardium_bundle)
+    reference, masks = np.load(ref_root / "sax.npz"), np.load(mask_root / "sax_myocardium_masks.npz")
+    native_images = {"T1": nib.load(str(ref_root / "sax_T1_stack_ms.nii.gz")), "T2": nib.load(str(ref_root / "sax_T2_stack_ms.nii.gz"))}
+    proposed_images = {"T1": nib.load(str(proposed_t1)), "T2": nib.load(str(proposed_t2))}
+    fit_images = {"T1": nib.load(str(fit_first_t1)), "T2": nib.load(str(fit_first_t2))}
+    fit_scale = {
+        "T1": validate_fit_first_scale(Path(fit_first_t1).parent, "T1", ms=fit_first_t1),
+        "T2": validate_fit_first_scale(Path(fit_first_t2).parent, "T2", ms=fit_first_t2),
+    }
+    root.mkdir(parents=True)
+    selected: dict[str, int] = {}
+    records: dict[str, list[dict[str, Any]]] = {}
+    outputs: dict[str, Any] = {}
+    for parameter, key in (("T1", "t1_ms"), ("T2", "t2_ms")):
+        image = native_images[parameter]
+        planes: list[dict[str, Any]] = []
+        for index in range(reference[key].shape[0]):
+            p, p_valid = reproject_volume_to_native_plane(proposed_images[parameter].get_fdata(), proposed_images[parameter].affine, image.affine, reference[key].shape[1:], index)
+            f, f_valid = reproject_volume_to_native_plane(fit_images[parameter].get_fdata(), fit_images[parameter].affine, image.affine, reference[key].shape[1:], index)
+            support = paired_common_support("sax", reference[key][index], p, f, masks["myocardium_full"][index], reprojection_valid=p_valid & f_valid, myocardium_mask=masks["myocardium_full"][index])
+            planes.append({"group_index": index, "common_support_voxels": int(support.sum()), "reference": reference[key][index], "proposed": p, "fit_first": f, "support": support})
+        selected_group = select_representative_group(planes, group)
+        selected[parameter] = selected_group
+        chosen = next(item for item in planes if item["group_index"] == selected_group)
+        panels, crop = prepare_native_comparison_panels(chosen["reference"], chosen["proposed"], chosen["fit_first"], chosen["support"])
+        metadata = {"subject": subject, "mode": "R0", "endpoint_semantics": "SAX native-myocardium agreement/consistency; not true 3-D accuracy", "paired_support_definition": "SAX_myocardium AND finite(reference) AND both reprojection-valid AND finite(proposed, fit-first)", "selected_group": selected_group, "crop_bounds_rc": crop, "interpolation": "linear world-coordinate reprojection", "display_ranges_ms": {parameter: list(DISPLAY_RANGES_MS[parameter])}, "residual_ranges_ms": {parameter: list(RESIDUAL_RANGES_MS[parameter])}, "colorbars": colorbars().metadata, "source_git_sha": _git_sha()}
+        outputs[parameter] = render_native_plane_comparison(parameter, panels, root / parameter / f"{parameter}_native_plane_comparison.png", title=f"{subject} R0 SAX — {parameter}", metadata=metadata)
+        outputs[parameter]["through_plane"] = render_through_plane_continuity(
+            parameter, image.get_fdata(), image.affine,
+            proposed_images[parameter].get_fdata(), proposed_images[parameter].affine,
+            fit_images[parameter].get_fdata(), fit_images[parameter].affine,
+            root / parameter / f"{parameter}_through_plane_continuity.png", reference_group=selected_group,
+            metadata=metadata | {"purpose": "through-plane continuity QC; not native-plane quantitative accuracy"},
+        )
+        records[parameter] = [{"group_index": item["group_index"], "common_support_voxels": item["common_support_voxels"]} for item in planes]
+        if all_slices:
+            outputs[parameter]["all_slice_montage"] = render_all_slice_montage(parameter, planes, root / parameter / "all_slices" / f"{parameter}_all_slice_montage.png", title=f"{subject} R0 SAX all-slice QC — {parameter}", metadata=metadata)
+    provenance = {"subject": subject, "mode": "R0", "method_paths": {"proposed_t1": str(proposed_t1), "proposed_t2": str(proposed_t2), "fit_first_t1": str(fit_first_t1), "fit_first_t2": str(fit_first_t2)}, "fit_first_scale_contract": fit_scale, "range_unit_audit": {"proposed": {parameter: finite_value_summary(proposed_images[parameter].get_fdata()) for parameter in ("T1", "T2")}, "fit_first": {parameter: finite_value_summary(fit_images[parameter].get_fdata()) for parameter in ("T1", "T2")}, "units": "ms"}, "metric_contract_audit": metric_contract_audit(), "reference_manifest_hash": _sha256(ref_root / "sax.npz"), "myocardium_bundle_hash": _sha256(mask_root / "sax_myocardium_masks.npz"), "source_git_sha": _git_sha(), "selected_groups": selected, "all_groups": records, "outputs": outputs, "colorbars": colorbars().metadata, "endpoint_semantics": "R0 primary region is common SAX myocardium; figures are publication/QC visualization only"}
+    (root / "formal_figure_metadata.json").write_text(json.dumps(provenance, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return root
+
+
+def render_r1_from_heldout(
+    *, heldout_root: str | Path, proposed_t1: str | Path, proposed_t2: str | Path,
+    fit_first_t1: str | Path, fit_first_t2: str | Path, output: str | Path,
+    stack: str, group: int | None = None,
+) -> Path:
+    """Render an existing R1/L100 evaluation-only native-map cache without refitting."""
+    import nibabel as nib
+
+    root = Path(output)
+    if root.exists():
+        raise FileExistsError(f"refusing overwrite: {root}")
+    heldout_root = Path(heldout_root)
+    report = json.loads((heldout_root / "heldout_quantitative_metrics.json").read_text(encoding="utf-8"))
+    stack = stack.lower()
+    if stack not in ("2ch", "4ch"):
+        raise ValueError("R1 visualization stack must be 2ch or 4ch")
+    cache = heldout_root / "evaluation_only" / stack
+    maps, geometry, observations = np.load(cache / "dictionary_fit" / "native_maps.npz"), np.load(cache / "dictionary_fit" / "geometry.npz"), np.load(cache / "observations.npz")
+    proposed_images = {"T1": nib.load(str(proposed_t1)), "T2": nib.load(str(proposed_t2))}
+    fit_images = {"T1": nib.load(str(fit_first_t1)), "T2": nib.load(str(fit_first_t2))}
+    fit_scale = {
+        "T1": validate_fit_first_scale(Path(fit_first_t1).parent, "T1", ms=fit_first_t1),
+        "T2": validate_fit_first_scale(Path(fit_first_t2).parent, "T2", ms=fit_first_t2),
+    }
+    root.mkdir(parents=True)
+    outputs: dict[str, Any] = {}
+    selected: dict[str, int] = {}
+    for parameter, key in (("T1", "t1_ms"), ("T2", "t2_ms")):
+        records: list[dict[str, Any]] = []
+        for index, original_group in enumerate(maps["group_idx"]):
+            rows = np.flatnonzero(observations["group_idx"] == original_group)
+            source_support = np.all(observations["masks"][rows].astype(bool), axis=0)
+            affine_ras = np.diag([-1.0, -1.0, 1.0, 1.0]) @ np.asarray(geometry["affine_lps_rc"][index], float)
+            p, p_valid = reproject_volume_to_native_plane(proposed_images[parameter].get_fdata(), proposed_images[parameter].affine, affine_ras, maps[key][index].shape)
+            f, f_valid = reproject_volume_to_native_plane(fit_images[parameter].get_fdata(), fit_images[parameter].affine, affine_ras, maps[key][index].shape)
+            support = paired_common_support(stack, maps[key][index], p, f, source_support, reprojection_valid=p_valid & f_valid)
+            records.append({"group_index": int(original_group), "common_support_voxels": int(support.sum()), "reference": maps[key][index], "proposed": p, "fit_first": f, "support": support})
+        chosen_id = select_representative_group(records, group)
+        selected[parameter] = chosen_id
+        chosen = next(item for item in records if item["group_index"] == chosen_id)
+        panels, crop = prepare_native_comparison_panels(chosen["reference"], chosen["proposed"], chosen["fit_first"], chosen["support"])
+        l100 = report.get("condition") == "L100"
+        semantics = "full-data LAX native-plane qualitative agreement reference; not R0 primary endpoint" if l100 else "R1 held-out native-plane agreement/generalization; not true 3-D accuracy"
+        metadata = {"subject": report["subject"], "mode": "L100" if l100 else "R1", "stack": stack, "condition": report["condition"], "endpoint_semantics": semantics, "paired_support_definition": "source foreground AND native dictionary finite AND common world reprojection valid AND finite(reference, proposed, fit-first)", "selected_group": chosen_id, "crop_bounds_rc": crop, "interpolation": "linear world-coordinate reprojection", "display_ranges_ms": {parameter: list(DISPLAY_RANGES_MS[parameter])}, "residual_ranges_ms": {parameter: list(RESIDUAL_RANGES_MS[parameter])}, "colorbars": colorbars().metadata, "source_git_sha": _git_sha()}
+        outputs[parameter] = render_native_plane_comparison(parameter, panels, root / parameter / f"{stack}_{parameter}_native_plane_comparison.png", title=f"{report['subject']} {report['condition']} {stack.upper()} — {parameter}", metadata=metadata)
+    (root / "formal_figure_metadata.json").write_text(json.dumps({"subject": report["subject"], "mode": "L100" if report.get("condition") == "L100" else "R1", "heldout_report": {"path": str((heldout_root / "heldout_quantitative_metrics.json").resolve()), "sha256": _sha256(heldout_root / "heldout_quantitative_metrics.json")}, "method_paths": {"proposed_t1": str(proposed_t1), "proposed_t2": str(proposed_t2), "fit_first_t1": str(fit_first_t1), "fit_first_t2": str(fit_first_t2)}, "fit_first_scale_contract": fit_scale, "range_unit_audit": {"proposed": {parameter: finite_value_summary(proposed_images[parameter].get_fdata()) for parameter in ("T1", "T2")}, "fit_first": {parameter: finite_value_summary(fit_images[parameter].get_fdata()) for parameter in ("T1", "T2")}, "units": "ms"}, "selected_groups": selected, "outputs": outputs, "metric_contract_audit": metric_contract_audit(), "endpoint_semantics": "L100 is a full-data LAX reference point" if report.get("condition") == "L100" else "R1 held-out 2CH/4CH evaluation", "colorbars": colorbars().metadata}, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return root
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--mode", choices=("r0", "r1"), required=True)
+    parser.add_argument("--subject", required=True)
+    parser.add_argument("--native-reference")
+    parser.add_argument("--myocardium-bundle")
+    parser.add_argument("--proposed-t1", required=True); parser.add_argument("--proposed-t2", required=True)
+    parser.add_argument("--fit-first-t1", required=True); parser.add_argument("--fit-first-t2", required=True)
+    parser.add_argument("--output", required=True); parser.add_argument("--group", type=int); parser.add_argument("--all-slices", action="store_true"); parser.add_argument("--heldout-root"); parser.add_argument("--stack")
+    args = parser.parse_args()
+    if args.mode == "r0":
+        if not args.native_reference or not args.myocardium_bundle:
+            raise ValueError("R0 requires --native-reference and --myocardium-bundle")
+        values = vars(args).copy()
+        for key in ("mode", "heldout_root", "stack"):
+            values.pop(key)
+        print(render_r0(**values))
+    else:
+        if not args.heldout_root or not args.stack:
+            raise ValueError("R1 requires --heldout-root and --stack")
+        values = vars(args).copy()
+        for key in ("mode", "native_reference", "myocardium_bundle", "all_slices", "subject"):
+            values.pop(key)
+        print(render_r1_from_heldout(**values))
+
+
+if __name__ == "__main__":
+    main()
