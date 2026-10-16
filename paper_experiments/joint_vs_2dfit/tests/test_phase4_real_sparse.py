@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import shlex
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -17,6 +19,7 @@ from paper_experiments.joint_vs_2dfit.phase2_clean import proposed
 from paper_experiments.joint_vs_2dfit.phase2_clean.contracts import APPROVED_DECODER_SHA256
 from paper_experiments.joint_vs_2dfit.phase2_clean import fit_first
 from paper_experiments.joint_vs_2dfit.phase2_clean.fit_first import build_independent_nesvor_commands, reuse_native_maps
+from paper_experiments.joint_vs_2dfit.phase2_clean.migrate_native_fit_cache import migrate_native_fit_cache
 
 
 def _observations(path: Path, group_ids: tuple[int, ...], *, missing_weight: bool = False) -> None:
@@ -205,6 +208,8 @@ def test_r1_native_reuse_rejects_hash_ineligible_and_duplicate_group_gates(tmp_p
     bad_hash = tmp_path / "bad_hash.json"; bad_hash.write_text(json.dumps(manifest))
     with pytest.raises(ValueError, match="source observation SHA256 mismatch"):
         reuse_native_maps(full, bad_hash, tmp_path / "bad_hash")
+    assert not (tmp_path / "bad_hash").exists()
+    assert not list(tmp_path.glob(".bad_hash.staging-*"))
     manifest["status"] = "INELIGIBLE"
     ineligible = tmp_path / "ineligible.json"; ineligible.write_text(json.dumps(manifest))
     with pytest.raises(ValueError, match="ELIGIBLE"):
@@ -218,6 +223,86 @@ def test_r1_native_reuse_rejects_hash_ineligible_and_duplicate_group_gates(tmp_p
     (full / "2ch" / "manifest.json").write_text(json.dumps(cached))
     with pytest.raises(ValueError, match="exactly once"):
         reuse_native_maps(full, manifest_path, tmp_path / "duplicate")
+    assert not (tmp_path / "duplicate").exists()
+    assert not list(tmp_path.glob(".duplicate.staging-*"))
+
+
+def _legacy_native_maps(source: Path, destination: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    full = _full_native_maps(source, destination.with_name(destination.name + "_source"), monkeypatch)
+    shutil.copytree(full, destination)
+    for stack in ("sax", "2ch", "4ch"):
+        (destination / stack / "manifest.json").unlink()
+    return destination
+
+
+def test_native_cache_migration_copies_without_refitting_and_is_reusable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    source = _prepared(tmp_path / "prepared")
+    legacy = _legacy_native_maps(source, tmp_path / "legacy", monkeypatch)
+    monkeypatch.setattr(fit_first, "fit_native", lambda *_args, **_kwargs: pytest.fail("migration must not refit"))
+    migrated = migrate_native_fit_cache(legacy, source / "CYJ", tmp_path / "migrated")
+    for stack in ("sax", "2ch", "4ch"):
+        for name in ("native_maps.npz", "geometry.npz"):
+            assert fit_first.sha256(legacy / stack / name) == fit_first.sha256(migrated / stack / name)
+        manifest = json.loads((migrated / stack / "manifest.json").read_text())
+        assert manifest["numerical_fitting_rerun"] is False
+        assert manifest["migration_source_path"] == str((legacy / stack).resolve())
+    sparse = build_sparse_condition(source, "CYJ", "L50", 0, tmp_path / "sparse", git_sha="abc", audit_stack=lambda _: {"regular_gap": True, "gap_mm": 10.0, "group_count": 2})
+    assert reuse_native_maps(migrated, sparse["manifest_path"], tmp_path / "reused").is_dir()
+
+
+def test_native_cache_migration_rejects_invalid_source_and_leaves_no_partial_destination(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    source = _prepared(tmp_path / "prepared")
+    legacy = _legacy_native_maps(source, tmp_path / "legacy", monkeypatch)
+    with np.load(source / "CYJ" / "2ch" / "observations.npz") as original:
+        data = {name: original[name] for name in original.files}
+    data["tr_ms"] = np.full_like(data["tr_ms"], 2.5)
+    np.savez_compressed(source / "CYJ" / "2ch" / "observations.npz", **data)
+    destination = tmp_path / "migrated"
+    with pytest.raises(ValueError, match="frozen timing/TR/VPS"):
+        migrate_native_fit_cache(legacy, source / "CYJ", destination)
+    assert not destination.exists()
+    assert not list(tmp_path.glob(".migrated.staging-*"))
+    destination.mkdir()
+    with pytest.raises(FileExistsError, match="refusing overwrite"):
+        migrate_native_fit_cache(legacy, source / "CYJ", destination)
+
+
+def test_native_cache_migration_rejects_group_and_vps_mismatches(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    group_source = _prepared(tmp_path / "group_prepared")
+    group_legacy = _legacy_native_maps(group_source, tmp_path / "group_legacy", monkeypatch)
+    with np.load(group_legacy / "4ch" / "native_maps.npz") as original:
+        maps = {name: original[name] for name in original.files}
+    maps["group_idx"] = np.asarray([4, 5, 6, 99])
+    np.savez_compressed(group_legacy / "4ch" / "native_maps.npz", **maps)
+    with pytest.raises(ValueError, match="group IDs"):
+        migrate_native_fit_cache(group_legacy, group_source / "CYJ", tmp_path / "bad_group")
+    vps_source = _prepared(tmp_path / "vps_prepared")
+    vps_legacy = _legacy_native_maps(vps_source, tmp_path / "vps_legacy", monkeypatch)
+    with np.load(vps_source / "CYJ" / "sax" / "observations.npz") as original:
+        observations = {name: original[name] for name in original.files}
+    observations["vps"] = np.full_like(observations["vps"], 86)
+    np.savez_compressed(vps_source / "CYJ" / "sax" / "observations.npz", **observations)
+    with pytest.raises(ValueError, match="frozen timing/TR/VPS"):
+        migrate_native_fit_cache(vps_legacy, vps_source / "CYJ", tmp_path / "bad_vps")
+
+
+def test_native_cache_migration_rejects_historical_observation_identity_mismatch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    source = _prepared(tmp_path / "prepared")
+    legacy = _legacy_native_maps(source, tmp_path / "legacy", monkeypatch)
+    (legacy.parent / "input_manifest.json").write_text(json.dumps({"observations": {stack: "wrong" for stack in ("sax", "2ch", "4ch")}}))
+    with pytest.raises(ValueError, match="historical R0 provenance"):
+        migrate_native_fit_cache(legacy, source / "CYJ", tmp_path / "migrated")
+
+
+def test_r0_cache_resolver_precedence_and_cohort_subject_paths() -> None:
+    resolver = Path(__file__).resolve().parents[1] / "phase2_clean" / "server_commands" / "r0_native_cache_path.sh"
+    def resolve(subject: str, run_id: str, extra: dict[str, str]) -> str:
+        command = f'set -eu; DATA=/data; source {shlex.quote(str(resolver))}; phase4r_resolve_r0_native_maps {shlex.quote(subject)} {shlex.quote(run_id)}'
+        return subprocess.check_output(["bash", "-c", command], text=True, env={**__import__("os").environ, **extra}).strip()
+    assert resolve("CYJ", "r1", {"PHASE4R_R0_CACHE_ROOT": "/cache"}) == "/cache/CYJ/native_maps"
+    assert resolve("DYZ", "r1", {"PHASE4R_R0_CACHE_ROOT": "/cache"}) == "/cache/DYZ/native_maps"
+    assert resolve("CYJ", "r1", {"PHASE4R_R0_CACHE_ROOT": "/cache", "PHASE4R_R0_NATIVE_MAPS_ROOT": "/one"}) == "/one"
+    assert resolve("HJL", "r1", {"PHASE4R_R0_RUN_ID": "r0"}) == "/data/Code_10w_runs/paper_joint_vs_2dfit/real/R0_full/r0/fit_first/HJL/native_maps"
 
 
 def test_r1_native_reuse_refuses_l100_and_sparse_runners_use_r0_cache(tmp_path: Path) -> None:

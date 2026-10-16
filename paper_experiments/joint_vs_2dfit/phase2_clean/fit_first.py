@@ -1,6 +1,6 @@
 """Native current-protocol dictionary maps for the independent-NeSVoR baseline."""
 from __future__ import annotations
-import argparse, json, shlex, shutil, subprocess, sys
+import argparse, json, shlex, shutil, subprocess, sys, tempfile
 from pathlib import Path
 import numpy as np
 from .contracts import BASELINE_POSE_POLICY, FROZEN_GRID, HISTORICAL_NESVOR_EXECUTABLE_DEFAULT, sha256, write_immutable_json
@@ -59,9 +59,23 @@ def _complete_source_group(data: np.lib.npyio.NpzFile, group: int, source: Path)
 
 def reuse_native_maps(full_native_maps_root: str | Path, sparse_manifest: str | Path, output: str | Path) -> Path:
     """Subset audited R0 native maps for one eligible R1 fold without refitting."""
-    source_root, manifest_path, target = Path(full_native_maps_root), Path(sparse_manifest), Path(output)
+    target = Path(output)
     if target.exists():
         raise FileExistsError(f'refusing overwrite: {target}')
+    target.parent.mkdir(parents=True, exist_ok=True)
+    staging = Path(tempfile.mkdtemp(prefix=f'.{target.name}.staging-', dir=target.parent))
+    try:
+        _reuse_native_maps_into(Path(full_native_maps_root), Path(sparse_manifest), staging)
+        if target.exists():
+            raise FileExistsError(f'refusing overwrite: {target}')
+        staging.rename(target)
+    except BaseException:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
+    return target
+
+
+def _reuse_native_maps_into(source_root: Path, manifest_path: Path, target: Path) -> None:
     sparse = json.loads(manifest_path.read_text())
     if sparse.get('status') != 'ELIGIBLE':
         raise ValueError('native-map reuse requires an ELIGIBLE sparse manifest')
@@ -69,7 +83,6 @@ def reuse_native_maps(full_native_maps_root: str | Path, sparse_manifest: str | 
         raise ValueError('L100 reuses R0 outputs and must not create a sparse reconstruction')
     if set(sparse.get('stacks', {})) != set(STACKS):
         raise ValueError('sparse manifest stack names must be exactly SAX/2CH/4CH')
-    target.mkdir(parents=True)
     records: dict[str, object] = {}
     for stack in STACKS:
         sparse_stack = sparse['stacks'][stack]
@@ -124,7 +137,6 @@ def reuse_native_maps(full_native_maps_root: str | Path, sparse_manifest: str | 
                 np.savez_compressed(stack_target/'geometry.npz', affine_lps_rc=geometry['affine_lps_rc'][positions], pixel_spacing_rc_mm=geometry['pixel_spacing_rc_mm'][positions], slice_thickness_mm=geometry['slice_thickness_mm'][positions])
         records[stack] = {'retained_original_group_ids': retained, 'heldout_original_group_ids': heldout, 'nesvor_input_original_group_ids': retained, 'reused_source_map_sha256': sha256(maps_path), 'reused_source_geometry_sha256': sha256(geometry_path), 'subset_output_map_sha256': sha256(stack_target/'native_maps.npz'), 'subset_output_geometry_sha256': sha256(stack_target/'geometry.npz')}
     write_immutable_json(target/'reuse_manifest.json', {'method': 'fit_first_native_map_group_local_reuse', 'sparse_manifest': {'path': str(manifest_path.resolve()), 'sha256': sha256(manifest_path)}, 'full_native_maps_root': str(source_root.resolve()), 'native_fit_reuse_is_group_local': True, 'heldout_groups_never_passed_to_nesvor': True, 'stacks': records})
-    return target
 
 def export_nesvor_native_inputs(native_maps: str|Path, output: str|Path, normalization: dict[str, float] | None = None) -> Path:
     """Export current dictionary maps as independent geometry-preserving NeSVoR stacks."""
