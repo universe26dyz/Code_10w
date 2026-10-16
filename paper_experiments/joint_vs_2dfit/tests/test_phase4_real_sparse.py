@@ -15,6 +15,7 @@ from paper_experiments.joint_vs_2dfit.phase2_clean.evaluation import heldout_qua
 from paper_experiments.joint_vs_2dfit.phase2_clean.sparse import build_sparse_condition
 from paper_experiments.joint_vs_2dfit.phase2_clean import proposed
 from paper_experiments.joint_vs_2dfit.phase2_clean.contracts import APPROVED_DECODER_SHA256
+from paper_experiments.joint_vs_2dfit.phase2_clean.fit_first import build_independent_nesvor_commands
 
 
 def _observations(path: Path, group_ids: tuple[int, ...], *, missing_weight: bool = False) -> None:
@@ -145,6 +146,17 @@ def test_proposed_command_uses_current_adapter_interpreter(monkeypatch: pytest.M
     monkeypatch.setattr(proposed, "sha256", lambda _: APPROVED_DECODER_SHA256)
     command = proposed.build_proposed_command("/prepared", "/decoder.pth", "/b6.pt", "/output")
     assert shlex.split(command)[0] == sys.executable
+
+
+def test_fit_first_commands_disable_default_700_rescaling_and_save_models() -> None:
+    commands = build_independent_nesvor_commands("/inputs", "/output", nesvor_executable="/historical/nesvor")
+    assert len(commands) == 2
+    for parameter, scale, command in zip(("t1", "t2"), ("2500", "200"), commands):
+        assert "--output-intensity-mean 0" in command
+        assert f"--output-model /output/{parameter}/model.pt" in command
+        assert "--output-intensity-mean 700" not in command
+        assert f"--scale {scale}" in command
+        assert "--registration stack" in command and "--n-iter 10000" in command
 
 
 def test_r1_subject_uses_equal_fold_weighting_not_plane_weighting() -> None:
