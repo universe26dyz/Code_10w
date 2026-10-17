@@ -41,6 +41,37 @@ def test_one_crop_and_support_are_used_for_every_panel() -> None:
     assert all(np.array_equal(panel.mask, panels["native"].mask) for panel in panels.values())
 
 
+def test_display_support_keeps_valid_foreground_outside_myocardium() -> None:
+    reference = np.full((5, 5), 1000.0)
+    proposed, fit_first = reference + 10.0, reference - 10.0
+    myocardium = np.zeros((5, 5), bool); myocardium[2, 2] = True
+    display = viz.native_display_support(reference, proposed, fit_first, np.ones((5, 5), bool), np.ones((5, 5), bool))
+    assert display[0, 0]
+    assert display.sum() > myocardium.sum()
+    panels, crop = viz.prepare_native_comparison_panels(reference, proposed, fit_first, display)
+    contour = viz.crop_myocardium_contour(myocardium, crop)
+    assert contour.sum() == 1 and panels["native"].mask[0, 0]
+
+
+@pytest.mark.parametrize(("parameter", "range_"), (("T1", (0.0, 2500.0)), ("T2", (0.0, 200.0))))
+def test_native_and_error_panels_share_parameter_lut_and_range(parameter: str, range_: tuple[float, float]) -> None:
+    specs = viz.native_panel_specs(parameter)
+    assert len(specs) == 5
+    assert all(spec["limits"] == range_ for spec in specs)
+    assert all(spec["cmap"].name == viz.colorbars().mapping[parameter].name for spec in specs)
+
+
+def test_native_plane_figure_has_one_colorbar_and_accepts_roi_contour(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import matplotlib.figure
+
+    calls: list[object] = []
+    monkeypatch.setattr(matplotlib.figure.Figure, "colorbar", lambda self, *args, **kwargs: calls.append((args, kwargs)))
+    support = np.ones((3, 3), bool)
+    panels, _ = viz.prepare_native_comparison_panels(np.full((3, 3), 1000.0), np.full((3, 3), 1010.0), np.full((3, 3), 990.0), support)
+    written = viz.render_native_plane_comparison("T1", panels, tmp_path / "figure" / "panel.png", title="test", metadata={}, myocardium_contour=np.eye(3, dtype=bool))
+    assert len(calls) == 1 and Path(written["png"]).is_file()
+
+
 def test_representative_group_selection_is_deterministic_and_central() -> None:
     groups = [
         {"group_index": 1, "common_support_voxels": 9},
@@ -60,6 +91,26 @@ def test_figure_one_uses_one_world_plane_for_both_methods() -> None:
     assert np.array_equal(result["world"], result["proposed_world"])
     assert np.array_equal(result["world"], result["fit_first_world"])
     assert result["interpolation"] == {"native": "nearest", "reconstructions": "linear"}
+    assert result["grid_spacing_mm"] == {"row": 1.0, "slice": 1.0}
+
+
+def test_through_plane_grid_is_physical_for_anisotropic_geometry() -> None:
+    native = np.arange(4 * 5 * 6, dtype=float).reshape(4, 5, 6)
+    affine = np.diag([2.0, 3.0, 8.0, 1.0])
+    result = viz.sample_same_world_through_plane(native, affine, native, affine, native, affine, cut_column=2)
+    assert result["native"].shape == (7, 41)
+    assert result["physical_extent_mm"]["row"] == [0.0, 6.0]
+    assert result["physical_extent_mm"]["slice"] == [0.0, 40.0]
+    assert result["world"].shape == (4, 7, 41)
+    assert np.array_equal(result["world"], result["proposed_world"])
+    assert result["physical_extent_mm"]["slice"][1] / result["physical_extent_mm"]["row"][1] > 5
+
+
+def test_invalid_through_plane_geometry_fails_instead_of_index_fallback() -> None:
+    native = np.ones((3, 3, 3))
+    invalid = np.eye(4); invalid[:3, 2] = invalid[:3, 0]
+    with pytest.raises(ValueError, match="physical"):
+        viz.sample_same_world_through_plane(native, invalid, native, np.eye(4), native, np.eye(4))
 
 
 def test_renderer_contains_no_psf_matched_language() -> None:
