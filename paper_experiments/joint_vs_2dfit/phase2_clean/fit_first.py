@@ -57,6 +57,84 @@ def _complete_source_group(data: np.lib.npyio.NpzFile, group: int, source: Path)
         raise ValueError(f'{source}: cached group {group} violates frozen timing/TR/VPS')
 
 
+def select_verified_native_cache_groups(full_native_maps_root: str | Path, sparse_manifest: str | Path, stack: str, original_group_ids: list[int]) -> dict[str, object]:
+    """Read selected R0 native groups after validating their immutable provenance.
+
+    This is read-only and is shared by retained-group reconstruction reuse and
+    held-out evaluation semantics.  The supplied IDs must be exactly the
+    sparse-manifest held-out IDs (or every L100 source group).
+    """
+    source_root, manifest_path = Path(full_native_maps_root), Path(sparse_manifest)
+    sparse = json.loads(manifest_path.read_text())
+    if sparse.get('status') != 'ELIGIBLE':
+        raise ValueError('native-cache selection requires an ELIGIBLE sparse manifest')
+    if stack not in ('2ch', '4ch'):
+        raise ValueError('held-out native-cache selection is restricted to 2ch/4ch')
+    sparse_stack = sparse.get('stacks', {}).get(stack)
+    if not isinstance(sparse_stack, dict):
+        raise ValueError(f'{stack}: sparse manifest stack is missing')
+    requested = [int(value) for value in original_group_ids]
+    if len(requested) != len(set(requested)):
+        raise ValueError(f'{stack}: selected original group IDs must be unique')
+    source_observation = sparse_stack.get('source_observation', {})
+    source_path = Path(str(source_observation.get('path', '')))
+    if not source_path.is_file() or sha256(source_path) != source_observation.get('sha256'):
+        raise ValueError(f'{stack}: source observation SHA256 mismatch')
+    with np.load(source_path, allow_pickle=False) as observations:
+        all_source_groups = [int(value) for value in np.unique(observations['group_idx'])]
+    expected = all_source_groups if sparse.get('condition') == 'L100' else [int(value) for value in sparse_stack.get('heldout_original_group_ids', [])]
+    if requested != expected:
+        raise ValueError(f'{stack}: selected original group IDs must exactly match the authoritative held-out manifest IDs')
+    cached_root = source_root / stack
+    maps_path, geometry_path, cached_manifest_path = cached_root/'native_maps.npz', cached_root/'geometry.npz', cached_root/'manifest.json'
+    if not all(path.is_file() for path in (maps_path, geometry_path, cached_manifest_path)):
+        raise FileNotFoundError(f'{stack}: full-data native-map artifact is incomplete')
+    cached = json.loads(cached_manifest_path.read_text())
+    if cached.get('method') != NATIVE_FIT_METHOD or cached.get('dictionary_contract') != _dictionary_contract():
+        raise ValueError(f'{stack}: cached native maps do not satisfy the frozen dictionary contract')
+    if cached.get('native_maps_sha256') != sha256(maps_path) or cached.get('geometry_sha256') != sha256(geometry_path):
+        raise ValueError(f'{stack}: cached native-map artifact SHA256 mismatch')
+    cached_observation = cached.get('source_observations', {})
+    if cached_observation.get('sha256') != source_observation.get('sha256'):
+        raise ValueError(f'{stack}: source observation SHA256 mismatch')
+    cached_source = Path(str(cached_observation.get('path', '')))
+    if not cached_source.is_file() or sha256(cached_source) != cached_observation.get('sha256'):
+        raise ValueError(f'{stack}: cached source observation identity is unavailable or mismatched')
+    with np.load(maps_path, allow_pickle=False) as maps, np.load(geometry_path, allow_pickle=False) as geometry, np.load(cached_source, allow_pickle=False) as observations:
+        for name in ('t1_ms', 't2_ms', 'b1', 'group_idx'):
+            if name not in maps.files:
+                raise ValueError(f'{stack}: cached native maps missing {name}')
+        if any(name not in geometry.files for name in ('affine_lps_rc', 'pixel_spacing_rc_mm', 'slice_thickness_mm')):
+            raise ValueError(f'{stack}: cached geometry is incomplete')
+        groups = [int(value) for value in maps['group_idx']]
+        if len(groups) != len(set(groups)):
+            raise ValueError(f'{stack}: each cached original group must exist exactly once')
+        if any(array.shape[0] != len(groups) for array in (maps['t1_ms'], maps['t2_ms'], maps['b1'], geometry['affine_lps_rc'], geometry['pixel_spacing_rc_mm'], geometry['slice_thickness_mm'])):
+            raise ValueError(f'{stack}: cached map/geometry group dimensions disagree')
+        positions = []
+        support = []
+        for group in requested:
+            if groups.count(group) != 1:
+                raise ValueError(f'{stack}: held-out original group {group} must exist exactly once in cached maps')
+            _complete_source_group(observations, group, cached_source)
+            rows = np.flatnonzero(observations['group_idx'] == group)
+            positions.append(groups.index(group))
+            support.append(np.all(observations['masks'][rows].astype(bool), axis=0))
+        selected = {name: np.asarray(maps[name])[positions].copy() for name in ('t1_ms', 't2_ms', 'b1')}
+        selected['group_idx'] = np.asarray(requested, dtype=maps['group_idx'].dtype)
+        selected.update({name: np.asarray(geometry[name])[positions].copy() for name in ('affine_lps_rc', 'pixel_spacing_rc_mm', 'slice_thickness_mm')})
+    selected['source_support'] = np.asarray(support, dtype=bool)
+    selected['provenance'] = {
+        'native_reference_source': 'R0_native_cache', 'native_reference_cache_root': str(source_root.resolve()),
+        'native_maps_path': str(maps_path.resolve()), 'native_maps_sha256': sha256(maps_path),
+        'geometry_path': str(geometry_path.resolve()), 'geometry_sha256': sha256(geometry_path),
+        'manifest_path': str(cached_manifest_path.resolve()), 'manifest_sha256': sha256(cached_manifest_path),
+        'heldout_original_group_ids': requested, 'evaluation_only_native_reference': True,
+        'heldout_never_visible_to_reconstruction': True, 'native_fit_recomputed': False,
+    }
+    return selected
+
+
 def reuse_native_maps(full_native_maps_root: str | Path, sparse_manifest: str | Path, output: str | Path) -> Path:
     """Subset audited R0 native maps for one eligible R1 fold without refitting."""
     target = Path(output)

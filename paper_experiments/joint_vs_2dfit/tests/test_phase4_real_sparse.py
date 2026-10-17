@@ -18,7 +18,8 @@ from paper_experiments.joint_vs_2dfit.phase2_clean.sparse import build_sparse_co
 from paper_experiments.joint_vs_2dfit.phase2_clean import proposed
 from paper_experiments.joint_vs_2dfit.phase2_clean.contracts import APPROVED_DECODER_SHA256
 from paper_experiments.joint_vs_2dfit.phase2_clean import fit_first
-from paper_experiments.joint_vs_2dfit.phase2_clean.fit_first import build_independent_nesvor_commands, reuse_native_maps
+from paper_experiments.joint_vs_2dfit.phase2_clean import heldout
+from paper_experiments.joint_vs_2dfit.phase2_clean.fit_first import build_independent_nesvor_commands, reuse_native_maps, select_verified_native_cache_groups
 from paper_experiments.joint_vs_2dfit.phase2_clean.migrate_native_fit_cache import migrate_native_fit_cache
 
 
@@ -342,7 +343,8 @@ def test_r0_cache_resolver_precedence_and_cohort_subject_paths() -> None:
     assert resolve("CYJ", "r1", {"PHASE4R_R0_CACHE_ROOT": "/cache"}) == "/cache/CYJ/native_maps"
     assert resolve("DYZ", "r1", {"PHASE4R_R0_CACHE_ROOT": "/cache"}) == "/cache/DYZ/native_maps"
     assert resolve("CYJ", "r1", {"PHASE4R_R0_CACHE_ROOT": "/cache", "PHASE4R_R0_NATIVE_MAPS_ROOT": "/one"}) == "/one"
-    assert resolve("HJL", "r1", {"PHASE4R_R0_RUN_ID": "r0"}) == "/data/Code_10w_runs/paper_joint_vs_2dfit/real/R0_full/r0/fit_first/HJL/native_maps"
+    assert resolve("HJL", "r1", {}) == "/data/Code_10w_runs/paper_joint_vs_2dfit/real/R0_native_cache/R0_PHASE4R/HJL/native_maps"
+    assert resolve("HJL", "r1", {"PHASE4R_R0_CACHE_ID": "validated"}) == "/data/Code_10w_runs/paper_joint_vs_2dfit/real/R0_native_cache/validated/HJL/native_maps"
 
 
 def test_r1_native_reuse_refuses_l100_and_sparse_runners_use_r0_cache(tmp_path: Path) -> None:
@@ -355,6 +357,110 @@ def test_r1_native_reuse_refuses_l100_and_sparse_runners_use_r0_cache(tmp_path: 
         text = (root / name).read_text()
         assert "--reuse-native-maps-root" in text
         assert "--sparse-manifest" in text
+    for name in ("evaluate_real_sparse.sh", "evaluate_real_sparse_pilot.sh", "evaluate_real_sparse_L100.sh"):
+        text = (root / name).read_text()
+        assert "phase4r_resolve_r0_native_maps" in text
+        assert "--r0-native-maps-root" in text
+
+
+def test_heldout_reference_selection_uses_cached_original_groups_without_refitting(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    source = _prepared(tmp_path / "prepared")
+    sparse = build_sparse_condition(source, "CYJ", "L50", 0, tmp_path / "sparse", git_sha="abc", audit_stack=lambda _: {"regular_gap": True, "gap_mm": 10.0, "group_count": 2})
+    cache = _full_native_maps(source, tmp_path / "r0_cache", monkeypatch)
+    selected = select_verified_native_cache_groups(cache, sparse["manifest_path"], "2ch", [5, 7])
+    assert selected["group_idx"].tolist() == [5, 7]
+    assert selected["source_support"].shape[0] == 2
+    with pytest.raises(ValueError, match="authoritative held-out"):
+        select_verified_native_cache_groups(cache, sparse["manifest_path"], "2ch", [4, 6])
+    assert "fit_native" not in Path(heldout.__file__).read_text(encoding="utf-8")
+    # Group-local cache values equal the historical deterministic held-out fit.
+    with np.load(source / "CYJ" / "2ch" / "observations.npz") as original:
+        data = {name: value[np.isin(original["group_idx"], [5, 7])] if value.shape[:1] == original["group_idx"].shape else value for name, value in original.items()}
+    subset = tmp_path / "heldout_observations.npz"; np.savez_compressed(subset, **data)
+    direct = fit_first.fit_native(subset, tmp_path / "historical_refit")
+    with np.load(direct / "native_maps.npz") as expected:
+        assert np.array_equal(selected["t1_ms"], expected["t1_ms"], equal_nan=True)
+        assert np.array_equal(selected["t2_ms"], expected["t2_ms"], equal_nan=True)
+
+
+def test_l100_heldout_reference_selection_uses_all_cached_lax_groups(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    source = _prepared(tmp_path / "prepared")
+    sparse = build_sparse_condition(source, "CYJ", "L100", 0, tmp_path / "sparse", git_sha="abc")
+    cache = _full_native_maps(source, tmp_path / "r0_cache", monkeypatch)
+    selected = select_verified_native_cache_groups(cache, sparse["manifest_path"], "4ch", [4, 5, 6, 7])
+    assert selected["group_idx"].tolist() == [4, 5, 6, 7]
+
+
+@pytest.mark.parametrize("mutation, error", (
+    ("map_hash", "SHA256 mismatch"), ("geometry_hash", "SHA256 mismatch"), ("source_hash", "source observation SHA256 mismatch"),
+    ("duplicate", "exactly once"), ("missing", "exactly once"), ("dictionary", "dictionary contract"), ("vps", "frozen timing/TR/VPS"),
+))
+def test_heldout_cache_selection_rejects_invalid_provenance(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mutation: str, error: str) -> None:
+    source = _prepared(tmp_path / "prepared")
+    sparse = build_sparse_condition(source, "CYJ", "L50", 0, tmp_path / "sparse", git_sha="abc", audit_stack=lambda _: {"regular_gap": True, "gap_mm": 10.0, "group_count": 2})
+    cache = _full_native_maps(source, tmp_path / "r0_cache", monkeypatch)
+    manifest_path = Path(sparse["manifest_path"])
+    if mutation == "map_hash":
+        payload = json.loads((cache / "2ch" / "manifest.json").read_text()); payload["native_maps_sha256"] = "wrong"; (cache / "2ch" / "manifest.json").write_text(json.dumps(payload))
+    elif mutation == "geometry_hash":
+        payload = json.loads((cache / "2ch" / "manifest.json").read_text()); payload["geometry_sha256"] = "wrong"; (cache / "2ch" / "manifest.json").write_text(json.dumps(payload))
+    elif mutation == "source_hash":
+        payload = json.loads(manifest_path.read_text()); payload["stacks"]["2ch"]["source_observation"]["sha256"] = "wrong"; manifest_path.write_text(json.dumps(payload))
+    elif mutation == "duplicate":
+        with np.load(cache / "2ch" / "native_maps.npz") as maps:
+            values = {name: maps[name] for name in maps.files}
+        values["group_idx"] = np.asarray([4, 5, 5, 7]); np.savez_compressed(cache / "2ch" / "native_maps.npz", **values)
+        payload = json.loads((cache / "2ch" / "manifest.json").read_text()); payload["native_maps_sha256"] = fit_first.sha256(cache / "2ch" / "native_maps.npz"); (cache / "2ch" / "manifest.json").write_text(json.dumps(payload))
+    elif mutation == "missing":
+        with np.load(cache / "2ch" / "native_maps.npz") as maps:
+            values = {name: maps[name] for name in maps.files}
+        values["group_idx"] = np.asarray([4, 5, 6, 8]); np.savez_compressed(cache / "2ch" / "native_maps.npz", **values)
+        payload = json.loads((cache / "2ch" / "manifest.json").read_text()); payload["native_maps_sha256"] = fit_first.sha256(cache / "2ch" / "native_maps.npz"); (cache / "2ch" / "manifest.json").write_text(json.dumps(payload))
+    elif mutation == "dictionary":
+        payload = json.loads((cache / "2ch" / "manifest.json").read_text()); payload["dictionary_contract"] = {}; (cache / "2ch" / "manifest.json").write_text(json.dumps(payload))
+    else:
+        with np.load(source / "CYJ" / "2ch" / "observations.npz") as observations:
+            values = {name: observations[name] for name in observations.files}
+        values["vps"] = np.full_like(values["vps"], 86); np.savez_compressed(source / "CYJ" / "2ch" / "observations.npz", **values)
+        payload = json.loads((cache / "2ch" / "manifest.json").read_text()); payload["source_observations"]["sha256"] = fit_first.sha256(source / "CYJ" / "2ch" / "observations.npz"); (cache / "2ch" / "manifest.json").write_text(json.dumps(payload))
+        sparse_payload = json.loads(manifest_path.read_text()); sparse_payload["stacks"]["2ch"]["source_observation"]["sha256"] = fit_first.sha256(source / "CYJ" / "2ch" / "observations.npz"); manifest_path.write_text(json.dumps(sparse_payload))
+    with pytest.raises(ValueError, match=error):
+        select_verified_native_cache_groups(cache, manifest_path, "2ch", [5, 7])
+
+
+def _dummy_volume(path: Path) -> Path:
+    import nibabel as nib
+    nib.save(nib.Nifti1Image(np.ones((1, 1, 1), np.float32), np.eye(4)), str(path))
+    return path
+
+
+def test_heldout_evaluation_records_immutable_cache_provenance_without_partial_output(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    source = _prepared(tmp_path / "prepared")
+    sparse = build_sparse_condition(source, "CYJ", "L50", 0, tmp_path / "sparse", git_sha="abc", audit_stack=lambda _: {"regular_gap": True, "gap_mm": 10.0, "group_count": 2})
+    cache = _full_native_maps(source, tmp_path / "r0_cache", monkeypatch)
+    monkeypatch.setattr(heldout, "reproject_volume_to_native_plane", lambda _volume, _affine, _native, shape: (np.full(shape, 1111.0), np.ones(shape, bool)))
+    maps = [_dummy_volume(tmp_path / f"{name}.nii.gz") for name in ("proposed_t1", "proposed_t2", "fit_t1", "fit_t2")]
+    output = tmp_path / "formal_heldout"
+    report_path = heldout.evaluate_heldout(sparse["manifest_path"], *maps[:2], *maps[2:], output, cache)
+    report = json.loads(report_path.read_text())
+    assert report["provenance"]["native_reference_source"] == "R0_native_cache"
+    assert report["provenance"]["native_fit_recomputed"] is False
+    assert report["stacks"]["2ch"]["native_reference"]["heldout_original_group_ids"] == [5, 7]
+    assert report["stacks"]["2ch"]["native_reference"]["native_maps_sha256"] == fit_first.sha256(cache / "2ch" / "native_maps.npz")
+    assert not list(tmp_path.glob(".formal_heldout.staging-*"))
+
+
+def test_heldout_evaluation_cache_failure_never_publishes_output(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    source = _prepared(tmp_path / "prepared")
+    sparse = build_sparse_condition(source, "CYJ", "L50", 0, tmp_path / "sparse", git_sha="abc", audit_stack=lambda _: {"regular_gap": True, "gap_mm": 10.0, "group_count": 2})
+    cache = _full_native_maps(source, tmp_path / "r0_cache", monkeypatch)
+    payload = json.loads((cache / "2ch" / "manifest.json").read_text()); payload["geometry_sha256"] = "wrong"; (cache / "2ch" / "manifest.json").write_text(json.dumps(payload))
+    maps = [_dummy_volume(tmp_path / f"bad_{name}.nii.gz") for name in ("proposed_t1", "proposed_t2", "fit_t1", "fit_t2")]
+    output = tmp_path / "formal_heldout"
+    with pytest.raises(ValueError, match="SHA256 mismatch"):
+        heldout.evaluate_heldout(sparse["manifest_path"], *maps[:2], *maps[2:], output, cache)
+    assert not output.exists()
+    assert not list(tmp_path.glob(".formal_heldout.staging-*"))
 
 
 def test_r1_subject_uses_equal_fold_weighting_not_plane_weighting() -> None:
