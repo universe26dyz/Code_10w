@@ -51,17 +51,21 @@ def test_heldout_newly_recovered_and_both_valid_supports_are_disjoint() -> None:
     assert result["newly_recovered_voxel_count"] == 1
     assert result["both_valid_voxel_count"] == 1
     assert result["both_valid_default_vs_fixed"]["rmse"] == pytest.approx(1.0)
+    assert result["both_valid_default_vs_fixed"]["descriptive_only"] is True
+    assert result["both_valid_default_vs_fixed"]["monte_carlo_realizations_not_matched"] is True
     assert result["newly_recovered_fixed_vs_native"]["reference_mean_ms"] == pytest.approx(20.0)
     assert result["newly_recovered_fixed_vs_native"]["prediction_mean_ms"] == pytest.approx(22.0)
 
 
 @pytest.mark.parametrize(("parameter", "scale"), (("t1", 2500.0), ("t2", 200.0)))
 def test_sampling_scales_and_runtime_contract_are_fixed(parameter: str, scale: float, tmp_path: Path) -> None:
-    command = audit.sample_volume_runtime_command(tmp_path / "python", tmp_path / "model.pt", tmp_path / "mask.nii.gz", tmp_path / "output.nii.gz", tmp_path / "runtime.json", device="0")
+    command = audit.sample_volume_runtime_command(tmp_path / "python", tmp_path / "model.pt", tmp_path / "mask.nii.gz", tmp_path / "output.nii.gz", tmp_path / "effective_mask.nii.gz", tmp_path / "runtime.json", device="0")
     assert audit.NORMALIZATION_SCALES[parameter] == scale
     assert command[:2] == [str(tmp_path / "python"), "-c"]
     assert "--sample-mask" not in command
     assert "sample_volume" in command[2]
+    assert "sample_mask.save_mask(effective_mask_path)" in command[2]
+    assert command[-2:] == ["1.0", "128"]
     assert "reconstruct" not in command[2] and "train(" not in command[2]
     assert audit.INFERENCE_PARAMETERS == {"output_resolution_mm": 1.0, "output_psf_factor": 1, "n_inference_samples": 128, "inference_batch_size": 16000, "seed": 20260823, "output_intensity_mean": 0}
 
@@ -71,7 +75,7 @@ def test_sampling_runtime_resolves_device_and_requires_one_device_for_all_tensor
     assert audit.resolve_torch_device("-1") == "cpu"
     with pytest.raises(ValueError, match="device"):
         audit.resolve_torch_device("cuda:0")
-    command = audit.sample_volume_runtime_command(tmp_path / "python", tmp_path / "model.pt", tmp_path / "mask.nii.gz", tmp_path / "output.nii.gz", tmp_path / "runtime.json", device="0")
+    command = audit.sample_volume_runtime_command(tmp_path / "python", tmp_path / "model.pt", tmp_path / "mask.nii.gz", tmp_path / "output.nii.gz", tmp_path / "effective_mask.nii.gz", tmp_path / "runtime.json", device="0")
     script = command[2]
     assert "load_mask(sample_mask_path, device=device)" in script
     assert "model.to(device)" in script
@@ -84,6 +88,72 @@ def test_manifest_records_runtime_provenance(tmp_path: Path) -> None:
     manifest = audit.audit_manifest(sparse_manifest=tmp_path / "sparse.json", r0_native_maps_root=tmp_path, nesvor_executable="nesvor", checkpoints={}, sampling_runtime=runtime)
     assert manifest["sampling_backend"] == "nesvor_adjacent_python_direct_sample_volume"
     assert manifest["sampling_runtime"] == runtime
+
+
+def test_formal_vs_restarted_k128_mismatch_is_descriptive_not_a_gate() -> None:
+    result = audit.formal_vs_restarted_k128_audit(np.array([1.0, 2.0]), np.array([1.1, 2.2]), np.array([True, True]))
+    assert result["rmse"] > 0
+    assert result["numerical_identity_expected"] is False
+    assert result["descriptive_only"] is True
+
+
+def test_formal_self_geometry_mismatch_fails() -> None:
+    geometry = audit.geometry_check((2, 2, 2), np.eye(4), (2, 2, 3), np.eye(4))
+    assert geometry["status"] == "FAIL"
+    with pytest.raises(RuntimeError, match="geometry"):
+        audit.require_sanity_controls(geometry, {"status": "PASS"}, {"status": "PASS"})
+
+
+def test_same_seed_repeatability_mismatch_fails() -> None:
+    repeatability = audit.same_seed_repeatability_audit(np.ones((2, 2, 2)), np.eye(4), np.ones((2, 2, 2)) * 1.1, np.eye(4))
+    assert repeatability["status"] == "FAIL"
+    with pytest.raises(RuntimeError, match="repeatability"):
+        audit.require_sanity_controls({"status": "PASS"}, repeatability, {"status": "PASS"})
+
+
+def test_same_seed_repeatability_passes_on_common_sampling_mask() -> None:
+    support = np.array([[[True]], [[False]]])
+    result = audit.same_seed_repeatability_audit(
+        np.array([[[1.0]], [[999.0]]]), np.eye(4), np.array([[[1.0]], [[-999.0]]]), np.eye(4),
+        support, support,
+    )
+    assert result["status"] == "PASS"
+    assert result["finite_common_voxel_count"] == 1
+
+
+def test_k1_mask_only_common_support_predictions_are_deterministic() -> None:
+    k1 = audit.k1_mask_only_audit(
+        np.ones((2, 2, 2)), np.eye(4), np.ones((2, 2, 2)), np.eye(4),
+        np.ones((2, 2, 2), bool), np.eye(4), np.ones((2, 2, 2), bool),
+    )
+    assert k1["intersection_voxel_count"] == 8
+    assert k1["rmse"] == pytest.approx(0.0)
+    assert k1["status"] == "PASS"
+
+
+def test_k1_mask_only_excludes_l100_only_voxels() -> None:
+    k1 = audit.k1_mask_only_audit(
+        np.array([[[1.0]], [[999.0]]]), np.eye(4), np.array([[[1.0]], [[2.0]]]), np.eye(4),
+        np.array([[[True]], [[False]]]), np.eye(4), np.array([[[True]], [[True]]]),
+    )
+    assert k1["intersection_voxel_count"] == 1
+    assert k1["rmse"] == pytest.approx(0.0)
+
+
+def test_k1_runtime_uses_central_sampling_and_fixed_l100_follows_sanity_gate(tmp_path: Path) -> None:
+    command = audit.sample_volume_runtime_command(tmp_path / "python", tmp_path / "model.pt", tmp_path / "mask.nii.gz", tmp_path / "output.nii.gz", tmp_path / "effective_mask.nii.gz", tmp_path / "runtime.json", device="0", mode="k1")
+    assert command[-2:] == ["0.0", "1"]
+    source = Path(audit.__file__).read_text(encoding="utf-8")
+    assert source.index("require_sanity_controls(self_geometry, repeatability, k1_control)") < source.index("fixed_normalized, fixed_effective_mask, fixed_runtime")
+
+
+def test_manifest_explains_unrecoverable_historical_formal_rng(tmp_path: Path) -> None:
+    manifest = audit.audit_manifest(sparse_manifest=tmp_path / "sparse.json", r0_native_maps_root=tmp_path, nesvor_executable="nesvor", checkpoints={})
+    rng = manifest["rng_provenance"]
+    assert rng["checkpoint_contains_rng_state"] is False
+    assert rng["formal_volume_rng_state_recoverable"] is False
+    assert rng["audit_same_seed_repeatability"] is True
+    assert manifest["primary_scientific_change"] == "sampling_mask_only"
 
 
 def test_manifest_declares_sampling_mask_only(tmp_path: Path) -> None:
