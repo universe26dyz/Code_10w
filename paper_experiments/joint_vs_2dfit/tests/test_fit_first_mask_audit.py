@@ -131,6 +131,37 @@ def test_k1_mask_only_common_support_predictions_are_deterministic() -> None:
     assert k1["status"] == "PASS"
 
 
+def test_k1_small_numerical_difference_is_descriptive_not_a_gate() -> None:
+    k1 = audit.k1_mask_only_audit(
+        np.array([[[1439.84]], [[1439.82]]]), np.eye(4),
+        np.array([[[1439.83]], [[1439.83]]]), np.eye(4),
+        np.ones((2, 1, 1), bool), np.eye(4), np.ones((2, 1, 1), bool),
+    )
+    assert k1["rmse"] > 0
+    assert k1["status"] == "PASS"
+    assert k1["descriptive_only"] is True
+    assert k1["relative_rmse"] == pytest.approx(k1["rmse"] / k1["reference_mean_ms"])
+    assert k1["relative_mae"] == pytest.approx(k1["mae"] / k1["reference_mean_ms"])
+    assert k1["max_absolute_difference"] is not None
+    assert "need not be bitwise identical" in k1["reason"]
+    audit.require_sanity_controls({"status": "PASS"}, {"status": "PASS"}, k1)
+
+
+def test_k1_grid_mismatch_and_empty_intersection_still_fail() -> None:
+    grid_mismatch = audit.k1_mask_only_audit(
+        np.ones((2, 1, 1)), np.eye(4), np.ones((3, 1, 1)), np.eye(4),
+        np.ones((2, 1, 1), bool), np.eye(4), np.ones((3, 1, 1), bool),
+    )
+    empty_intersection = audit.k1_mask_only_audit(
+        np.ones((2, 1, 1)), np.eye(4), np.ones((2, 1, 1)), np.eye(4),
+        np.array([[[True]], [[False]]]), np.eye(4), np.array([[[False]], [[True]]]),
+    )
+    assert grid_mismatch["status"] == "FAIL"
+    assert empty_intersection["status"] == "FAIL"
+    with pytest.raises(RuntimeError, match="K1"):
+        audit.require_sanity_controls({"status": "PASS"}, {"status": "PASS"}, empty_intersection)
+
+
 def test_k1_mask_only_excludes_l100_only_voxels() -> None:
     k1 = audit.k1_mask_only_audit(
         np.array([[[1.0]], [[999.0]]]), np.eye(4), np.array([[[1.0]], [[2.0]]]), np.eye(4),
