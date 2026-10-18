@@ -65,7 +65,7 @@ def test_sampling_scales_and_runtime_contract_are_fixed(parameter: str, scale: f
     assert "--sample-mask" not in command
     assert "sample_volume" in command[2]
     assert "sample_mask.save_mask(effective_mask_path)" in command[2]
-    assert command[-2:] == ["1.0", "128"]
+    assert command[-3:] == ["1.0", "128", "k128"]
     assert "reconstruct" not in command[2] and "train(" not in command[2]
     assert audit.INFERENCE_PARAMETERS == {"output_resolution_mm": 1.0, "output_psf_factor": 1, "n_inference_samples": 128, "inference_batch_size": 16000, "seed": 20260823, "output_intensity_mean": 0}
 
@@ -140,11 +140,62 @@ def test_k1_mask_only_excludes_l100_only_voxels() -> None:
     assert k1["rmse"] == pytest.approx(0.0)
 
 
+def test_independently_resampled_mask_bounding_boxes_need_not_share_a_grid() -> None:
+    sparse_grid = audit.geometry_check((3, 3, 3), np.eye(4), (5, 3, 3), np.eye(4))
+    shifted_l100_affine = np.eye(4); shifted_l100_affine[0, 3] = -2.0
+    shifted_grid = audit.geometry_check((3, 3, 3), np.eye(4), (3, 3, 3), shifted_l100_affine)
+    assert sparse_grid["status"] == "FAIL"
+    assert shifted_grid["status"] == "FAIL"
+
+
+def test_sparse_mask_maps_to_l100_reference_grid_with_exact_geometry() -> None:
+    sparse = np.array([[[True]], [[False]], [[True]]])
+    sparse_affine = np.eye(4); sparse_affine[0, 3] = -1.0
+    reference_affine = np.eye(4)
+    mapped = audit.map_mask_to_reference_grid(sparse, sparse_affine, (3, 1, 1), reference_affine)
+    assert mapped.dtype == bool
+    assert mapped.tolist() == [[[False]], [[True]], [[False]]]
+
+
+def test_sparse_mask_mapping_uses_nearest_neighbor() -> None:
+    source = np.array([[[True]], [[False]]])
+    source_affine = np.eye(4); source_affine[0, 0] = 2.0
+    mapped = audit.map_mask_to_reference_grid(source, source_affine, (3, 1, 1), np.eye(4))
+    assert mapped[:, 0, 0].tolist() == [True, False, False]
+    mapping_source = Path(audit.__file__).read_text(encoding="utf-8").split("def map_mask_to_reference_grid", 1)[1].split("def _resample_mask_to_grid", 1)[0]
+    assert "order=0" in mapping_source
+
+
 def test_k1_runtime_uses_central_sampling_and_fixed_l100_follows_sanity_gate(tmp_path: Path) -> None:
     command = audit.sample_volume_runtime_command(tmp_path / "python", tmp_path / "model.pt", tmp_path / "mask.nii.gz", tmp_path / "output.nii.gz", tmp_path / "effective_mask.nii.gz", tmp_path / "runtime.json", device="0", mode="k1")
-    assert command[-2:] == ["0.0", "1"]
+    assert command[-3:] == ["0.0", "1", "k1"]
     source = Path(audit.__file__).read_text(encoding="utf-8")
     assert source.index("require_sanity_controls(self_geometry, repeatability, k1_control)") < source.index("fixed_normalized, fixed_effective_mask, fixed_runtime")
+
+
+def test_k1_fixed_grid_runner_does_not_auto_resample_mask(tmp_path: Path) -> None:
+    command = audit.sample_volume_runtime_command(tmp_path / "python", tmp_path / "model.pt", tmp_path / "mask.nii.gz", tmp_path / "output.nii.gz", tmp_path / "effective_mask.nii.gz", tmp_path / "runtime.json", device="0", mode="k1_fixed_grid")
+    assert command[-3:] == ["0.0", "1", "k1_fixed_grid"]
+    assert "if mode != \"k1_fixed_grid\":\n    sample_mask = sample_mask.resample(1.0, None)" in command[2]
+
+
+def test_k1_reference_grid_is_created_from_l100_before_sparse_common_grid_sample() -> None:
+    source = Path(audit.__file__).read_text(encoding="utf-8")
+    l100_reference = 'l100_mask, k1_l100_normalized, l100_effective_mask, k1_l100_runtime, device=device, mode="k1"'
+    sparse_common_grid = 'sparse_mask_on_l100_grid, k1_self_normalized, k1_self_effective_mask, k1_self_runtime, device=device, mode="k1_fixed_grid"'
+    assert source.index(l100_reference) < source.index("sparse_on_l100 = map_mask_to_reference_grid") < source.index(sparse_common_grid)
+
+
+def test_k1_common_grid_comparison_has_no_spatial_interpolation() -> None:
+    report = audit.k1_mask_only_audit(
+        np.array([[[1.0]], [[2.0]]]), np.eye(4), np.array([[[1.0]], [[2.0]]]), np.eye(4),
+        np.array([[[True]], [[False]]]), np.eye(4), np.array([[[True]], [[True]]]),
+    )
+    assert report["status"] == "PASS"
+    assert report["spatial_interpolation_between_predictions"] is False
+    assert report["reference_grid"] == "l100_effective_1mm_grid"
+    function_source = Path(audit.__file__).read_text(encoding="utf-8").split("def k1_mask_only_audit", 1)[1].split("def require_sanity_controls", 1)[0]
+    assert "resample_volume_to_grid" not in function_source
 
 
 def test_manifest_explains_unrecoverable_historical_formal_rng(tmp_path: Path) -> None:

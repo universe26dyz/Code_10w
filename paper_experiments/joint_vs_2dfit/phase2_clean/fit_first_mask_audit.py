@@ -31,7 +31,11 @@ SAME_SEED_REPEATABILITY_RMSE_TOLERANCE_MS = 1e-5
 SAME_SEED_REPEATABILITY_MAX_ABSOLUTE_TOLERANCE_MS = 1e-4
 K1_MASK_ONLY_RMSE_TOLERANCE_MS = 1e-5
 K1_MASK_ONLY_MAX_ABSOLUTE_TOLERANCE_MS = 1e-4
-SAMPLING_MODES = {"k128": {"psf_resolution_mm": 1.0, "n_inference_samples": 128}, "k1": {"psf_resolution_mm": 0.0, "n_inference_samples": 1}}
+SAMPLING_MODES = {
+    "k128": {"psf_resolution_mm": 1.0, "n_inference_samples": 128},
+    "k1": {"psf_resolution_mm": 0.0, "n_inference_samples": 1},
+    "k1_fixed_grid": {"psf_resolution_mm": 0.0, "n_inference_samples": 1},
+}
 
 _EXPORT_CHECKPOINT_MASK = """
 import sys
@@ -56,10 +60,10 @@ from nesvor.inr.models import INR
 from nesvor.inr.sample import sample_volume
 from nesvor.utils import set_seed
 
-checkpoint_path, sample_mask_path, output_path, effective_mask_path, runtime_path, requested_device, psf_resolution, n_inference_samples = sys.argv[1:9]
+checkpoint_path, sample_mask_path, output_path, effective_mask_path, runtime_path, requested_device, psf_resolution, n_inference_samples, mode = sys.argv[1:10]
 psf_resolution = float(psf_resolution)
 n_inference_samples = int(n_inference_samples)
-if (psf_resolution, n_inference_samples) not in ((1.0, 128), (0.0, 1)):
+if (mode, psf_resolution, n_inference_samples) not in (("k128", 1.0, 128), ("k1", 0.0, 1), ("k1_fixed_grid", 0.0, 1)):
     raise ValueError("audit sampling mode must be formal K128 or deterministic central K1")
 if requested_device == \"-1\":
     device = torch.device(\"cpu\")
@@ -90,7 +94,8 @@ model.load_state_dict(checkpoint[\"model\"])
 model.to(device)
 model.eval()
 sample_mask = load_mask(sample_mask_path, device=device)
-sample_mask = sample_mask.resample(1.0, None)
+if mode != "k1_fixed_grid":
+    sample_mask = sample_mask.resample(1.0, None)
 require_device(\"model_parameter\", next(model.parameters()))
 require_device(\"model_bounding_box\", model.bounding_box)
 require_device(\"sample_mask.image\", sample_mask.image)
@@ -117,6 +122,7 @@ runtime = {
     \"sample_mask_mask_device\": str(sample_mask.mask.device),
     \"sample_mask_transformation_device\": str(sample_mask.transformation.device),
     \"sample_mask_xyz_masked_device\": str(sample_mask.xyz_masked.device),
+    \"sampling_mode\": mode,
     \"inference_parameters\": {\"output_resolution_mm\": 1.0, \"output_psf_factor\": 1, \"psf_resolution_mm\": psf_resolution, \"n_inference_samples\": n_inference_samples, \"inference_batch_size\": 16000, \"seed\": 20260823},
 }
 with open(runtime_path, \"w\") as handle:
@@ -185,7 +191,7 @@ def sample_volume_runtime_command(
     return [
         str(nesvor_python), "-c", _SAMPLE_CHECKPOINT_WITH_MASK,
         str(model), str(sample_mask), str(output_volume), str(effective_mask_output), str(runtime_output), str(device),
-        str(parameters["psf_resolution_mm"]), str(parameters["n_inference_samples"]),
+        str(parameters["psf_resolution_mm"]), str(parameters["n_inference_samples"]), str(mode),
     ]
 
 
@@ -237,16 +243,24 @@ def geometry_check(
     }
 
 
-def _resample_mask_to_grid(
+def map_mask_to_reference_grid(
     mask: np.ndarray, mask_affine: np.ndarray,
     grid_shape: tuple[int, ...], grid_affine: np.ndarray,
 ) -> np.ndarray:
+    """Map binary membership onto a fixed world grid without interpolation."""
     indices = np.indices(grid_shape, dtype=float).reshape(3, -1)
     world = np.asarray(grid_affine, float) @ np.vstack((indices, np.ones(indices.shape[1])))
     values, inside = _world_sample(
         np.asarray(mask, np.uint8), mask_affine, world.reshape(4, *grid_shape), order=0
     )
     return inside & np.isfinite(values) & (values > 0.5)
+
+
+def _resample_mask_to_grid(
+    mask: np.ndarray, mask_affine: np.ndarray,
+    grid_shape: tuple[int, ...], grid_affine: np.ndarray,
+) -> np.ndarray:
+    return map_mask_to_reference_grid(mask, mask_affine, grid_shape, grid_affine)
 
 
 def formal_vs_restarted_k128_audit(
@@ -292,17 +306,38 @@ def k1_mask_only_audit(
     k1_self_support_affine: np.ndarray | None = None,
     k1_l100_support: np.ndarray | None = None,
 ) -> dict[str, Any]:
-    """Deterministic central-sample control: only sampling-mask geometry may differ."""
+    """Compare deterministic K1 outputs directly on the L100 reference grid."""
     if k1_self_support is None or k1_self_support_affine is None or k1_l100_support is None:
         raise ValueError("K1 mask-only audit requires both effective sampling masks")
-    self_on_l100, inside = resample_volume_to_grid(k1_self, k1_self_affine, np.asarray(k1_l100).shape, k1_l100_affine)
-    intersection = np.asarray(k1_l100_support, bool) & _resample_mask_to_grid(
-        k1_self_support, k1_self_support_affine, np.asarray(k1_l100).shape, k1_l100_affine
+    prediction_geometry = geometry_check(
+        np.asarray(k1_self).shape, k1_self_affine, np.asarray(k1_l100).shape, k1_l100_affine
     )
-    common = intersection & inside & np.isfinite(self_on_l100) & np.isfinite(k1_l100)
-    result = _comparison_metrics(k1_l100, self_on_l100, common)
+    sparse_mask_geometry = geometry_check(
+        np.asarray(k1_self_support).shape, k1_self_support_affine,
+        np.asarray(k1_l100_support).shape, k1_l100_affine,
+    )
+    same_grid = prediction_geometry["status"] == "PASS" and sparse_mask_geometry["status"] == "PASS"
+    if same_grid:
+        common = np.asarray(k1_self_support, bool) & np.asarray(k1_l100_support, bool)
+        result = _comparison_metrics(k1_l100, k1_self, common)
+    else:
+        common = np.zeros(np.asarray(k1_l100).shape, bool)
+        result = {
+            "voxel_count": 0, "finite_common_voxel_count": 0,
+            "rmse": None, "mae": None, "bias": None,
+            "reference_mean_ms": None, "prediction_mean_ms": None,
+            "max_absolute_difference": None,
+        }
     result["intersection_voxel_count"] = int(common.sum())
-    result["status"] = "PASS" if result["rmse"] is not None and result["rmse"] <= K1_MASK_ONLY_RMSE_TOLERANCE_MS and result["max_absolute_difference"] is not None and result["max_absolute_difference"] <= K1_MASK_ONLY_MAX_ABSOLUTE_TOLERANCE_MS else "FAIL"
+    result["shape_match"] = bool(prediction_geometry["shape_match"] and sparse_mask_geometry["shape_match"])
+    result["affine_match"] = bool(prediction_geometry["affine_match"] and sparse_mask_geometry["affine_match"])
+    result["prediction_geometry"] = prediction_geometry
+    result["mask_geometry"] = sparse_mask_geometry
+    result["control"] = "deterministic_k1_fixed_common_world_grid"
+    result["reference_grid"] = "l100_effective_1mm_grid"
+    result["spatial_interpolation_between_predictions"] = False
+    result["mask_mapping_to_reference_grid"] = "nearest_neighbor"
+    result["status"] = "PASS" if same_grid and result["rmse"] is not None and result["rmse"] <= K1_MASK_ONLY_RMSE_TOLERANCE_MS and result["max_absolute_difference"] is not None and result["max_absolute_difference"] <= K1_MASK_ONLY_MAX_ABSOLUTE_TOLERANCE_MS else "FAIL"
     result["rmse_tolerance_ms"] = K1_MASK_ONLY_RMSE_TOLERANCE_MS
     result["max_absolute_tolerance_ms"] = K1_MASK_ONLY_MAX_ABSOLUTE_TOLERANCE_MS
     return result
@@ -509,11 +544,14 @@ def run_mask_audit(
             _run(checkpoint_mask_export_command(nesvor_python, checkpoints[parameter]["l100"], l100_mask))
             self_a_normalized = target / "self_mask_repeat_a" / "volume_normalized.nii.gz"; self_a_normalized.parent.mkdir()
             self_b_normalized = target / "self_mask_repeat_b" / "volume_normalized.nii.gz"; self_b_normalized.parent.mkdir()
-            k1_self_normalized = target / "k1_self_mask" / "volume_normalized.nii.gz"; k1_self_normalized.parent.mkdir()
-            k1_l100_normalized = target / "k1_l100_mask" / "volume_normalized.nii.gz"; k1_l100_normalized.parent.mkdir()
+            k1_reference_grid = target / "k1_reference_grid"; k1_reference_grid.mkdir()
+            k1_self_normalized = target / "k1_self_common_grid" / "volume_normalized.nii.gz"; k1_self_normalized.parent.mkdir()
+            k1_l100_normalized = target / "k1_l100_common_grid" / "volume_normalized.nii.gz"; k1_l100_normalized.parent.mkdir()
             fixed_normalized = target / "l100_mask" / "volume_normalized.nii.gz"; fixed_normalized.parent.mkdir()
             self_a_effective_mask, self_b_effective_mask = self_a_normalized.with_name("sampling_mask.nii.gz"), self_b_normalized.with_name("sampling_mask.nii.gz")
-            k1_self_effective_mask, k1_l100_effective_mask = k1_self_normalized.with_name("sampling_mask.nii.gz"), k1_l100_normalized.with_name("sampling_mask.nii.gz")
+            k1_self_effective_mask = k1_self_normalized.with_name("sampling_mask.nii.gz")
+            l100_effective_mask = k1_reference_grid / "l100_effective_mask_1mm.nii.gz"
+            sparse_mask_on_l100_grid = k1_reference_grid / "sparse_mask_on_l100_grid.nii.gz"
             fixed_effective_mask = fixed_normalized.with_name("sampling_mask.nii.gz")
             self_a_runtime, self_b_runtime = self_a_normalized.with_name("runtime.json"), self_b_normalized.with_name("runtime.json")
             k1_self_runtime, k1_l100_runtime = k1_self_normalized.with_name("runtime.json"), k1_l100_normalized.with_name("runtime.json")
@@ -538,13 +576,37 @@ def run_mask_audit(
             self_b_image = nib.load(str(self_b_ms))
             self_b_effective_mask_image = nib.load(str(self_b_effective_mask))
             repeatability = same_seed_repeatability_audit(self_a_image.get_fdata(), self_a_image.affine, self_b_image.get_fdata(), self_b_image.affine, self_a_effective_mask_image.get_fdata() > 0, self_b_effective_mask_image.get_fdata() > 0)
-            _run(sample_volume_runtime_command(nesvor_python, checkpoints[parameter]["sparse"], sparse_mask, k1_self_normalized, k1_self_effective_mask, k1_self_runtime, device=device, mode="k1"))
-            _run(sample_volume_runtime_command(nesvor_python, checkpoints[parameter]["sparse"], l100_mask, k1_l100_normalized, k1_l100_effective_mask, k1_l100_runtime, device=device, mode="k1"))
+            _run(sample_volume_runtime_command(nesvor_python, checkpoints[parameter]["sparse"], l100_mask, k1_l100_normalized, l100_effective_mask, k1_l100_runtime, device=device, mode="k1"))
+            l100_effective_mask_image = nib.load(str(l100_effective_mask))
+            sparse_mask_image = nib.load(str(sparse_mask))
+            sparse_on_l100 = map_mask_to_reference_grid(
+                sparse_mask_image.get_fdata() > 0, sparse_mask_image.affine,
+                l100_effective_mask_image.shape, l100_effective_mask_image.affine,
+            )
+            nib.save(nib.Nifti1Image(sparse_on_l100.astype(np.uint8), l100_effective_mask_image.affine, l100_effective_mask_image.header.copy()), str(sparse_mask_on_l100_grid))
+            _run(sample_volume_runtime_command(nesvor_python, checkpoints[parameter]["sparse"], sparse_mask_on_l100_grid, k1_self_normalized, k1_self_effective_mask, k1_self_runtime, device=device, mode="k1_fixed_grid"))
             k1_self_ms, k1_l100_ms = k1_self_normalized.with_name("volume_ms.nii.gz"), k1_l100_normalized.with_name("volume_ms.nii.gz")
             _denormalize(k1_self_normalized, k1_self_ms, scale); _denormalize(k1_l100_normalized, k1_l100_ms, scale)
             k1_self_image, k1_l100_image = nib.load(str(k1_self_ms)), nib.load(str(k1_l100_ms))
-            k1_self_mask_image, k1_l100_mask_image = nib.load(str(k1_self_effective_mask)), nib.load(str(k1_l100_effective_mask))
-            k1_control = k1_mask_only_audit(k1_self_image.get_fdata(), k1_self_image.affine, k1_l100_image.get_fdata(), k1_l100_image.affine, k1_self_mask_image.get_fdata() > 0, k1_self_mask_image.affine, k1_l100_mask_image.get_fdata() > 0)
+            sparse_on_l100_image = nib.load(str(sparse_mask_on_l100_grid))
+            k1_control = k1_mask_only_audit(k1_self_image.get_fdata(), k1_self_image.affine, k1_l100_image.get_fdata(), k1_l100_image.affine, sparse_on_l100_image.get_fdata() > 0, sparse_on_l100_image.affine, l100_effective_mask_image.get_fdata() > 0)
+            k1_reference_provenance = {
+                "control": "deterministic_k1_fixed_common_world_grid",
+                "reference_grid": "l100_effective_1mm_grid",
+                "spatial_interpolation_between_predictions": False,
+                "mask_mapping_to_reference_grid": "nearest_neighbor",
+                "reference_grid_shape": list(l100_effective_mask_image.shape),
+                "reference_grid_affine": l100_effective_mask_image.affine.tolist(),
+                "source_l100_mask": _final_output_mask_summary(l100_mask, staging, output),
+                "source_sparse_mask": _final_output_mask_summary(sparse_mask, staging, output),
+                "sparse_mask_on_l100_grid": _final_output_mask_summary(sparse_mask_on_l100_grid, staging, output),
+                "l100_effective_mask": _final_output_mask_summary(l100_effective_mask, staging, output),
+                "mask_occupancy": mask_support_audit(
+                    l100_effective_mask_image.get_fdata() > 0, l100_effective_mask_image.affine,
+                    sparse_on_l100_image.get_fdata() > 0, sparse_on_l100_image.affine,
+                ),
+            }
+            k1_control["reference_grid_provenance"] = k1_reference_provenance
             diagnostics = {"parameter": parameter, "self_geometry_check": self_geometry, "formal_vs_restarted_k128": formal_vs_restarted, "same_seed_repeatability": repeatability, "k1_mask_only": k1_control}
             try:
                 require_sanity_controls(self_geometry, repeatability, k1_control)
@@ -568,7 +630,8 @@ def run_mask_audit(
                 parameter_report["heldout_native_planes"][stack] = planes
             report["parameters"][parameter] = parameter_report
             manifest.setdefault("mask_outputs", {})[parameter] = {"sparse": _final_output_mask_summary(sparse_mask, staging, output), "l100": _final_output_mask_summary(l100_mask, staging, output)}
-            runtime_records = {"self_mask_repeat_a": json.loads(self_a_runtime.read_text(encoding="utf-8")), "self_mask_repeat_b": json.loads(self_b_runtime.read_text(encoding="utf-8")), "k1_self_mask": json.loads(k1_self_runtime.read_text(encoding="utf-8")), "k1_l100_mask": json.loads(k1_l100_runtime.read_text(encoding="utf-8")), "l100_mask": json.loads(fixed_runtime.read_text(encoding="utf-8"))}
+            manifest.setdefault("k1_control", {})[parameter] = k1_reference_provenance
+            runtime_records = {"self_mask_repeat_a": json.loads(self_a_runtime.read_text(encoding="utf-8")), "self_mask_repeat_b": json.loads(self_b_runtime.read_text(encoding="utf-8")), "k1_self_common_grid": json.loads(k1_self_runtime.read_text(encoding="utf-8")), "k1_l100_common_grid": json.loads(k1_l100_runtime.read_text(encoding="utf-8")), "l100_mask": json.loads(fixed_runtime.read_text(encoding="utf-8"))}
             manifest["sampling_runtime"][parameter] = runtime_records
             for key in ("nesvor_python_executable", "nesvor_package_path", "sample_source_path", "models_source_path", "sample_source_sha256", "models_source_sha256", "requested_device", "resolved_torch_device", "model_device", "model_bounding_box_device", "sample_mask_image_device", "sample_mask_mask_device", "sample_mask_transformation_device", "sample_mask_xyz_masked_device"):
                 manifest.setdefault(key, runtime_records["self_mask_repeat_a"][key])
