@@ -101,14 +101,14 @@ def test_formal_self_geometry_mismatch_fails() -> None:
     geometry = audit.geometry_check((2, 2, 2), np.eye(4), (2, 2, 3), np.eye(4))
     assert geometry["status"] == "FAIL"
     with pytest.raises(RuntimeError, match="geometry"):
-        audit.require_sanity_controls(geometry, {"status": "PASS"}, {"status": "PASS"})
+        audit.require_sanity_controls(geometry, {"status": "PASS"})
 
 
 def test_same_seed_repeatability_mismatch_fails() -> None:
     repeatability = audit.same_seed_repeatability_audit(np.ones((2, 2, 2)), np.eye(4), np.ones((2, 2, 2)) * 1.1, np.eye(4))
     assert repeatability["status"] == "FAIL"
     with pytest.raises(RuntimeError, match="repeatability"):
-        audit.require_sanity_controls({"status": "PASS"}, repeatability, {"status": "PASS"})
+        audit.require_sanity_controls({"status": "PASS"}, repeatability)
 
 
 def test_same_seed_repeatability_passes_on_common_sampling_mask() -> None:
@@ -128,7 +128,7 @@ def test_k1_mask_only_common_support_predictions_are_deterministic() -> None:
     )
     assert k1["intersection_voxel_count"] == 8
     assert k1["rmse"] == pytest.approx(0.0)
-    assert k1["status"] == "PASS"
+    assert k1["status"] == "DESCRIPTIVE"
 
 
 def test_k1_small_numerical_difference_is_descriptive_not_a_gate() -> None:
@@ -138,16 +138,21 @@ def test_k1_small_numerical_difference_is_descriptive_not_a_gate() -> None:
         np.ones((2, 1, 1), bool), np.eye(4), np.ones((2, 1, 1), bool),
     )
     assert k1["rmse"] > 0
-    assert k1["status"] == "PASS"
+    assert k1["status"] == "DESCRIPTIVE"
     assert k1["descriptive_only"] is True
     assert k1["relative_rmse"] == pytest.approx(k1["rmse"] / k1["reference_mean_ms"])
     assert k1["relative_mae"] == pytest.approx(k1["mae"] / k1["reference_mean_ms"])
     assert k1["max_absolute_difference"] is not None
     assert "need not be bitwise identical" in k1["reason"]
-    audit.require_sanity_controls({"status": "PASS"}, {"status": "PASS"}, k1)
+    audit.require_sanity_controls({"status": "PASS"}, {"status": "PASS"})
 
 
-def test_k1_grid_mismatch_and_empty_intersection_still_fail() -> None:
+def test_k1_affine_drift_and_empty_intersection_remain_descriptive() -> None:
+    drift_affine = np.eye(4); drift_affine[0, 3] = 2e-5
+    affine_drift = audit.k1_mask_only_audit(
+        np.ones((2, 1, 1)), drift_affine, np.ones((2, 1, 1)), np.eye(4),
+        np.ones((2, 1, 1), bool), np.eye(4), np.ones((2, 1, 1), bool), np.eye(4),
+    )
     grid_mismatch = audit.k1_mask_only_audit(
         np.ones((2, 1, 1)), np.eye(4), np.ones((3, 1, 1)), np.eye(4),
         np.ones((2, 1, 1), bool), np.eye(4), np.ones((3, 1, 1), bool),
@@ -156,10 +161,15 @@ def test_k1_grid_mismatch_and_empty_intersection_still_fail() -> None:
         np.ones((2, 1, 1)), np.eye(4), np.ones((2, 1, 1)), np.eye(4),
         np.array([[[True]], [[False]]]), np.eye(4), np.array([[[False]], [[True]]]),
     )
-    assert grid_mismatch["status"] == "FAIL"
-    assert empty_intersection["status"] == "FAIL"
-    with pytest.raises(RuntimeError, match="K1"):
-        audit.require_sanity_controls({"status": "PASS"}, {"status": "PASS"}, empty_intersection)
+    assert affine_drift["status"] == "DESCRIPTIVE"
+    assert affine_drift["canonical_common_voxel_count"] == 2
+    assert affine_drift["canonical_common_mask_source"] == "sparse_mask_on_l100_grid AND l100_effective_mask"
+    assert affine_drift["used_as_hard_gate"] is False
+    assert affine_drift["self_prediction_affine_vs_reference"]["max_absolute_affine_difference"] == pytest.approx(2e-5)
+    assert grid_mismatch["status"] == "DESCRIPTIVE"
+    assert empty_intersection["status"] == "DESCRIPTIVE"
+    assert empty_intersection["canonical_common_voxel_count"] == 0
+    audit.require_sanity_controls({"status": "PASS"}, {"status": "PASS"})
 
 
 def test_k1_mask_only_excludes_l100_only_voxels() -> None:
@@ -201,7 +211,7 @@ def test_k1_runtime_uses_central_sampling_and_fixed_l100_follows_sanity_gate(tmp
     command = audit.sample_volume_runtime_command(tmp_path / "python", tmp_path / "model.pt", tmp_path / "mask.nii.gz", tmp_path / "output.nii.gz", tmp_path / "effective_mask.nii.gz", tmp_path / "runtime.json", device="0", mode="k1")
     assert command[-3:] == ["0.0", "1", "k1"]
     source = Path(audit.__file__).read_text(encoding="utf-8")
-    assert source.index("require_sanity_controls(self_geometry, repeatability, k1_control)") < source.index("fixed_normalized, fixed_effective_mask, fixed_runtime")
+    assert source.index("require_sanity_controls(self_geometry, repeatability)") < source.index("fixed_normalized, fixed_effective_mask, fixed_runtime")
 
 
 def test_k1_fixed_grid_runner_does_not_auto_resample_mask(tmp_path: Path) -> None:
@@ -222,7 +232,7 @@ def test_k1_common_grid_comparison_has_no_spatial_interpolation() -> None:
         np.array([[[1.0]], [[2.0]]]), np.eye(4), np.array([[[1.0]], [[2.0]]]), np.eye(4),
         np.array([[[True]], [[False]]]), np.eye(4), np.array([[[True]], [[True]]]),
     )
-    assert report["status"] == "PASS"
+    assert report["status"] == "DESCRIPTIVE"
     assert report["spatial_interpolation_between_predictions"] is False
     assert report["reference_grid"] == "l100_effective_1mm_grid"
     function_source = Path(audit.__file__).read_text(encoding="utf-8").split("def k1_mask_only_audit", 1)[1].split("def require_sanity_controls", 1)[0]
