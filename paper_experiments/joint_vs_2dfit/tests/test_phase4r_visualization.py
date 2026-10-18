@@ -160,6 +160,40 @@ def test_heldout_support_matches_evaluator_support() -> None:
     assert np.array_equal(actual, expected)
 
 
+def test_r1_cache_selection_uses_heldout_report_provenance(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    sparse_manifest = tmp_path / "sparse_manifest.json"
+    sparse_manifest.write_text(json.dumps({"status": "ELIGIBLE"}))
+    cache_root = tmp_path / "r0_native_cache"; cache_root.mkdir()
+    report = {
+        "provenance": {
+            "sparse_manifest": {"path": str(sparse_manifest), "sha256": viz._sha256(sparse_manifest)},
+            "native_reference_cache_root": str(cache_root),
+        },
+        "stacks": {"2ch": {"heldout_original_group_ids": [4, 6]}},
+    }
+    calls: list[tuple[Path, Path, str, list[int]]] = []
+
+    def select(cache: str | Path, manifest: str | Path, stack: str, groups: list[int]) -> dict[str, object]:
+        calls.append((Path(cache), Path(manifest), stack, groups))
+        return {"group_idx": np.asarray(groups), "source_support": np.ones((2, 2, 2), bool)}
+
+    monkeypatch.setattr(viz, "select_verified_native_cache_groups", select)
+    selected = viz.select_verified_heldout_native_cache(report, "2ch")
+    assert selected["group_idx"].tolist() == [4, 6]
+    assert calls == [(cache_root, sparse_manifest, "2ch", [4, 6])]
+
+
+def test_r1_cache_selection_rejects_report_manifest_hash_mismatch(tmp_path: Path) -> None:
+    sparse_manifest = tmp_path / "sparse_manifest.json"
+    sparse_manifest.write_text(json.dumps({"status": "ELIGIBLE"}))
+    report = {
+        "provenance": {"sparse_manifest": {"path": str(sparse_manifest), "sha256": "wrong"}, "native_reference_cache_root": str(tmp_path)},
+        "stacks": {"2ch": {"heldout_original_group_ids": [4]}},
+    }
+    with pytest.raises(ValueError, match="SHA256"):
+        viz.select_verified_heldout_native_cache(report, "2ch")
+
+
 def _r0_inputs(root: Path, *, mean: float = 0, t1_scale: float = 2500.0, t2_scale: float = 200.0) -> tuple[Path, Path, Path]:
     proposed, fit, data = root / "proposed", root / "fit", root / "data"
     for subject in ("CYJ", "DYZ", "HHZ", "HJL"):

@@ -23,6 +23,7 @@ from trad.evaluation.scmr.quality_control import (
 )
 
 from .evaluation import _world_sample, reproject_volume_to_native_plane
+from .fit_first import select_verified_native_cache_groups
 
 
 R0_SUBJECTS = ("CYJ", "DYZ", "HHZ", "HJL")
@@ -519,6 +520,39 @@ def render_r0(
     return root
 
 
+def select_verified_heldout_native_cache(report: Mapping[str, Any], stack: str) -> dict[str, Any]:
+    """Resolve R1 native maps from the immutable held-out report provenance."""
+    stack = stack.lower()
+    if stack not in ("2ch", "4ch"):
+        raise ValueError("R1 visualization stack must be 2ch or 4ch")
+    provenance = report.get("provenance")
+    if not isinstance(provenance, Mapping):
+        raise ValueError("held-out quantitative report is missing provenance")
+    sparse = provenance.get("sparse_manifest")
+    if not isinstance(sparse, Mapping):
+        raise ValueError("held-out quantitative report is missing sparse-manifest provenance")
+    manifest_path = Path(str(sparse.get("path", "")))
+    expected_sha = sparse.get("sha256")
+    if not manifest_path.is_file():
+        raise FileNotFoundError(f"held-out sparse manifest is unavailable: {manifest_path}")
+    if not isinstance(expected_sha, str) or _sha256(manifest_path) != expected_sha:
+        raise ValueError("held-out sparse manifest SHA256 mismatch")
+    cache_root = Path(str(provenance.get("native_reference_cache_root", "")))
+    if not cache_root.is_dir():
+        raise FileNotFoundError(f"held-out R0 native cache is unavailable: {cache_root}")
+    stacks = report.get("stacks")
+    stack_report = stacks.get(stack) if isinstance(stacks, Mapping) else None
+    if not isinstance(stack_report, Mapping):
+        raise ValueError(f"held-out quantitative report is missing {stack} group provenance")
+    groups = stack_report.get("heldout_original_group_ids")
+    if not isinstance(groups, list):
+        raise ValueError(f"held-out quantitative report is missing {stack} held-out group IDs")
+    selected = select_verified_native_cache_groups(cache_root, manifest_path, stack, [int(group) for group in groups])
+    if [int(group) for group in np.asarray(selected["group_idx"])] != [int(group) for group in groups]:
+        raise ValueError(f"{stack}: verified native cache groups do not match held-out report provenance")
+    return selected
+
+
 def render_r1_from_heldout(
     *, heldout_root: str | Path, proposed_t1: str | Path, proposed_t2: str | Path,
     fit_first_t1: str | Path, fit_first_t2: str | Path, output: str | Path,
@@ -535,8 +569,7 @@ def render_r1_from_heldout(
     stack = stack.lower()
     if stack not in ("2ch", "4ch"):
         raise ValueError("R1 visualization stack must be 2ch or 4ch")
-    cache = heldout_root / "evaluation_only" / stack
-    maps, geometry, observations = np.load(cache / "dictionary_fit" / "native_maps.npz"), np.load(cache / "dictionary_fit" / "geometry.npz"), np.load(cache / "observations.npz")
+    cache = select_verified_heldout_native_cache(report, stack)
     proposed_images = {"T1": nib.load(str(proposed_t1)), "T2": nib.load(str(proposed_t2))}
     fit_images = {"T1": nib.load(str(fit_first_t1)), "T2": nib.load(str(fit_first_t2))}
     fit_scale = {
@@ -548,15 +581,14 @@ def render_r1_from_heldout(
     selected: dict[str, int] = {}
     for parameter, key in (("T1", "t1_ms"), ("T2", "t2_ms")):
         records: list[dict[str, Any]] = []
-        for index, original_group in enumerate(maps["group_idx"]):
-            rows = np.flatnonzero(observations["group_idx"] == original_group)
-            source_support = np.all(observations["masks"][rows].astype(bool), axis=0)
-            affine_ras = np.diag([-1.0, -1.0, 1.0, 1.0]) @ np.asarray(geometry["affine_lps_rc"][index], float)
-            p, p_valid = reproject_volume_to_native_plane(proposed_images[parameter].get_fdata(), proposed_images[parameter].affine, affine_ras, maps[key][index].shape)
-            f, f_valid = reproject_volume_to_native_plane(fit_images[parameter].get_fdata(), fit_images[parameter].affine, affine_ras, maps[key][index].shape)
-            quantitative_support = paired_common_support(stack, maps[key][index], p, f, source_support, reprojection_valid=p_valid & f_valid)
-            display_support = native_display_support(maps[key][index], p, f, p_valid, f_valid) & source_support
-            records.append({"group_index": int(original_group), "common_support_voxels": int(quantitative_support.sum()), "reference": maps[key][index], "proposed": p, "fit_first": f, "support": quantitative_support, "quantitative_support": quantitative_support, "display_support": display_support})
+        for index, original_group in enumerate(cache["group_idx"]):
+            affine_ras = np.diag([-1.0, -1.0, 1.0, 1.0]) @ np.asarray(cache["affine_lps_rc"][index], float)
+            p, p_valid = reproject_volume_to_native_plane(proposed_images[parameter].get_fdata(), proposed_images[parameter].affine, affine_ras, cache[key][index].shape)
+            f, f_valid = reproject_volume_to_native_plane(fit_images[parameter].get_fdata(), fit_images[parameter].affine, affine_ras, cache[key][index].shape)
+            source_support = np.asarray(cache["source_support"][index], bool)
+            quantitative_support = paired_common_support(stack, cache[key][index], p, f, source_support, reprojection_valid=p_valid & f_valid)
+            display_support = native_display_support(cache[key][index], p, f, p_valid, f_valid) & source_support
+            records.append({"group_index": int(original_group), "common_support_voxels": int(quantitative_support.sum()), "reference": cache[key][index], "proposed": p, "fit_first": f, "support": quantitative_support, "quantitative_support": quantitative_support, "display_support": display_support})
         chosen_id = select_representative_group(records, group)
         selected[parameter] = chosen_id
         chosen = next(item for item in records if item["group_index"] == chosen_id)
