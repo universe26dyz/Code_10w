@@ -26,6 +26,8 @@ INFERENCE_PARAMETERS = {
     "seed": 20260823,
     "output_intensity_mean": 0,
 }
+SELF_RESAMPLE_RMSE_TOLERANCE_MS = 1e-3
+SELF_RESAMPLE_MAX_ABSOLUTE_TOLERANCE_MS = 1e-2
 
 _EXPORT_CHECKPOINT_MASK = """
 import sys
@@ -35,6 +37,81 @@ mask = checkpoint.get(\"mask\")
 if mask is None:
     raise RuntimeError(\"NeSVoR checkpoint has no saved mask\")
 mask.save_mask(sys.argv[2])
+"""
+
+_SAMPLE_CHECKPOINT_WITH_MASK = """
+import hashlib
+import json
+import sys
+import torch
+import nesvor
+import nesvor.inr.models as models_module
+import nesvor.inr.sample as sample_module
+from nesvor.image import load_mask
+from nesvor.inr.models import INR
+from nesvor.inr.sample import sample_volume
+from nesvor.utils import set_seed
+
+checkpoint_path, sample_mask_path, output_path, runtime_path, requested_device = sys.argv[1:6]
+if requested_device == \"-1\":
+    device = torch.device(\"cpu\")
+elif requested_device.isdigit():
+    device = torch.device(\"cuda:\" + requested_device)
+    if not torch.cuda.is_available():
+        raise RuntimeError(\"requested CUDA device is unavailable\")
+else:
+    raise ValueError(\"device must be a CUDA index such as 0, or -1 for test/debug CPU\")
+
+def require_device(name, value):
+    if value.device != device:
+        raise RuntimeError(\"device mismatch: %s is %s, expected %s\" % (name, value.device, device))
+
+def sha256(path):
+    digest = hashlib.sha256()
+    with open(path, \"rb\") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b\"\"):
+            digest.update(block)
+    return digest.hexdigest()
+
+set_seed(20260823)
+checkpoint = torch.load(checkpoint_path, map_location=device)
+args = checkpoint[\"args\"]
+args.device = device
+model = INR(checkpoint[\"model\"][\"bounding_box\"], args)
+model.load_state_dict(checkpoint[\"model\"])
+model.to(device)
+model.eval()
+sample_mask = load_mask(sample_mask_path, device=device)
+sample_mask = sample_mask.resample(1.0, None)
+require_device(\"model_parameter\", next(model.parameters()))
+require_device(\"model_bounding_box\", model.bounding_box)
+require_device(\"sample_mask.image\", sample_mask.image)
+require_device(\"sample_mask.mask\", sample_mask.mask)
+if sample_mask.transformation.device != device:
+    raise RuntimeError(\"device mismatch: sample_mask.transformation is %s, expected %s\" % (sample_mask.transformation.device, device))
+require_device(\"sample_mask.xyz_masked\", sample_mask.xyz_masked)
+sampled = sample_volume(model, sample_mask, 1.0, 16000, 128)
+sampled.save(output_path, masked=True)
+runtime = {
+    \"sampling_backend\": \"nesvor_adjacent_python_direct_sample_volume\",
+    \"nesvor_python_executable\": sys.executable,
+    \"nesvor_package_path\": nesvor.__file__,
+    \"sample_source_path\": sample_module.__file__,
+    \"models_source_path\": models_module.__file__,
+    \"sample_source_sha256\": sha256(sample_module.__file__) if sample_module.__file__ else None,
+    \"models_source_sha256\": sha256(models_module.__file__) if models_module.__file__ else None,
+    \"requested_device\": requested_device,
+    \"resolved_torch_device\": str(device),
+    \"model_device\": str(next(model.parameters()).device),
+    \"model_bounding_box_device\": str(model.bounding_box.device),
+    \"sample_mask_image_device\": str(sample_mask.image.device),
+    \"sample_mask_mask_device\": str(sample_mask.mask.device),
+    \"sample_mask_transformation_device\": str(sample_mask.transformation.device),
+    \"sample_mask_xyz_masked_device\": str(sample_mask.xyz_masked.device),
+    \"inference_parameters\": {\"output_resolution_mm\": 1.0, \"output_psf_factor\": 1, \"psf_resolution_mm\": 1.0, \"n_inference_samples\": 128, \"inference_batch_size\": 16000, \"seed\": 20260823},
+}
+with open(runtime_path, \"w\") as handle:
+    json.dump(runtime, handle, indent=2, sort_keys=True)
 """
 
 
@@ -72,21 +149,28 @@ def checkpoint_mask_export_command(
     return [str(nesvor_python), "-c", _EXPORT_CHECKPOINT_MASK, str(checkpoint), str(output_mask)]
 
 
-def sample_volume_command(
-    nesvor_executable: str | Path,
+def resolve_torch_device(device: str) -> str:
+    if device == "-1":
+        return "cpu"
+    if device.isdigit():
+        return f"cuda:{device}"
+    raise ValueError("device must be a CUDA index such as 0, or -1 for test/debug CPU")
+
+
+def sample_volume_runtime_command(
+    nesvor_python: str | Path,
     model: str | Path,
     sample_mask: str | Path,
     output_volume: str | Path,
+    runtime_output: str | Path,
     *,
     device: str,
 ) -> list[str]:
-    """Exact formal inference contract, with only the sample mask varied."""
+    """Run the existing NeSVoR sampler with explicit model/mask device checks."""
+    resolve_torch_device(device)
     return [
-        str(nesvor_executable), "sample-volume", "--input-model", str(model),
-        "--sample-mask", str(sample_mask), "--output-volume", str(output_volume),
-        "--output-resolution", "1.0", "--output-psf-factor", "1",
-        "--n-inference-samples", "128", "--inference-batch-size", "16000",
-        "--seed", "20260823", "--output-intensity-mean", "0", "--device", str(device),
+        str(nesvor_python), "-c", _SAMPLE_CHECKPOINT_WITH_MASK,
+        str(model), str(sample_mask), str(output_volume), str(runtime_output), str(device),
     ]
 
 
@@ -158,12 +242,15 @@ def heldout_mask_plane_audit(
 def audit_manifest(
     *, sparse_manifest: str | Path, r0_native_maps_root: str | Path,
     nesvor_executable: str | Path, checkpoints: Mapping[str, Mapping[str, str | Path]],
+    sampling_runtime: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     return {
         "source_checkpoints": {parameter: {name: _file_record(path) for name, path in roots.items()} for parameter, roots in checkpoints.items()},
         "sparse_manifest": _file_record(sparse_manifest),
         "r0_native_maps_root": str(Path(r0_native_maps_root).resolve()),
         "nesvor_executable": str(nesvor_executable),
+        "sampling_backend": "nesvor_adjacent_python_direct_sample_volume",
+        "sampling_runtime": dict(sampling_runtime or {}),
         "inference_parameters": INFERENCE_PARAMETERS,
         "normalization_scales": NORMALIZATION_SCALES,
         "no_training": True,
@@ -267,6 +354,7 @@ def run_mask_audit(
         report: dict[str, Any] = {"audit": "sparse_fit_first_sampling_mask_only", "parameters": {}}
         manifest = audit_manifest(sparse_manifest=sparse_manifest, r0_native_maps_root=r0_cache, nesvor_executable=nesvor, checkpoints=checkpoints)
         manifest["r0_native_cache_provenance"] = {stack: selected[stack]["provenance"] for stack in selected}
+        manifest["sampling_runtime"] = {}
         for parameter, scale in NORMALIZATION_SCALES.items():
             target = staging / parameter; target.mkdir()
             sparse_mask, l100_mask = target / "sparse_model_mask.nii.gz", target / "l100_model_mask.nii.gz"
@@ -274,17 +362,26 @@ def run_mask_audit(
             _run(checkpoint_mask_export_command(nesvor_python, checkpoints[parameter]["l100"], l100_mask))
             self_normalized = target / "self_mask" / "volume_normalized.nii.gz"; self_normalized.parent.mkdir()
             fixed_normalized = target / "l100_mask" / "volume_normalized.nii.gz"; fixed_normalized.parent.mkdir()
-            _run(sample_volume_command(nesvor, checkpoints[parameter]["sparse"], sparse_mask, self_normalized, device=device))
-            _run(sample_volume_command(nesvor, checkpoints[parameter]["sparse"], l100_mask, fixed_normalized, device=device))
-            self_ms, fixed_ms = self_normalized.with_name("volume_ms.nii.gz"), fixed_normalized.with_name("volume_ms.nii.gz")
-            _denormalize(self_normalized, self_ms, scale); _denormalize(fixed_normalized, fixed_ms, scale)
+            self_runtime, fixed_runtime = self_normalized.with_name("runtime.json"), fixed_normalized.with_name("runtime.json")
+            _run(sample_volume_runtime_command(nesvor_python, checkpoints[parameter]["sparse"], sparse_mask, self_normalized, self_runtime, device=device))
+            self_ms = self_normalized.with_name("volume_ms.nii.gz")
+            _denormalize(self_normalized, self_ms, scale)
             formal = nib.load(str(sparse_root / "nesvor" / parameter / "volume_ms.nii.gz"))
-            self_image, fixed_image = nib.load(str(self_ms)), nib.load(str(fixed_ms))
+            self_image = nib.load(str(self_ms))
             self_on_formal, self_inside = resample_volume_to_grid(self_image.get_fdata(), self_image.affine, formal.shape, formal.affine)
             self_metrics = _metric_summary(formal.get_fdata(), self_on_formal, self_inside)
             self_common = self_inside & np.isfinite(formal.get_fdata()) & np.isfinite(self_on_formal)
             self_metrics["finite_common_voxel_count"] = int(self_common.sum())
             self_metrics["max_absolute_difference"] = float(np.max(np.abs(formal.get_fdata()[self_common] - self_on_formal[self_common]))) if self_common.any() else None
+            self_metrics["status"] = "PASS" if self_metrics["rmse"] is not None and self_metrics["rmse"] <= SELF_RESAMPLE_RMSE_TOLERANCE_MS and self_metrics["max_absolute_difference"] is not None and self_metrics["max_absolute_difference"] <= SELF_RESAMPLE_MAX_ABSOLUTE_TOLERANCE_MS else "FAIL"
+            self_metrics["rmse_tolerance_ms"] = SELF_RESAMPLE_RMSE_TOLERANCE_MS
+            self_metrics["max_absolute_tolerance_ms"] = SELF_RESAMPLE_MAX_ABSOLUTE_TOLERANCE_MS
+            if self_metrics["status"] != "PASS":
+                raise RuntimeError(f"{parameter}: self-resample sanity check failed; fixed-mask result will not be interpreted")
+            _run(sample_volume_runtime_command(nesvor_python, checkpoints[parameter]["sparse"], l100_mask, fixed_normalized, fixed_runtime, device=device))
+            fixed_ms = fixed_normalized.with_name("volume_ms.nii.gz")
+            _denormalize(fixed_normalized, fixed_ms, scale)
+            fixed_image = nib.load(str(fixed_ms))
             l100_image, sparse_mask_image = nib.load(str(l100_mask)), nib.load(str(sparse_mask))
             parameter_report: dict[str, Any] = {"self_resample": self_metrics, "mask_support": mask_support_audit(l100_image.get_fdata() > 0, l100_image.affine, sparse_mask_image.get_fdata() > 0, sparse_mask_image.affine), "heldout_native_planes": {}}
             for stack, cache in selected.items():
@@ -298,6 +395,10 @@ def run_mask_audit(
                 parameter_report["heldout_native_planes"][stack] = planes
             report["parameters"][parameter] = parameter_report
             manifest.setdefault("mask_outputs", {})[parameter] = {"sparse": _final_output_mask_summary(sparse_mask, staging, output), "l100": _final_output_mask_summary(l100_mask, staging, output)}
+            runtime_records = {"self_mask": json.loads(self_runtime.read_text(encoding="utf-8")), "l100_mask": json.loads(fixed_runtime.read_text(encoding="utf-8"))}
+            manifest["sampling_runtime"][parameter] = runtime_records
+            for key in ("nesvor_python_executable", "nesvor_package_path", "sample_source_path", "models_source_path", "sample_source_sha256", "models_source_sha256", "requested_device", "resolved_torch_device", "model_device", "model_bounding_box_device", "sample_mask_image_device", "sample_mask_mask_device", "sample_mask_transformation_device", "sample_mask_xyz_masked_device"):
+                manifest.setdefault(key, runtime_records["self_mask"][key])
         _write_summary_csv(staging / "audit_summary.csv", report)
         (staging / "audit_report.json").write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         (staging / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")

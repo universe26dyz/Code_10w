@@ -56,13 +56,34 @@ def test_heldout_newly_recovered_and_both_valid_supports_are_disjoint() -> None:
 
 
 @pytest.mark.parametrize(("parameter", "scale"), (("t1", 2500.0), ("t2", 200.0)))
-def test_sampling_scales_and_command_contract_are_fixed(parameter: str, scale: float, tmp_path: Path) -> None:
-    command = audit.sample_volume_command("nesvor", tmp_path / "model.pt", tmp_path / "mask.nii.gz", tmp_path / "output.nii.gz", device="0")
+def test_sampling_scales_and_runtime_contract_are_fixed(parameter: str, scale: float, tmp_path: Path) -> None:
+    command = audit.sample_volume_runtime_command(tmp_path / "python", tmp_path / "model.pt", tmp_path / "mask.nii.gz", tmp_path / "output.nii.gz", tmp_path / "runtime.json", device="0")
     assert audit.NORMALIZATION_SCALES[parameter] == scale
-    assert command[:2] == ["nesvor", "sample-volume"]
-    for flag, value in (("--output-resolution", "1.0"), ("--output-psf-factor", "1"), ("--n-inference-samples", "128"), ("--inference-batch-size", "16000"), ("--seed", "20260823")):
-        assert command[command.index(flag) + 1] == value
-    assert "reconstruct" not in command and "train" not in command
+    assert command[:2] == [str(tmp_path / "python"), "-c"]
+    assert "--sample-mask" not in command
+    assert "sample_volume" in command[2]
+    assert "reconstruct" not in command[2] and "train(" not in command[2]
+    assert audit.INFERENCE_PARAMETERS == {"output_resolution_mm": 1.0, "output_psf_factor": 1, "n_inference_samples": 128, "inference_batch_size": 16000, "seed": 20260823, "output_intensity_mean": 0}
+
+
+def test_sampling_runtime_resolves_device_and_requires_one_device_for_all_tensors(tmp_path: Path) -> None:
+    assert audit.resolve_torch_device("0") == "cuda:0"
+    assert audit.resolve_torch_device("-1") == "cpu"
+    with pytest.raises(ValueError, match="device"):
+        audit.resolve_torch_device("cuda:0")
+    command = audit.sample_volume_runtime_command(tmp_path / "python", tmp_path / "model.pt", tmp_path / "mask.nii.gz", tmp_path / "output.nii.gz", tmp_path / "runtime.json", device="0")
+    script = command[2]
+    assert "load_mask(sample_mask_path, device=device)" in script
+    assert "model.to(device)" in script
+    assert "sample_mask.xyz_masked.device" in script
+    assert "device mismatch" in script
+
+
+def test_manifest_records_runtime_provenance(tmp_path: Path) -> None:
+    runtime = {"nesvor_package_path": "/data/dengyz/code/NeSVoR-master/nesvor/__init__.py", "sample_source_path": "/data/dengyz/code/NeSVoR-master/nesvor/inr/sample.py", "requested_device": "0", "resolved_torch_device": "cuda:0"}
+    manifest = audit.audit_manifest(sparse_manifest=tmp_path / "sparse.json", r0_native_maps_root=tmp_path, nesvor_executable="nesvor", checkpoints={}, sampling_runtime=runtime)
+    assert manifest["sampling_backend"] == "nesvor_adjacent_python_direct_sample_volume"
+    assert manifest["sampling_runtime"] == runtime
 
 
 def test_manifest_declares_sampling_mask_only(tmp_path: Path) -> None:
