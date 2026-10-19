@@ -9,6 +9,7 @@ from typing import Any, Mapping
 
 Q002_EXPERIMENT_ID = "Q002_B6_roi_same_anchor_mse"
 Q002S640_EXPERIMENT_ID = "Q002S640_B6_roi_same_anchor_mse"
+Q002S640_K256_EXPERIMENT_ID = "Q002S640_K256"
 Q003S640_EXPERIMENT_ID = "Q003S640_B6_roi_same_anchor_mse_plus_cosine"
 Q003S640_10K_EXPERIMENT_ID = "Q003S640_B6_roi_same_anchor_mse_plus_cosine_10k"
 Q004S640_K1_EXPERIMENT_ID = "Q004S640_K1_B6_roi_same_anchor_mse"
@@ -43,7 +44,7 @@ def build_q002_route_config(
     root = Path(cropped_prepared_root)
     if "full_fov" in str(root).lower():
         raise ValueError("Q002 training root must be B6 cropped, not full-FOV.")
-    expected_batch_size = {Q002_EXPERIMENT_ID: 64, Q002S640_EXPERIMENT_ID: 640, Q003S640_EXPERIMENT_ID: 640, Q003S640_10K_EXPERIMENT_ID: 640, Q004S640_K1_EXPERIMENT_ID: 640}.get(experiment_id)
+    expected_batch_size = {Q002_EXPERIMENT_ID: 64, Q002S640_EXPERIMENT_ID: 640, Q002S640_K256_EXPERIMENT_ID: 640, Q003S640_EXPERIMENT_ID: 640, Q003S640_10K_EXPERIMENT_ID: 640, Q004S640_K1_EXPERIMENT_ID: 640}.get(experiment_id)
     if expected_batch_size is None or int(anchor_batch_size) != expected_batch_size:
         raise ValueError("Q002 route experiment_id must use its fixed anchor_batch_size.")
     sampling: dict[str, Any]
@@ -57,6 +58,16 @@ def build_q002_route_config(
             "shared_training_psf_samples": 1,
             "data_psf_inr_location_count": 640,
             "B6_scalar_batch_size": 640,
+        }
+    elif experiment_id == Q002S640_K256_EXPERIMENT_ID:
+        sampling = {
+            "anchor_batch_size": 640,
+            "weights_per_anchor": 10,
+            "signal_residual_count": 6400,
+            "shared_training_psf_samples": 256,
+            "data_psf_inr_location_count": 163840,
+            "B6_scalar_batch_size": 640,
+            "psf_forward_chunk_size": 32,
         }
     else:
         sampling = {
@@ -102,5 +113,24 @@ def build_q002_route_config(
             "scientific_change": "training_psf_samples_8_to_central_1_only",
             "training_psf_semantics": "central_local_coordinate_no_gaussian_draw",
             "loss": "MSE_only",
+        })
+    if experiment_id == Q002S640_K256_EXPERIMENT_ID:
+        route["route"].update({
+            "parent_experiment": Q002S640_EXPERIMENT_ID,
+            "scientific_change": "training_psf_samples_8_to_256_only",
+            "loss": "MSE_only",
+            "training_psf_semantics": "same-anchor local PSF neighbourhood samples averaged before the 10-weight joint-vector MSE",
+            "psf_forward_chunking": {
+                "enabled": True,
+                "chunk_size": 32,
+                "logical_samples_per_anchor": 256,
+                "semantics": "one K256 neighbourhood draw per logical optimizer step; chunks only split INR/decoder forward accumulation with one backward and optimizer step",
+            },
+            "fit_first_n_samples_semantics": {
+                "historical_nesvor_n_samples": 256,
+                "numerically_matches": "both settings are 256",
+                "semantically_equivalent": False,
+                "comparison": "Proposed K256 is a same-anchor local-PSF Monte Carlo average inside its joint-vector training forward; NeSVoR n_samples=256 is a Fit-first reconstruction setting. They are not a matched training objective or computational budget.",
+            },
         })
     return route

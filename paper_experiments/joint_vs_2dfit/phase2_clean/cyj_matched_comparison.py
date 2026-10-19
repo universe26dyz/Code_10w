@@ -79,6 +79,32 @@ def formalize_q002s640_alias(*, subject: str, condition: str, source_root: str |
     return formalize_proposed_export(subject=subject, condition=condition, source_root=source_root, endpoint=endpoint, output=output)
 
 
+def q002s640_k256_provenance(source_root: str | Path, endpoint: str) -> dict[str, Any]:
+    """Validate Q002S640_K256 without equating its training K to export PSF128."""
+    source_root = Path(source_root)
+    manifest_path = source_root / "experiment_manifest.json"
+    if not manifest_path.is_file():
+        raise FileNotFoundError(f"Q002S640_K256 source manifest is missing: {manifest_path}")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if manifest.get("experiment_id") != "Q002S640_K256" or int(manifest.get("training_psf_samples", -1)) != 256:
+        raise ValueError("matched CYJ aliases require Q002S640_K256 with training K256")
+    export = endpoint_contract(endpoint)["output_query_psf"]
+    return {
+        "training_route": "Q002S640_K256",
+        "training_psf": {"samples": 256, "label": "K256", "semantics": "same-anchor local training PSF; not the post-hoc map-domain export PSF"},
+        "export_psf": {**export, "post_hoc_map_domain": endpoint == "psf128"},
+        "source_manifest": {"path": str(manifest_path.resolve()), "sha256": sha256(manifest_path)},
+    }
+
+
+def formalize_q002s640_k256_alias(*, subject: str, condition: str, source_root: str | Path, endpoint: str, output: str | Path) -> Path:
+    if subject != "CYJ":
+        raise ValueError("Q002S640_K256 formal aliases are CYJ-only")
+    parse_cyj_case(condition)
+    q002s640_k256_provenance(source_root, endpoint)
+    return formalize_proposed_export(subject=subject, condition=condition, source_root=source_root, endpoint=endpoint, output=output)
+
+
 def export_cyj_fit_first_alias(*, subject: str, condition: str, l100_fit_first_root: str | Path,
                                sparse_fit_first_root: str | Path, sparse_manifest: str | Path,
                                r0_native_maps_root: str | Path, nesvor_executable: str | Path,
@@ -249,6 +275,9 @@ def main() -> None:
     alias = subparsers.add_parser("alias-q002s640")
     alias.add_argument("--condition", required=True); alias.add_argument("--source-root", required=True)
     alias.add_argument("--endpoint", choices=ENDPOINTS, required=True); alias.add_argument("--output", required=True)
+    alias_k256 = subparsers.add_parser("alias-q002s640-k256")
+    alias_k256.add_argument("--condition", required=True); alias_k256.add_argument("--source-root", required=True)
+    alias_k256.add_argument("--endpoint", choices=ENDPOINTS, required=True); alias_k256.add_argument("--output", required=True)
     fit = subparsers.add_parser("export-fit-first")
     for name in ("condition", "l100-fit-first-root", "sparse-fit-first-root", "sparse-manifest", "r0-native-maps-root", "nesvor-executable", "endpoint", "output", "device"):
         fit.add_argument("--" + name, required=True)
@@ -258,6 +287,8 @@ def main() -> None:
     command = args.pop("command")
     if command == "alias-q002s640":
         print(formalize_q002s640_alias(subject="CYJ", **args))
+    elif command == "alias-q002s640-k256":
+        print(formalize_q002s640_k256_alias(subject="CYJ", **args))
     elif command == "export-fit-first":
         print(export_cyj_fit_first_alias(subject="CYJ", **args))
     else:

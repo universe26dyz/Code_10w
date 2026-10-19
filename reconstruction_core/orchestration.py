@@ -103,9 +103,9 @@ class ReconstructionTrainingModel(nn.Module):
     def forward(self, batch: Mapping[str, torch.Tensor], n_psf_samples: int, profile: Any = None) -> torch.Tensor:
         return self.forward_model(batch["xyz"], batch["group_idx"], batch["weight_idx"], batch["timing"], n_psf_samples, profile)
 
-    def forward_fingerprint(self, batch: Mapping[str, torch.Tensor], n_psf_samples: int, profile: Any = None) -> torch.Tensor:
+    def forward_fingerprint(self, batch: Mapping[str, torch.Tensor], n_psf_samples: int, profile: Any = None, *, psf_chunk_size: int | None = None) -> torch.Tensor:
         """Q002 additive joint-anchor forward; scalar ``forward`` remains unchanged."""
-        return self.forward_model.forward_fingerprint(batch["xyz"], batch["group_idx"], batch["timing"], n_psf_samples, profile)
+        return self.forward_model.forward_fingerprint(batch["xyz"], batch["group_idx"], batch["timing"], n_psf_samples, profile, psf_chunk_size=psf_chunk_size)
 
 
 # Existing checkpoint state-dict keys retain the ``signal_simulator`` name;

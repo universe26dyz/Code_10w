@@ -36,8 +36,10 @@ def q002_training_controls(training: Mapping[str, Any], *, anchor_batch_size: in
             raise ValueError(f"Q002 requires B6 training.{key}={value}, got {training.get(key)!r}.")
     if anchor_batch_size not in (64, 640):
         raise ValueError("Q002 route anchor_batch_size must be exactly 64 or 640.")
-    if training_psf_samples not in (1, 8):
-        raise ValueError("Q002/Q004 training_psf_samples must be exactly 1 or 8.")
+    if training_psf_samples not in (1, 8, 256):
+        raise ValueError("Q002/Q004/K256 training_psf_samples must be exactly 1, 8, or 256.")
+    if training_psf_samples == 256 and anchor_batch_size != 640:
+        raise ValueError("Q002S640_K256 requires exactly 640 anchors.")
     if anchor_batch_size == 64:
         # Retain the original Q002-64 manifest contract verbatim.
         return {"stage_a_iterations": 2000, "stage_b_iterations": 4000, "effective_scalar_budget": 640, "anchor_batch_size": 64, "weights_per_anchor": 10, "psf_samples": 8, "seed": 20260911}
@@ -49,6 +51,7 @@ def q002_training_controls(training: Mapping[str, Any], *, anchor_batch_size: in
         "signal_residual_count": 6400,
         "training_psf_samples": int(training_psf_samples),
         "data_psf_inr_location_count": 640 * int(training_psf_samples),
+        "psf_forward_chunk_size": 32 if training_psf_samples == 256 else int(training_psf_samples),
         "B6_scalar_batch_size": 640,
         "regularization_candidate_count": 640,
         "regularization_effective_point_count": 256,
@@ -78,7 +81,7 @@ def q003_10k_training_plan(training: Mapping[str, Any]) -> dict[str, Any]:
 def q003_10k_training_log_fields() -> list[str]:
     """Required complete 10k convergence-log schema, with no semantic batch ambiguity."""
 
-    return ["stage", "iteration", "joint_signal_mse", "fingerprint_cosine_loss", "weighted_fingerprint_cosine_loss", "total_data_loss", "pred_norm_clamp_count", "obs_norm_clamp_count", "any_norm_clamp_count", "reg_t1", "reg_t2", "reg_b1", "amplitude_reg_t1", "amplitude_reg_t2", "transformation", "total", "intensity_scale", "lr_encoding", "lr_network", "lr_rigid", "anchor_batch_size", "weights_per_anchor", "signal_residual_count", "training_psf_samples", "data_psf_inr_location_count", "regularization_candidate_count", "regularization_effective_point_count", "regularization_sampling_source", "regularization_application_count"]
+    return ["stage", "iteration", "joint_signal_mse", "fingerprint_cosine_loss", "weighted_fingerprint_cosine_loss", "total_data_loss", "pred_norm_clamp_count", "obs_norm_clamp_count", "any_norm_clamp_count", "reg_t1", "reg_t2", "reg_b1", "amplitude_reg_t1", "amplitude_reg_t2", "transformation", "total", "intensity_scale", "lr_encoding", "lr_network", "lr_rigid", "anchor_batch_size", "weights_per_anchor", "signal_residual_count", "training_psf_samples", "data_psf_inr_location_count", "psf_forward_chunk_size", "regularization_candidate_count", "regularization_effective_point_count", "regularization_sampling_source", "regularization_application_count"]
 
 
 def _sha256(path: Path) -> str:
@@ -96,8 +99,8 @@ class JointAnchorSampler:
         self.dataset = dataset
         self.anchor_batch_size = int(anchor_batch_size)
         self.training_psf_samples = int(training_psf_samples)
-        if self.training_psf_samples not in (1, 8):
-            raise ValueError("Q002/Q004 sampler training_psf_samples must be exactly 1 or 8.")
+        if self.training_psf_samples not in (1, 8, 256):
+            raise ValueError("Q002/Q004/K256 sampler training_psf_samples must be exactly 1, 8, or 256.")
         self.generator = torch.Generator(device=dataset.xyz.device).manual_seed(int(seed))
 
     def sample(self, anchor_batch_size: int | None = None) -> dict[str, Any]:
@@ -234,7 +237,7 @@ def train_q002_reconstruction(scalar_dataset: Any, joint_dataset: Any, config: M
     started = time.perf_counter(); global_iteration = 0
     fields = ["stage", "iteration", "joint_signal_mse", "reg_t1", "reg_t2", "reg_b1", "amplitude_reg_t1", "amplitude_reg_t2", "transformation", "total", "intensity_scale", "lr_encoding", "lr_network", "lr_rigid", "regularization_candidate_count", "regularization_effective_point_count", "regularization_sampling_source"]
     if controls["anchor_batch_size"] == 640:
-        fields += ["anchor_batch_size", "weights_per_anchor", "signal_residual_count", "training_psf_samples", "data_psf_inr_location_count", "regularization_application_count"]
+        fields += ["anchor_batch_size", "weights_per_anchor", "signal_residual_count", "training_psf_samples", "data_psf_inr_location_count", "psf_forward_chunk_size", "regularization_application_count"]
     if cosine_enabled:
         fields[2:2] = ["fingerprint_cosine_loss", "weighted_fingerprint_cosine_loss", "total_data_loss", "pred_norm_clamp_count", "obs_norm_clamp_count", "any_norm_clamp_count"]
     if continuation_plan is not None:
@@ -250,7 +253,7 @@ def train_q002_reconstruction(scalar_dataset: Any, joint_dataset: Any, config: M
         for iteration in range(iterations):
             global_iteration += 1
             batch = sampler.sample(); batch["xyz"] = space.local_to_train(batch["xyz"].to(device)); batch["group_idx"] = batch["group_idx"].to(device); batch["stack_idx"] = batch["stack_idx"].to(device); batch["timing"] = batch["timing"].to(device); batch["observed"] = batch["observed"].to(device)
-            prediction = model.forward_fingerprint(batch, training_psf_samples)
+            prediction = model.forward_fingerprint(batch, training_psf_samples, psf_chunk_size=controls["psf_forward_chunk_size"])
             data_terms = joint_fingerprint_objective(prediction, batch["observed"] / model.intensity_scale, batch["stack_idx"], joint_dataset.stack_weights, cosine_weight=cosine_weight, cosine_epsilon=cosine_epsilon)
             data = data_terms["total_data_loss"]
             regularization_cfg = _require(resolved, "spatial_regularization")
@@ -267,12 +270,12 @@ def train_q002_reconstruction(scalar_dataset: Any, joint_dataset: Any, config: M
             if cosine_enabled:
                 row.update({"fingerprint_cosine_loss": float(data_terms["fingerprint_cosine_loss"].detach()), "weighted_fingerprint_cosine_loss": float(data_terms["weighted_fingerprint_cosine_loss"].detach()), "total_data_loss": float(data_terms["total_data_loss"].detach()), "pred_norm_clamp_count": data_terms["pred_norm_clamp_count"], "obs_norm_clamp_count": data_terms["obs_norm_clamp_count"], "any_norm_clamp_count": data_terms["any_norm_clamp_count"]})
             if controls["anchor_batch_size"] == 640:
-                row.update({"anchor_batch_size": batch["anchor_batch_size"], "weights_per_anchor": batch["weights_per_anchor"], "signal_residual_count": batch["signal_residual_count"], "training_psf_samples": batch["training_psf_samples"], "data_psf_inr_location_count": batch["data_psf_inr_location_count"], "regularization_application_count": 1})
+                row.update({"anchor_batch_size": batch["anchor_batch_size"], "weights_per_anchor": batch["weights_per_anchor"], "signal_residual_count": batch["signal_residual_count"], "training_psf_samples": batch["training_psf_samples"], "data_psf_inr_location_count": batch["data_psf_inr_location_count"], "psf_forward_chunk_size": controls["psf_forward_chunk_size"], "regularization_application_count": 1})
             writer.writerow(row)
             if int(training.get("monitor_every", 0)) and global_iteration % int(training["monitor_every"]) == 0:
                 monitor_batch = {key: value.to(device) for key, value in monitor.items() if key in {"xyz", "observed", "group_idx", "stack_idx", "timing"}}
                 monitor_batch["xyz"] = space.local_to_train(monitor_batch["xyz"])
-                with torch.random.fork_rng(devices=[device.index or 0] if device.type == "cuda" else []), torch.no_grad(): prediction_monitor = model.forward_fingerprint(monitor_batch, training_psf_samples)
+                with torch.random.fork_rng(devices=[device.index or 0] if device.type == "cuda" else []), torch.no_grad(): prediction_monitor = model.forward_fingerprint(monitor_batch, training_psf_samples, psf_chunk_size=controls["psf_forward_chunk_size"])
                 observed_monitor = monitor_batch["observed"] / model.intensity_scale
                 error = (prediction_monitor - observed_monitor).pow(2)
                 if cosine_enabled:

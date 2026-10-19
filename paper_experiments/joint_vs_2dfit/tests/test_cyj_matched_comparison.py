@@ -71,6 +71,24 @@ def test_q002s640_alias_carries_nested_k8_provenance_into_formal_output(tmp_path
     assert manifest["export_psf"]["n_inference_samples"] == 1
 
 
+def test_k256_alias_distinguishes_training_k256_from_posthoc_export_k128(tmp_path: Path) -> None:
+    root = tmp_path / "q002_k256"; root.mkdir(); (root / "model.pt").write_bytes(b"checkpoint")
+    (root / "experiment_manifest.json").write_text(json.dumps({
+        "experiment_id": "Q002S640_K256",
+        "training_psf_samples": 256,
+        "psf_forward_chunk_size": 32,
+        "fit_first_n_samples_semantics": {"numerically_matches": True, "semantically_equivalent": False},
+    }), encoding="utf-8")
+    _volume(root / "T1_3D.nii.gz"); _volume(root / "T2_3D.nii.gz")
+    psf_root = root / "formal_export_psf128"; _volume(psf_root / "T1_3D.nii.gz"); _volume(psf_root / "T2_3D.nii.gz")
+    (psf_root / "formal_export_manifest.json").write_text(json.dumps({"n_inference_samples": 128}), encoding="utf-8")
+    output = comparison.formalize_q002s640_k256_alias(subject="CYJ", condition="L100_fold0", source_root=root, endpoint="psf128", output=tmp_path / "alias")
+    manifest = json.loads((output / "manifest.json").read_text())
+    assert manifest["training_route"] == "Q002S640_K256"
+    assert manifest["training_psf"]["training_psf_samples"] == 256
+    assert manifest["export_psf"]["n_inference_samples"] == 128
+
+
 def test_aggregation_uses_sample_sd_and_counts_proposed_wins(tmp_path: Path) -> None:
     _result(tmp_path / "results", "L50_fold0", "central", 1.0, 2.0)
     _result(tmp_path / "results", "L50_fold1", "central", 3.0, 2.0)

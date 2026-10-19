@@ -135,6 +135,8 @@ class TradQuantitativeForward(nn.Module):
         timing9_ms: torch.Tensor,
         n_psf_samples: int,
         profile: Callable[[str], ContextManager[None]] | None = None,
+        *,
+        psf_chunk_size: int | None = None,
     ) -> torch.Tensor:
         """Predict all ten weights from one shared PSF neighbourhood per anchor."""
 
@@ -144,14 +146,25 @@ class TradQuantitativeForward(nn.Module):
         measure = profile or (lambda _name: nullcontext())
         with measure("psf_and_rigid"):
             world_samples = self.rigid_psf.sample_local_then_transform(local_xyz_mm, group_idx, n_psf_samples)
-        with measure("inr_forward"):
-            fields = self.quantitative_inr(world_samples.reshape(-1, 3))
-        with measure("forward_decoder"):
-            fingerprint = self.signal_simulator(
-                fields["t1_ms"], fields["t2_ms"], fields["b1"],
-                timing9_ms[:, None, :].expand(-1, n_psf_samples, -1).reshape(-1, 9),
-                self.protocol, normalize=True,
-            )
-        if fingerprint.shape != (batch_size * n_psf_samples, 10):
-            raise ValueError("FrozenMLP fingerprint must have shape [B*K,10].")
-        return (fields["amplitude"][:, None] * fingerprint).reshape(batch_size, n_psf_samples, 10).mean(dim=1)
+        if psf_chunk_size is None:
+            psf_chunk_size = n_psf_samples
+        if not 1 <= int(psf_chunk_size) <= n_psf_samples:
+            raise ValueError("psf_chunk_size must be in [1, n_psf_samples].")
+        total: torch.Tensor | None = None
+        for start in range(0, n_psf_samples, int(psf_chunk_size)):
+            stop = min(start + int(psf_chunk_size), n_psf_samples)
+            chunk_samples = stop - start
+            with measure("inr_forward"):
+                fields = self.quantitative_inr(world_samples[:, start:stop, :].reshape(-1, 3))
+            with measure("forward_decoder"):
+                fingerprint = self.signal_simulator(
+                    fields["t1_ms"], fields["t2_ms"], fields["b1"],
+                    timing9_ms[:, None, :].expand(-1, chunk_samples, -1).reshape(-1, 9),
+                    self.protocol, normalize=True,
+                )
+            if fingerprint.shape != (batch_size * chunk_samples, 10):
+                raise ValueError("FrozenMLP fingerprint must have shape [B*K,10].")
+            chunk_total = (fields["amplitude"][:, None] * fingerprint).reshape(batch_size, chunk_samples, 10).sum(dim=1)
+            total = chunk_total if total is None else total + chunk_total
+        assert total is not None
+        return total / float(n_psf_samples)
