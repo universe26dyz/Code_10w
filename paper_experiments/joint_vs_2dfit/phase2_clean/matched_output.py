@@ -156,10 +156,13 @@ def _proposed_training_metadata(source_root: Path) -> dict[str, Any]:
         path = source_root / name
         if path.is_file():
             payload = json.loads(path.read_text(encoding="utf-8"))
+            route = payload.get("route", {})
+            sampling = route.get("sampling", {}) if isinstance(route, dict) else {}
+            training_samples = payload.get("training_psf_samples", sampling.get("shared_training_psf_samples"))
             return {
                 "training_route": payload.get("experiment_id", payload.get("route", "existing Proposed reconstruction")),
                 "training_psf": {
-                    "training_psf_samples": payload.get("training_psf_samples"),
+                    "training_psf_samples": training_samples,
                     "semantics": payload.get("training_psf_semantics", "recorded in source manifest"),
                 },
                 "source_manifest": _record(path),
@@ -200,6 +203,7 @@ def formalize_proposed_export(*, subject: str, condition: str, source_root: str 
             "endpoint": contract["endpoint"],
             "export_kind": contract["export_kind"],
             "export_query_psf": contract["output_query_psf"],
+            "export_psf": contract["output_query_psf"],
             "output_query_psf": contract["output_query_psf"],
             "source_checkpoint": _record(checkpoint),
             "source_volumes": {parameter: _record(path) for parameter, path in volumes.items()},

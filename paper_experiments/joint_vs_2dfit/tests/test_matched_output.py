@@ -61,6 +61,7 @@ def test_proposed_formalizer_uses_existing_central_and_posthoc_psf128_exports(tm
     manifest = json.loads((output / "manifest.json").read_text())
     assert (output / "T1_3D.nii.gz").is_file()
     assert manifest["export_kind"] == "post_hoc_map_domain_quantitative_export"
+    assert manifest["export_psf"]["description"] == "post-hoc map-domain quantitative PSF128 export"
     assert manifest["output_query_psf"]["n_inference_samples"] == 128
     with pytest.raises(FileExistsError, match="overwrite"):
         matched_output.formalize_proposed_export(subject="CYJ", condition="L25", source_root=source, endpoint="psf128", output=output)
