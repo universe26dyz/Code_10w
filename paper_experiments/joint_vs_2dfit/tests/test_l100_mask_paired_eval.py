@@ -52,10 +52,11 @@ def test_paired_support_is_exactly_shared_by_both_methods() -> None:
 
 def test_pooled_metrics_are_voxel_pooled_not_plane_averaged() -> None:
     first = audit.metrics_on_exact_support(np.array([0.]), np.array([10.]), np.array([True]), 1)
-    second = audit.metrics_on_exact_support(np.array([0., 0., 0.]), np.array([0., 0., 0.]), np.ones(3, bool), 3)
-    pooled = audit._pooled_metrics([np.array([0.]), np.array([0., 0., 0.])], [np.array([10.]), np.array([0., 0., 0.])], 4)
+    second = audit.metrics_on_exact_support(np.zeros(8), np.zeros(8), np.ones(8, bool), 8)
+    pooled = audit._pooled_metrics([np.array([0.]), np.zeros(8)], [np.array([10.]), np.zeros(8)], 9)
     assert (first["rmse"] + second["rmse"]) / 2 == pytest.approx(5.0)
-    assert pooled["rmse"] == pytest.approx(5.0)
+    assert pooled["rmse"] == pytest.approx(10 / 3)
+    assert pooled["rmse"] != pytest.approx((first["rmse"] + second["rmse"]) / 2)
 
 
 def test_mask_coverage_uses_masks_not_prediction_validity() -> None:
