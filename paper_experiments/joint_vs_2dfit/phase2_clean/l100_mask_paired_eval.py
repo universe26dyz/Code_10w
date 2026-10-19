@@ -210,7 +210,8 @@ def _masked(values: np.ndarray, support: np.ndarray) -> np.ma.MaskedArray:
 
 
 def render_plane_panels(parameter: str, reference: np.ndarray, proposed: np.ndarray, fit_first: np.ndarray,
-                        display_mask: np.ndarray, sparse_mask: np.ndarray, output: Path, *, title: str) -> None:
+                        display_mask: np.ndarray, sparse_mask: np.ndarray, output: Path, *, title: str,
+                        proposed_label: str = "Proposed", comparator_label: str = "Fit-first fixed-L100 K128") -> None:
     """Render un-cropped same-grid panels; the sparse contour is an overlay only."""
     import matplotlib.pyplot as plt
     parameter_upper = parameter.upper()
@@ -218,10 +219,10 @@ def render_plane_panels(parameter: str, reference: np.ndarray, proposed: np.ndar
     cmap = colorbars().mapping[parameter_upper]
     output.parent.mkdir(parents=True, exist_ok=True)
     figure, axes = plt.subplots(1, 5, figsize=(14, 3.1))
-    entries = (("Native reference", reference, cmap, map_range), ("Proposed", proposed, cmap, map_range),
-               ("Fit-first fixed-L100 K128", fit_first, cmap, map_range),
-               ("|Proposed − Native|", np.abs(proposed-reference), "magma", residual_range),
-               ("|Fit-first − Native|", np.abs(fit_first-reference), "magma", residual_range))
+    entries = (("Native reference", reference, cmap, map_range), (proposed_label, proposed, cmap, map_range),
+               (comparator_label, fit_first, cmap, map_range),
+               (f"|{proposed_label} − Native|", np.abs(proposed-reference), "magma", residual_range),
+               (f"|{comparator_label} − Native|", np.abs(fit_first-reference), "magma", residual_range))
     for axis, (label, values, panel_cmap, limits) in zip(axes, entries):
         axis.imshow(_masked(values, display_mask), cmap=panel_cmap, vmin=limits[0], vmax=limits[1], origin="lower", interpolation="nearest", aspect="equal")
         axis.contour(np.asarray(sparse_mask, bool).astype(float), levels=(.5,), colors="white", linewidths=.55, linestyles="dashed", origin="lower")
@@ -230,13 +231,14 @@ def render_plane_panels(parameter: str, reference: np.ndarray, proposed: np.ndar
 
 
 def render_summary_triptych(parameter: str, reference: np.ndarray, proposed: np.ndarray, fit_first: np.ndarray,
-                            display_mask: np.ndarray, sparse_mask: np.ndarray, output: Path, *, title: str) -> None:
+                            display_mask: np.ndarray, sparse_mask: np.ndarray, output: Path, *, title: str,
+                            proposed_label: str = "Proposed", comparator_label: str = "Fit-first fixed-L100 K128") -> None:
     """Representative un-cropped map summary on the same L100-defined domain."""
     import matplotlib.pyplot as plt
     parameter_upper = parameter.upper(); limits = DISPLAY_RANGES_MS[parameter_upper]; cmap = colorbars().mapping[parameter_upper]
     output.parent.mkdir(parents=True, exist_ok=True)
     figure, axes = plt.subplots(1, 3, figsize=(8.3, 3.0))
-    for axis, label, values in zip(axes, ("Native reference", "Proposed", "Fit-first fixed-L100 K128"), (reference, proposed, fit_first)):
+    for axis, label, values in zip(axes, ("Native reference", proposed_label, comparator_label), (reference, proposed, fit_first)):
         axis.imshow(_masked(values, display_mask), cmap=cmap, vmin=limits[0], vmax=limits[1], origin="lower", interpolation="nearest", aspect="equal")
         axis.contour(np.asarray(sparse_mask, bool).astype(float), levels=(.5,), colors="white", linewidths=.55, linestyles="dashed", origin="lower")
         axis.set_title(label, fontsize=8); axis.axis("off")
@@ -254,7 +256,8 @@ def run_l100_mask_paired_evaluation(*, subject: str, condition: str, r0_run_id: 
                                     sparse_manifest: str | Path, r0_native_maps_root: str | Path,
                                     r1_real_root: str | Path | None, mask_audit_root: str | Path | None, output: str | Path,
                                     endpoint: str = "psf128", proposed_export_root: str | Path | None = None,
-                                    fit_first_export_root: str | Path | None = None) -> Path:
+                                    fit_first_export_root: str | Path | None = None, proposed_label: str = "Proposed",
+                                    comparator_label: str = "Fit-first fixed-L100 K128") -> Path:
     """Evaluate existing volumes only, atomically publishing a new audit directory."""
     import nibabel as nib
 
@@ -324,11 +327,11 @@ def run_l100_mask_paired_evaluation(*, subject: str, condition: str, r0_run_id: 
                     display = regions["l100_full"]
                     root = staging / "visualization" / parameter
                     stem = f"{stack}_group{int(group)}"
-                    render_plane_panels(parameter, reference, proposed, fit_first, display, sparse, root / f"{stem}_l100_full.png", title=f"{subject} {condition} {parameter.upper()} {stack} group {int(group)}; L100 sampling domain")
-                    render_plane_panels(parameter, reference, proposed, fit_first, regions["recovered_only"], sparse, root / f"{stem}_recovered_only.png", title=f"{subject} {condition} {parameter.upper()} {stack} group {int(group)}; L100 minus sparse")
+                    render_plane_panels(parameter, reference, proposed, fit_first, display, sparse, root / f"{stem}_l100_full.png", title=f"{subject} {condition} {parameter.upper()} {stack} group {int(group)}; L100 sampling domain", proposed_label=proposed_label, comparator_label=comparator_label)
+                    render_plane_panels(parameter, reference, proposed, fit_first, regions["recovered_only"], sparse, root / f"{stem}_recovered_only.png", title=f"{subject} {condition} {parameter.upper()} {stack} group {int(group)}; L100 minus sparse", proposed_label=proposed_label, comparator_label=comparator_label)
                     if parameter not in representative_rendered:
-                        render_summary_triptych(parameter, reference, proposed, fit_first, display, sparse, root / "summary_representative_l100_full.png", title=f"{subject} {condition} {parameter.upper()} representative {stack} group {int(group)}; L100 sampling domain")
-                        render_summary_triptych(parameter, reference, proposed, fit_first, regions["recovered_only"], sparse, root / "summary_representative_recovered_only.png", title=f"{subject} {condition} {parameter.upper()} representative {stack} group {int(group)}; L100 minus sparse")
+                        render_summary_triptych(parameter, reference, proposed, fit_first, display, sparse, root / "summary_representative_l100_full.png", title=f"{subject} {condition} {parameter.upper()} representative {stack} group {int(group)}; L100 sampling domain", proposed_label=proposed_label, comparator_label=comparator_label)
+                        render_summary_triptych(parameter, reference, proposed, fit_first, regions["recovered_only"], sparse, root / "summary_representative_recovered_only.png", title=f"{subject} {condition} {parameter.upper()} representative {stack} group {int(group)}; L100 minus sparse", proposed_label=proposed_label, comparator_label=comparator_label)
                         representative_rendered.add(parameter)
                     per_plane.append(plane)
         aggregate: dict[str, Any] = {"statistical_unit": "subject; voxel-pooled held-out native-plane values, not per-plane means", "endpoint": endpoint_spec["endpoint"], "regions": {}, "mask_coverage": {}, "primary_decomposition": {}}
@@ -354,7 +357,7 @@ def run_l100_mask_paired_evaluation(*, subject: str, condition: str, r0_run_id: 
             fields = sorted({key for row in summary_rows for key in row}); writer = csv.DictWriter(handle, fieldnames=fields); writer.writeheader(); writer.writerows(summary_rows)
         write_immutable_json(staging / "per_plane_metrics.json", {"subject": subject, "condition": condition, "planes": per_plane, "support_equations": SUPPORT_EQUATIONS})
         write_immutable_json(staging / "aggregate_metrics.json", aggregate)
-        audit_manifest = {"git_sha": _git_sha(), "subject": subject, "condition": condition, "r0_run_id": r0_run_id, "r1_run_id": r1_run_id, "endpoint": endpoint_spec["endpoint"], "output_query_psf": endpoint_spec["output_query_psf"],
+        audit_manifest = {"git_sha": _git_sha(), "subject": subject, "condition": condition, "r0_run_id": r0_run_id, "r1_run_id": r1_run_id, "endpoint": endpoint_spec["endpoint"], "output_query_psf": endpoint_spec["output_query_psf"], "method_labels": {"proposed": proposed_label, "fit_first": comparator_label},
                           "native_reference": {stack: cache["provenance"] for stack, cache in selected.items()}, "sparse_manifest": _record(manifest_path),
                           "proposed": {parameter: _record(paths[parameter]["proposed"]) for parameter in PARAMETERS}, "proposed_selection": proposed_selection,
                           "fit_first_fixed_l100": {parameter: _record(paths[parameter]["fit_first"]) for parameter in PARAMETERS},
@@ -379,6 +382,7 @@ def main() -> None:
     parser.add_argument("--r1-real-root"); parser.add_argument("--mask-audit-root"); parser.add_argument("--output", required=True)
     parser.add_argument("--endpoint", choices=("central", "psf128"), default="psf128")
     parser.add_argument("--proposed-export-root"); parser.add_argument("--fit-first-export-root")
+    parser.add_argument("--proposed-label", default="Proposed"); parser.add_argument("--comparator-label", default="Fit-first fixed-L100 K128")
     print(run_l100_mask_paired_evaluation(**vars(parser.parse_args())))
 
 

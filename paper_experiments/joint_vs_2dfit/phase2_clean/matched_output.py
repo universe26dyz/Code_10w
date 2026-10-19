@@ -170,7 +170,8 @@ def _proposed_training_metadata(source_root: Path) -> dict[str, Any]:
     return {"training_route": "existing Proposed reconstruction", "training_psf": {"training_psf_samples": None, "semantics": "source manifest unavailable"}}
 
 
-def formalize_proposed_export(*, subject: str, condition: str, source_root: str | Path, endpoint: str, output: str | Path) -> Path:
+def formalize_proposed_export(*, subject: str, condition: str, source_root: str | Path, endpoint: str, output: str | Path,
+                              training_metadata_override: Mapping[str, Any] | None = None) -> Path:
     """Copy immutable existing Proposed fields into one endpoint-labelled formal root."""
     source_root, output = Path(source_root), require_new_output(output)
     contract = endpoint_contract(endpoint)
@@ -194,6 +195,8 @@ def formalize_proposed_export(*, subject: str, condition: str, source_root: str 
         for parameter, source_path in volumes.items():
             shutil.copy2(source_path, staging / f"{parameter.upper()}_3D.nii.gz")
         metadata = _proposed_training_metadata(source_root)
+        if training_metadata_override is not None:
+            metadata.update(copy.deepcopy(dict(training_metadata_override)))
         manifest = {
             "schema": "phase4r_formal_proposed_export/v1",
             "subject": subject,
