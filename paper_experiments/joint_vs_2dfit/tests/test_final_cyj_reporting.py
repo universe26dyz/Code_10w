@@ -46,7 +46,7 @@ def test_final_summary_uses_sample_sd_keeps_methods_endpoints_and_missing_folds_
 
 
 def test_longitudinal_plane_has_one_world_extent_and_final_error_uses_map_lut_range() -> None:
-    from paper_experiments.joint_vs_2dfit.phase2_clean.final_cyj_reporting import longitudinal_plane, final_panel_specifications
+    from paper_experiments.joint_vs_2dfit.phase2_clean.final_cyj_reporting import final_panel_specifications, longitudinal_plane, meaningful_longitudinal_index
 
     mask = np.ones((3, 4, 5), bool)
     affine = np.diag([2.0, 3.0, 4.0, 1.0])
@@ -56,6 +56,72 @@ def test_longitudinal_plane_has_one_world_extent_and_final_error_uses_map_lut_ra
     specs = final_panel_specifications("T1", ("Q002S640", "Fit-first"))
     assert all(spec["cmap"].name == specs[0]["cmap"].name and spec["range_ms"] == (0.0, 2500.0) for spec in specs)
     assert {spec["displayed_quantity"] for spec in specs if spec["kind"] == "absolute_error_ms"} == {"absolute_error_ms"}
+    sparse_support = np.zeros((5, 4, 3), bool); sparse_support[1] = True; sparse_support[3] = True
+    assert meaningful_longitudinal_index(sparse_support, axis=0) == (1, "support_median")
+    assert meaningful_longitudinal_index(sparse_support, axis=0, index=3) == (3, "configured_index")
+
+
+def test_native_preview_mode_selects_single_or_all_authoritative_groups(monkeypatch: pytest.MonkeyPatch) -> None:
+    from paper_experiments.joint_vs_2dfit.phase2_clean import final_cyj_reporting as reporting
+
+    sparse = {"condition": "L50", "stacks": {"2ch": {"heldout_original_group_ids": [7, 9]}}}
+    monkeypatch.setattr(reporting, "_heldout_ids", lambda manifest, stack: [7, 9])
+    assert reporting.native_preview_groups({"stack": "2ch", "original_group_idx": 9}, sparse) == ("single", [9])
+    assert reporting.native_preview_groups({"mode": "all_groups", "stack": "2ch"}, sparse) == ("all_groups", [7, 9])
+
+    l100 = {"condition": "L100", "stacks": {"2ch": {}}}
+    monkeypatch.setattr(reporting, "_heldout_ids", lambda manifest, stack: [2, 4, 6])
+    assert reporting.native_preview_groups({"mode": "all_groups", "stack": "2ch"}, l100) == ("all_groups", [2, 4, 6])
+    stacks = reporting.native_preview_stack_configs({"mode": "all_groups", "sparse_manifest": "sparse.json", "r0_native_maps_root": "cache", "stacks": ["2ch", {"stack": "4ch"}]})
+    assert [item["stack"] for item in stacks] == ["2ch", "4ch"]
+    assert all(item["mode"] == "all_groups" for item in stacks)
+
+
+def test_native_mosaic_uses_two_distinct_dedicated_colorbar_axes(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    import matplotlib.figure
+    from paper_experiments.joint_vs_2dfit.phase2_clean import final_cyj_reporting as reporting
+
+    calls: list[object] = []
+    original = matplotlib.figure.Figure.colorbar
+
+    def capture(self: object, mappable: object, *args: object, **kwargs: object) -> object:
+        calls.append(kwargs.get("cax"))
+        return original(self, mappable, *args, **kwargs)
+
+    monkeypatch.setattr(matplotlib.figure.Figure, "colorbar", capture)
+    values = np.full((3, 4), 1000.0)
+    panel = lambda label: {"label": label, "values": values, "support": np.ones_like(values, bool), "cmap": reporting.colorbars().mapping["T1"], "range_ms": (0.0, 2500.0)}
+    reporting._plot_native_mosaic(tmp_path / "mosaic.png", [(5, [panel("Native reference"), panel("Fit-first"), panel("|Fit-first − Native|")])], title="test")
+    assert len(calls) == 2
+    assert calls[0] is not None and calls[1] is not None and calls[0] is not calls[1]
+
+
+def test_all_groups_native_render_uses_every_heldout_group_and_records_mode(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from paper_experiments.joint_vs_2dfit.phase2_clean import final_cyj_reporting as reporting
+
+    sparse_manifest = tmp_path / "sparse.json"
+    sparse_manifest.write_text(json.dumps({"condition": "L25", "stacks": {"2ch": {"heldout_original_group_ids": [3, 8]}}}), encoding="utf-8")
+    mask = _nifti(tmp_path / "mask.nii.gz", np.ones((2, 3, 2)), np.eye(4))
+    maps = {method: {parameter: str(_nifti(tmp_path / method / f"{parameter}.nii.gz", np.ones((2, 3, 2)), np.eye(4))) for parameter in ("t1", "t2")} for method in ("Fit-first", "Q002S640", "Q004S640")}
+    cache_files = [tmp_path / name for name in ("native_maps.npz", "geometry.npz", "native_manifest.json")]
+    for path in cache_files:
+        path.write_bytes(b"cache")
+    selected = {
+        "group_idx": np.array([3, 8]), "source_support": np.ones((2, 2, 3), bool),
+        "affine_lps_rc": np.repeat(np.eye(4)[None], 2, axis=0), "pixel_spacing_rc_mm": np.ones((2, 2)),
+        "t1_ms": np.full((2, 2, 3), 1000.0), "t2_ms": np.full((2, 2, 3), 80.0),
+        "provenance": dict(zip(("native_maps_path", "geometry_path", "manifest_path"), map(str, cache_files))),
+    }
+    requested: list[list[int]] = []
+    monkeypatch.setattr(reporting, "_heldout_ids", lambda sparse, stack: [3, 8])
+    monkeypatch.setattr(reporting, "select_verified_native_cache_groups", lambda root, manifest, stack, groups: requested.append(groups) or selected)
+    monkeypatch.setattr(reporting, "reproject_binary_mask_to_native_plane", lambda mask, affine, plane, shape: np.ones(shape, bool))
+    monkeypatch.setattr(reporting, "reproject_volume_to_native_plane", lambda values, affine, plane, shape: (np.full(shape, 900.0), np.ones(shape, bool)))
+    config = {"subject": "CYJ", "condition": "L25_fold0", "endpoint": "central", "methods": maps, "l100_masks": {"t1": str(mask), "t2": str(mask)}, "native": {"mode": "all_groups", "stack": "2ch", "sparse_manifest": str(sparse_manifest), "r0_native_maps_root": str(tmp_path / "cache")}}
+    records = reporting._render_native(config, tmp_path, {})
+    assert requested == [[3, 8]]
+    assert all(record["mode"] == "all_groups" and record["original_group_ids"] == [3, 8] for record in records)
+    assert all((tmp_path / record["file"]).is_file() for record in records)
 
 
 def _nifti(path: Path, values: np.ndarray, affine: np.ndarray) -> Path:
@@ -92,11 +158,12 @@ def test_final_figure_manifest_is_complete_and_immutable(monkeypatch: pytest.Mon
                                   "l100_masks": {"t1": "unused", "t2": "unused"},
                                   "longitudinal": {"axis": 1, "index": 2}, "native": {}}), encoding="utf-8")
     monkeypatch.setattr(reporting, "_render_longitudinal", lambda config, output, inputs: [{"plane": {"axis": 1, "index": 2}, "interpolation": {"map": "linear", "mask": "nearest-neighbor"}, "frozen_l100_source": {"path": "mask", "sha256": "x"}}])
-    monkeypatch.setattr(reporting, "_render_native", lambda config, output, inputs: [{"display_support": "frozen L100", "interpolation": {"map": "linear", "mask": "nearest-neighbor"}, "frozen_l100_source": {"path": "mask", "sha256": "x"}}])
+    monkeypatch.setattr(reporting, "_render_native", lambda config, output, inputs: [{"mode": "all_groups", "original_group_ids": [2, 4], "display_support": "frozen L100", "interpolation": {"map": "linear", "mask": "nearest-neighbor"}, "frozen_l100_source": {"path": "mask", "sha256": "x"}}])
     output = reporting.render_final_figures(config, tmp_path / "figures")
     manifest = json.loads((output / "figure_manifest.json").read_text())
     assert {"subject", "condition", "endpoint", "methods", "inputs", "longitudinal_figures", "native_heldout_figures", "shared_parameter_lut_ranges_ms", "error_display_contract", "code_git_sha"}.issubset(manifest)
     assert manifest["endpoint"] == "psf128" and "same parameter map LUT/range" in manifest["error_display_contract"]
+    assert manifest["native_heldout_figures"][0]["mode"] == "all_groups"
     with pytest.raises(FileExistsError):
         reporting.render_final_figures(config, output)
 

@@ -217,6 +217,22 @@ def aggregate_final_cyj(method_roots: Mapping[str, str | Path], output: str | Pa
     return output
 
 
+def meaningful_longitudinal_index(mask: np.ndarray, *, axis: int, index: int | str | None = None) -> tuple[int, str]:
+    """Keep an explicit plane, or select the median frozen-L100 support plane."""
+    shape = np.asarray(mask).shape
+    if len(shape) != 3 or axis not in (0, 1, 2):
+        raise ValueError("invalid frozen-L100 plane axis")
+    if index not in (None, "support_median"):
+        chosen = int(index)
+        if not 0 <= chosen < shape[axis]:
+            raise ValueError("invalid frozen-L100 plane definition")
+        return chosen, "configured_index"
+    supported = np.flatnonzero(np.any(np.asarray(mask, bool), axis=tuple(item for item in range(3) if item != axis)))
+    if not len(supported):
+        raise ValueError("frozen-L100 mask has no support for a longitudinal plane")
+    return int(supported[(len(supported) - 1) // 2]), "support_median"
+
+
 def longitudinal_plane(mask: np.ndarray, affine: np.ndarray, *, axis: int, index: int) -> dict[str, Any]:
     """Return one full physical display plane from the frozen L100 grid, without cropping."""
     shape = np.asarray(mask).shape
@@ -259,8 +275,11 @@ def _plot_panels(path: Path, panels: list[dict[str, Any]], *, extent: list[float
     """Render full supplied plane bounds; only masks, never crop, hide background."""
     import matplotlib.pyplot as plt
 
-    figure, axes = plt.subplots(1, len(panels), figsize=(3.0 * len(panels), 3.3), squeeze=False)
-    for axis, panel in zip(axes[0], panels):
+    figure = plt.figure(figsize=(3.0 * len(panels) + .65, 3.3))
+    grid = figure.add_gridspec(1, len(panels) + 1, width_ratios=[1.0] * len(panels) + [.055], wspace=.12)
+    axes = [figure.add_subplot(grid[0, index]) for index in range(len(panels))]
+    colorbar_axis = figure.add_subplot(grid[0, -1])
+    for axis, panel in zip(axes, panels):
         shown = np.ma.masked_invalid(np.where(panel["support"], panel["values"], np.nan))
         image = axis.imshow(shown.T, origin="lower", extent=extent, cmap=panel["cmap"], vmin=panel["range_ms"][0], vmax=panel["range_ms"][1], interpolation="none", aspect="equal")
         if contour is not None and np.any(contour):
@@ -268,10 +287,104 @@ def _plot_panels(path: Path, panels: list[dict[str, Any]], *, extent: list[float
         axis.set_title(panel["label"], fontsize=8)
         axis.set_xticks([]); axis.set_yticks([])
     figure.suptitle(title, fontsize=10)
-    figure.colorbar(image, ax=list(axes[0]), fraction=.025, pad=.02, label="ms; shared parameter map scale")
-    figure.tight_layout()
+    figure.colorbar(image, cax=colorbar_axis, label="ms; shared parameter map scale")
+    figure.subplots_adjust(top=.83, bottom=.04, left=.02, right=.98)
     figure.savefig(path, dpi=220, bbox_inches="tight")
     plt.close(figure)
+
+
+def _native_mosaic_row(row: Any) -> tuple[int, list[dict[str, Any]], list[float], np.ndarray | None]:
+    if isinstance(row, Mapping):
+        group, panels = int(row["group_idx"]), list(row["panels"])
+        extent, contour = row.get("extent"), row.get("contour")
+    else:
+        group, panels, *extra = row
+        group, panels = int(group), list(panels)
+        extent, contour = (extra + [None, None])[:2]
+    values = np.asarray(panels[0]["values"])
+    if extent is None:
+        extent = [0.0, float(values.shape[0] - 1), 0.0, float(values.shape[1] - 1)]
+    return group, panels, list(extent), None if contour is None else np.asarray(contour, bool)
+
+
+def _plot_native_mosaic(path: Path, rows: list[Any], *, title: str) -> None:
+    """Render all requested native planes with dedicated map and error colorbars."""
+    import matplotlib.pyplot as plt
+
+    if not rows:
+        raise ValueError("native mosaic requires at least one group")
+    normalized = [_native_mosaic_row(row) for row in rows]
+    panel_count = len(normalized[0][1])
+    if not panel_count or any(len(panels) != panel_count for _, panels, _, _ in normalized):
+        raise ValueError("native mosaic rows must have an identical non-empty panel layout")
+    figure = plt.figure(figsize=(2.5 * panel_count + 1.0, max(3.2, 2.55 * len(normalized) + .5)))
+    grid = figure.add_gridspec(len(normalized), panel_count + 2, width_ratios=[1.0] * panel_count + [.06, .06], wspace=.12, hspace=.12)
+    map_handle = error_handle = None
+    for row_index, (group, panels, extent, contour) in enumerate(normalized):
+        for column, panel in enumerate(panels):
+            axis = figure.add_subplot(grid[row_index, column])
+            shown = np.ma.masked_invalid(np.where(panel["support"], panel["values"], np.nan))
+            image = axis.imshow(shown.T, origin="lower", extent=extent, cmap=panel["cmap"], vmin=panel["range_ms"][0], vmax=panel["range_ms"][1], interpolation="none", aspect="equal")
+            if contour is not None and np.any(contour):
+                axis.contour(contour.T.astype(float), levels=[.5], colors="white", linewidths=.55, origin="lower", extent=extent)
+            if row_index == 0:
+                axis.set_title(panel["label"], fontsize=8)
+            if column == 0:
+                axis.set_ylabel(f"group {group}", fontsize=8)
+            axis.set_xticks([]); axis.set_yticks([])
+            if panel["label"].startswith("|"):
+                error_handle = image
+            else:
+                map_handle = image
+    map_colorbar_axis = figure.add_subplot(grid[:, panel_count])
+    error_colorbar_axis = figure.add_subplot(grid[:, panel_count + 1])
+    if map_handle is None:
+        raise ValueError("native mosaic needs a quantitative-map panel")
+    figure.colorbar(map_handle, cax=map_colorbar_axis, label="map (ms)")
+    figure.colorbar(error_handle if error_handle is not None else map_handle, cax=error_colorbar_axis, label="absolute error (ms)")
+    figure.suptitle(title, fontsize=10)
+    figure.subplots_adjust(top=.9, bottom=.03, left=.03, right=.98)
+    figure.savefig(path, dpi=220, bbox_inches="tight")
+    plt.close(figure)
+
+
+def native_preview_groups(native: Mapping[str, Any], sparse: Mapping[str, Any]) -> tuple[str, list[int]]:
+    """Resolve display groups while retaining the sparse manifest as authority."""
+    mode = str(native.get("mode", "single"))
+    stack = str(native["stack"])
+    authoritative = _heldout_ids(dict(sparse), stack)
+    if mode == "all_groups":
+        return mode, authoritative
+    if mode != "single":
+        raise ValueError("native.mode must be 'single' or 'all_groups'")
+    if "original_group_idx" not in native:
+        raise ValueError("native single mode requires original_group_idx")
+    group = int(native["original_group_idx"])
+    if group not in authoritative:
+        raise ValueError(f"requested native group {group} is unavailable for {stack}")
+    return mode, [group]
+
+
+def native_preview_stack_configs(native: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Accept the original single-stack config or explicit 2CH/4CH stack entries."""
+    if "stacks" not in native:
+        return [dict(native)]
+    base = {key: value for key, value in native.items() if key != "stacks"}
+    entries = native["stacks"]
+    if not isinstance(entries, list) or not entries:
+        raise ValueError("native.stacks must be a non-empty list")
+    result: list[dict[str, Any]] = []
+    for entry in entries:
+        if isinstance(entry, str):
+            result.append(base | {"stack": entry})
+        elif isinstance(entry, Mapping):
+            result.append(base | dict(entry))
+        else:
+            raise ValueError("native.stacks entries must be stack names or mappings")
+    stacks = [str(item.get("stack", "")) for item in result]
+    if len(stacks) != len(set(stacks)) or any(not stack for stack in stacks):
+        raise ValueError("native.stacks must name each stack exactly once")
+    return result
 
 
 def _file_record(path: str | Path) -> dict[str, str]:
@@ -287,7 +400,8 @@ def _render_longitudinal(config: Mapping[str, Any], output: Path, inputs: dict[s
         mask_path = _load_mask_spec(config, parameter)
         mask_image = _image(mask_path)
         mask = np.asarray(mask_image.get_fdata(), bool)
-        plane = longitudinal_plane(mask, mask_image.affine, axis=int(section["axis"]), index=int(section["index"]))
+        index, selection_mode = meaningful_longitudinal_index(mask, axis=int(section["axis"]), index=section.get("index", "support_median"))
+        plane = longitudinal_plane(mask, mask_image.affine, axis=int(section["axis"]), index=index)
         sampled_mask, in_mask = _world_sample(mask.astype(np.uint8), mask_image.affine, plane["world"], order=0)
         support = in_mask & np.isfinite(sampled_mask) & (sampled_mask > .5)
         cmap, limits = colorbars().mapping[display_parameter], DISPLAY_RANGES_MS[display_parameter]
@@ -303,57 +417,73 @@ def _render_longitudinal(config: Mapping[str, Any], output: Path, inputs: dict[s
         _plot_panels(output / filename, panels, extent=plane["extent_mm"], title=f"{config['subject']} {config['condition']} {config['endpoint']} — frozen L100 longitudinal {display_parameter}")
         inputs[f"l100_mask_{parameter}"] = _file_record(mask_path)
         inputs.update({f"{method}_{parameter}": value for method, value in method_inputs.items()})
-        records.append({"parameter": display_parameter, "file": filename, "frozen_l100_source": _file_record(mask_path), "plane": {key: value for key, value in plane.items() if key != "world"}, "world_coordinate_sampling": True, "interpolation": {"map": "linear", "mask": "nearest-neighbor"}, "no_auto_crop": True, "lut_range_ms": list(limits)})
+        records.append({"parameter": display_parameter, "file": filename, "frozen_l100_source": _file_record(mask_path), "plane": {key: value for key, value in plane.items() if key != "world"}, "plane_selection": selection_mode, "world_coordinate_sampling": True, "interpolation": {"map": "linear", "mask": "nearest-neighbor"}, "no_auto_crop": True, "lut_range_ms": list(limits)})
     return records
 
 
-def _render_native(config: Mapping[str, Any], output: Path, inputs: dict[str, Any]) -> list[dict[str, Any]]:
-    native = config["native"]
+def _render_native_stack(config: Mapping[str, Any], output: Path, inputs: dict[str, Any], native: Mapping[str, Any]) -> list[dict[str, Any]]:
     sparse_manifest = Path(native["sparse_manifest"])
     sparse = json.loads(sparse_manifest.read_text(encoding="utf-8"))
-    stack, original_group = str(native["stack"]), int(native["original_group_idx"])
+    stack = str(native["stack"])
+    mode, display_groups = native_preview_groups(native, sparse)
     selected = select_verified_native_cache_groups(native["r0_native_maps_root"], sparse_manifest, stack, _heldout_ids(sparse, stack))
-    matching = np.flatnonzero(np.asarray(selected["group_idx"], int) == original_group)
-    if len(matching) != 1:
-        raise ValueError(f"requested native group {original_group} is unavailable for {stack}")
-    index = int(matching[0])
-    affine = np.diag([-1.0, -1.0, 1.0, 1.0]) @ np.asarray(selected["affine_lps_rc"][index], float)
-    source_support = np.asarray(selected["source_support"][index], bool)
+    selected_indices = {int(group): index for index, group in enumerate(np.asarray(selected["group_idx"], int))}
+    if any(group not in selected_indices for group in display_groups):
+        raise ValueError(f"requested native groups are unavailable for {stack}")
     contour = None
     if native.get("myocardium_contour"):
+        if mode != "single":
+            raise ValueError("myocardium_contour is only supported for native.mode='single'")
         contour_path = Path(native["myocardium_contour"])
         contour = np.asarray(np.load(contour_path), bool)
-        if contour.shape != source_support.shape:
+        if contour.shape != np.asarray(selected["source_support"][selected_indices[display_groups[0]]], bool).shape:
             raise ValueError("myocardium contour must match the selected native plane")
         inputs["myocardium_contour"] = _file_record(contour_path)
-    inputs["sparse_manifest"] = _file_record(sparse_manifest)
+    inputs.setdefault("sparse_manifest", _file_record(sparse_manifest))
     provenance = dict(selected["provenance"])
     for key in ("native_maps_path", "geometry_path", "manifest_path"):
-        inputs[f"native_cache_{key}"] = _file_record(provenance[key])
+        record = _file_record(provenance[key])
+        inputs.setdefault(f"native_cache_{key}", record)
+        inputs[f"native_cache_{stack}_{key}"] = record
     records: list[dict[str, Any]] = []
     methods = tuple(config["methods"])
     for parameter, display_parameter in PARAMETERS.items():
         mask_path = _load_mask_spec(config, parameter)
         mask_image = _image(mask_path)
-        l100 = reproject_binary_mask_to_native_plane(mask_image.get_fdata() > .5, mask_image.affine, affine, source_support.shape)
-        support = source_support & l100
         cmap, limits = colorbars().mapping[display_parameter], DISPLAY_RANGES_MS[display_parameter]
-        reference = np.asarray(selected[f"{parameter}_ms"][index], float)
-        panels = [{"label": "Native reference", "values": reference, "support": support & np.isfinite(reference), "cmap": cmap, "range_ms": limits}]
-        for method in methods:
-            map_path = Path(config["methods"][method][parameter])
-            image = _image(map_path)
-            values, valid = reproject_volume_to_native_plane(image.get_fdata(), image.affine, affine, source_support.shape)
-            available = support & valid & np.isfinite(reference) & np.isfinite(values)
-            panels.extend((
-                {"label": method, "values": values, "support": available, "cmap": cmap, "range_ms": limits},
-                {"label": f"|{method} − Native|", "values": np.abs(values - reference), "support": available, "cmap": cmap, "range_ms": limits},
-            ))
-        extent = [0.0, float(source_support.shape[0] - 1), 0.0, float(source_support.shape[1] - 1)]
-        filename = f"native_{stack}_group{original_group}_{display_parameter}.png"
-        _plot_panels(output / filename, panels, extent=extent, title=f"{config['subject']} {config['condition']} {config['endpoint']} — {stack} native group {original_group} {display_parameter}", contour=contour)
+        method_images = {method: _image(config["methods"][method][parameter]) for method in methods}
+        mosaic_rows: list[dict[str, Any]] = []
+        shapes: dict[str, list[int]] = {}
+        for group in display_groups:
+            index = selected_indices[group]
+            affine = np.diag([-1.0, -1.0, 1.0, 1.0]) @ np.asarray(selected["affine_lps_rc"][index], float)
+            source_support = np.asarray(selected["source_support"][index], bool)
+            l100 = reproject_binary_mask_to_native_plane(mask_image.get_fdata() > .5, mask_image.affine, affine, source_support.shape)
+            support = source_support & l100
+            reference = np.asarray(selected[f"{parameter}_ms"][index], float)
+            panels = [{"label": "Native reference", "values": reference, "support": support & np.isfinite(reference), "cmap": cmap, "range_ms": limits}]
+            for method, image in method_images.items():
+                values, valid = reproject_volume_to_native_plane(image.get_fdata(), image.affine, affine, source_support.shape)
+                available = support & valid & np.isfinite(reference) & np.isfinite(values)
+                panels.extend((
+                    {"label": method, "values": values, "support": available, "cmap": cmap, "range_ms": limits},
+                    {"label": f"|{method} − Native|", "values": np.abs(values - reference), "support": available, "cmap": cmap, "range_ms": limits},
+                ))
+            spacing = np.asarray(selected["pixel_spacing_rc_mm"][index], float)
+            extent = [0.0, float(source_support.shape[0] - 1) * spacing[0], 0.0, float(source_support.shape[1] - 1) * spacing[1]]
+            mosaic_rows.append({"group_idx": group, "panels": panels, "extent": extent, "contour": contour})
+            shapes[str(group)] = list(source_support.shape)
+        filename = f"native_{stack}_group{display_groups[0]}_{display_parameter}.png" if mode == "single" else f"native_{stack}_{mode}_{display_parameter}.png"
+        _plot_native_mosaic(output / filename, mosaic_rows, title=f"{config['subject']} {config['condition']} {config['endpoint']} — {stack} native {mode} {display_parameter}")
         inputs[f"native_l100_mask_{parameter}"] = _file_record(mask_path)
-        records.append({"parameter": display_parameter, "file": filename, "stack": stack, "original_group_idx": original_group, "native_reference": provenance, "frozen_l100_source": _file_record(mask_path), "plane_shape_rc": list(source_support.shape), "display_support": "source_support AND reprojected_frozen_L100_mask; myocardium is contour-only", "interpolation": {"map": "linear", "mask": "nearest-neighbor"}, "no_auto_crop": True, "error_display": {"quantity": "absolute_error_ms", "colormap": "same_parameter_map_lut", "range_ms": list(limits), "no_residual_colorbar": True}})
+        records.append({"parameter": display_parameter, "file": filename, "stack": stack, "mode": mode, "original_group_idx": display_groups[0] if mode == "single" else None, "original_group_ids": display_groups, "native_reference": provenance, "frozen_l100_source": _file_record(mask_path), "plane_shapes_rc": shapes, "display_support": "source_support AND reprojected_frozen_L100_mask; myocardium is contour-only", "interpolation": {"map": "linear", "mask": "nearest-neighbor"}, "no_auto_crop": True, "physical_aspect_ratio_preserved": True, "colorbars": {"map": "dedicated_axis", "absolute_error": "dedicated_axis", "range_ms": list(limits), "colormap": "same_parameter_map_lut"}, "error_display": {"quantity": "absolute_error_ms", "colormap": "same_parameter_map_lut", "range_ms": list(limits), "no_residual_colorbar": False}})
+    return records
+
+
+def _render_native(config: Mapping[str, Any], output: Path, inputs: dict[str, Any]) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for native in native_preview_stack_configs(config["native"]):
+        records.extend(_render_native_stack(config, output, inputs, native))
     return records
 
 
@@ -383,7 +513,7 @@ def render_final_figures(config_path: str | Path, output: str | Path) -> Path:
         inputs = {"config": _file_record(config_path)}
         longitudinal = _render_longitudinal(config, staging, inputs)
         native = _render_native(config, staging, inputs)
-        manifest = {"schema": "phase4r_final_cyj_figures/v1", "subject": "CYJ", "condition": config.get("condition"), "endpoint": config["endpoint"], "methods": list(config["methods"]), "inputs": inputs, "longitudinal_figures": longitudinal, "native_heldout_figures": native, "shared_parameter_lut_ranges_ms": {key: list(value) for key, value in DISPLAY_RANGES_MS.items()}, "error_display_contract": "absolute_error_ms using same parameter map LUT/range; no magma residual scale or residual colorbar", "code_git_sha": _git_sha()}
+        manifest = {"schema": "phase4r_final_cyj_figures/v1", "subject": "CYJ", "condition": config.get("condition"), "endpoint": config["endpoint"], "methods": list(config["methods"]), "inputs": inputs, "longitudinal_figures": longitudinal, "native_heldout_figures": native, "shared_parameter_lut_ranges_ms": {key: list(value) for key, value in DISPLAY_RANGES_MS.items()}, "error_display_contract": "absolute_error_ms using same parameter map LUT/range; no magma residual scale; native mosaics provide dedicated map and error colorbar axes", "code_git_sha": _git_sha()}
         write_immutable_json(staging / "figure_manifest.json", manifest)
         staging.rename(output)
     except BaseException:
