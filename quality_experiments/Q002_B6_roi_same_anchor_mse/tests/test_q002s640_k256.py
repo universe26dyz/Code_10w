@@ -35,6 +35,12 @@ def test_k256_route_freezes_q002s640_except_training_psf_sampling() -> None:
     assert k256["route"]["parent_experiment"] == Q002S640_EXPERIMENT_ID
     assert k256["route"]["scientific_change"] == "training_psf_samples_8_to_256_only"
     assert k256["route"]["loss"] == "MSE_only"
+    comparison = k256["route"]["fit_first_n_samples_semantics"]
+    assert comparison["comparison_label"] == "matched per-observation training PSF sample count (K=256)"
+    assert comparison["matched_per_observation_training_psf_sample_count"] is True
+    assert comparison["per_observation_training_psf_samples"] == {"proposed": 256, "fit_first_nesvor": 256}
+    for key in ("same_observation_semantics", "same_forward_model", "same_loss", "same_batch_size", "same_total_sampled_locations_per_optimizer_step", "same_computational_budget"):
+        assert comparison[key] is False
 
 
 def test_k256_controls_and_sampler_record_logical_counts_without_regularization_change() -> None:

@@ -77,7 +77,12 @@ def test_k256_alias_distinguishes_training_k256_from_posthoc_export_k128(tmp_pat
         "experiment_id": "Q002S640_K256",
         "training_psf_samples": 256,
         "psf_forward_chunk_size": 32,
-        "fit_first_n_samples_semantics": {"numerically_matches": True, "semantically_equivalent": False},
+        "fit_first_n_samples_semantics": {
+            "comparison_label": "matched per-observation training PSF sample count (K=256)",
+            "matched_per_observation_training_psf_sample_count": True,
+            "per_observation_training_psf_samples": {"proposed": 256, "fit_first_nesvor": 256},
+            "same_computational_budget": False,
+        },
     }), encoding="utf-8")
     _volume(root / "T1_3D.nii.gz"); _volume(root / "T2_3D.nii.gz")
     psf_root = root / "formal_export_psf128"; _volume(psf_root / "T1_3D.nii.gz"); _volume(psf_root / "T2_3D.nii.gz")

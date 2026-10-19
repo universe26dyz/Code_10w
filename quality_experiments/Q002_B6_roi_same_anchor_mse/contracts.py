@@ -127,10 +127,18 @@ def build_q002_route_config(
                 "semantics": "one K256 neighbourhood draw per logical optimizer step; chunks only split INR/decoder forward accumulation with one backward and optimizer step",
             },
             "fit_first_n_samples_semantics": {
-                "historical_nesvor_n_samples": 256,
-                "numerically_matches": "both settings are 256",
-                "semantically_equivalent": False,
-                "comparison": "Proposed K256 is a same-anchor local-PSF Monte Carlo average inside its joint-vector training forward; NeSVoR n_samples=256 is a Fit-first reconstruction setting. They are not a matched training objective or computational budget.",
+                "comparison_label": "matched per-observation training PSF sample count (K=256)",
+                "matched_per_observation_training_psf_sample_count": True,
+                "per_observation_training_psf_samples": {"proposed": 256, "fit_first_nesvor": 256},
+                "same_observation_semantics": False,
+                "same_forward_model": False,
+                "same_loss": False,
+                "same_batch_size": False,
+                "same_total_sampled_locations_per_optimizer_step": False,
+                "same_flops": False,
+                "same_memory": False,
+                "same_optimizer_exposure": False,
+                "same_computational_budget": False,
             },
         })
     return route
