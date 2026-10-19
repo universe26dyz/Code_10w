@@ -1,6 +1,7 @@
 """CPU contracts for the standalone L100-mask paired post-hoc audit."""
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import nibabel as nib
@@ -118,6 +119,72 @@ def test_formal_endpoint_inputs_refuse_manifest_mismatch(tmp_path: Path) -> None
     (fit_first / "manifest.json").write_text('{"endpoint": "psf128"}', encoding="utf-8")
     with pytest.raises(ValueError, match="endpoint mismatch"):
         audit.resolve_matched_endpoint_inputs(proposed, fit_first, "central")
+
+
+def _formal_endpoint(root: Path, *, method: str, endpoint: str, include_masks: bool = False) -> Path:
+    root.mkdir()
+    (root / "manifest.json").write_text(
+        json.dumps({"method": method, "endpoint": endpoint, "subject": "CYJ", "condition": "L25_fold0"}),
+        encoding="utf-8",
+    )
+    if method == "Proposed":
+        _save = (root / "T1_3D.nii.gz", root / "T2_3D.nii.gz")
+    elif method == "Fit-first":
+        _save = (root / "t1" / "volume_ms.nii.gz", root / "t2" / "volume_ms.nii.gz")
+        if include_masks:
+            _save += (root / "t1" / "query_effective_mask.nii.gz", root / "t1" / "sparse_checkpoint_mask.nii.gz",
+                      root / "t2" / "query_effective_mask.nii.gz", root / "t2" / "sparse_checkpoint_mask.nii.gz")
+    else:
+        raise AssertionError(method)
+    for path in _save:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        nib.save(nib.Nifti1Image(np.ones((1, 1, 1)), np.eye(4)), path)
+    return root
+
+
+def test_formal_endpoint_inputs_keep_existing_proposed_vs_fit_first_default_mask_source(tmp_path: Path) -> None:
+    proposed = _formal_endpoint(tmp_path / "proposed", method="Proposed", endpoint="central")
+    fit_first = _formal_endpoint(tmp_path / "fit_first", method="Fit-first", endpoint="central", include_masks=True)
+    paths, provenance = audit.resolve_matched_endpoint_inputs(proposed, fit_first, "central")
+    assert paths["t1"]["candidate"] == proposed / "T1_3D.nii.gz"
+    assert paths["t2"]["comparator"] == fit_first / "t2" / "volume_ms.nii.gz"
+    assert paths["t1"]["l100_mask"] == fit_first / "t1" / "query_effective_mask.nii.gz"
+    assert provenance["mask_reference"]["selection"] == "comparator_fit_first_default"
+
+
+def test_formal_endpoint_inputs_require_explicit_fit_first_mask_reference_for_proposed_vs_proposed(tmp_path: Path) -> None:
+    candidate = _formal_endpoint(tmp_path / "candidate", method="Proposed", endpoint="psf128")
+    comparator = _formal_endpoint(tmp_path / "comparator", method="Proposed", endpoint="psf128")
+    with pytest.raises(ValueError, match="mask-reference-export-root"):
+        audit.resolve_matched_endpoint_inputs(candidate, comparator, "psf128")
+
+
+def test_formal_endpoint_inputs_use_explicit_mask_reference_not_proposed_comparator(tmp_path: Path) -> None:
+    candidate = _formal_endpoint(tmp_path / "candidate", method="Proposed", endpoint="psf128")
+    comparator = _formal_endpoint(tmp_path / "comparator", method="Proposed", endpoint="psf128")
+    mask_reference = _formal_endpoint(tmp_path / "mask_reference", method="Fit-first", endpoint="psf128", include_masks=True)
+    paths, provenance = audit.resolve_matched_endpoint_inputs(candidate, comparator, "psf128", mask_reference)
+    assert paths["t1"]["candidate"] == candidate / "T1_3D.nii.gz"
+    assert paths["t2"]["comparator"] == comparator / "T2_3D.nii.gz"
+    assert paths["t1"]["l100_mask"] == mask_reference / "t1" / "query_effective_mask.nii.gz"
+    assert paths["t2"]["sparse_mask"] == mask_reference / "t2" / "sparse_checkpoint_mask.nii.gz"
+    assert provenance["mask_reference"]["root"] == str(mask_reference.resolve())
+
+
+def test_formal_endpoint_inputs_refuse_mask_reference_endpoint_mismatch(tmp_path: Path) -> None:
+    candidate = _formal_endpoint(tmp_path / "candidate", method="Proposed", endpoint="central")
+    comparator = _formal_endpoint(tmp_path / "comparator", method="Proposed", endpoint="central")
+    mask_reference = _formal_endpoint(tmp_path / "mask_reference", method="Fit-first", endpoint="psf128", include_masks=True)
+    with pytest.raises(ValueError, match="endpoint mismatch"):
+        audit.resolve_matched_endpoint_inputs(candidate, comparator, "central", mask_reference)
+
+
+def test_formal_endpoint_inputs_refuse_another_condition_mask_reference(tmp_path: Path) -> None:
+    candidate = _formal_endpoint(tmp_path / "candidate", method="Proposed", endpoint="central")
+    comparator = _formal_endpoint(tmp_path / "comparator", method="Proposed", endpoint="central")
+    mask_reference = _formal_endpoint(tmp_path / "mask_reference", method="Fit-first", endpoint="central", include_masks=True)
+    with pytest.raises(ValueError, match="condition"):
+        audit.resolve_matched_endpoint_inputs(candidate, comparator, "central", mask_reference, subject="CYJ", condition="L25_fold1")
 
 
 def test_boundary_discrepancy_only_allows_exact_primary_decomposition_at_zero() -> None:

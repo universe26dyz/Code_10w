@@ -86,3 +86,6 @@ def test_q004_phase2_server_wrappers_are_immutable_and_restrict_cyj_cases() -> N
     assert "alias-q004s640" in aliases and "--endpoint central" in aliases and "--endpoint psf128" in aliases
     assert "FIT_FIRST_OR_Q002_OR_Q002S640_K256" in evaluate
     assert "--proposed-label Q004S640" in evaluate and "--comparator-label \"$LABEL\"" in evaluate
+    assert "MASK_REFERENCE_EXPORT_ROOT" in evaluate
+    assert "--comparator-export-root \"$COMPARATOR\"" in evaluate
+    assert "--mask-reference-export-root \"$MASK_REFERENCE\"" in evaluate

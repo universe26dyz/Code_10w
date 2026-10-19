@@ -69,27 +69,60 @@ def resolve_formal_proposed_volumes(
     }
 
 
+def _formal_endpoint_manifest(root: Path) -> tuple[Path, dict[str, Any]]:
+    manifest = root / "manifest.json"
+    if not manifest.is_file():
+        raise FileNotFoundError(f"formal matched endpoint manifest is missing: {manifest}")
+    return manifest, json.loads(manifest.read_text(encoding="utf-8"))
+
+
+def _formal_endpoint_volume_paths(root: Path, payload: dict[str, Any]) -> dict[str, Path]:
+    method = payload.get("method")
+    if method == "Proposed":
+        return {parameter: root / f"{parameter.upper()}_3D.nii.gz" for parameter in PARAMETERS}
+    if method == "Fit-first":
+        return {parameter: root / parameter / "volume_ms.nii.gz" for parameter in PARAMETERS}
+    raise ValueError(f"formal endpoint manifest has unsupported method/layout: {method!r}")
+
+
 def resolve_matched_endpoint_inputs(
-    proposed_export_root: str | Path, fit_first_export_root: str | Path, endpoint: str,
+    candidate_export_root: str | Path, comparator_export_root: str | Path, endpoint: str,
+    mask_reference_export_root: str | Path | None = None, *, subject: str | None = None, condition: str | None = None,
 ) -> tuple[dict[str, dict[str, Path]], dict[str, Any]]:
-    """Resolve two formal endpoint roots and prove their manifest semantics match."""
-    proposed_root, fit_root = Path(proposed_export_root), Path(fit_first_export_root)
-    proposed_manifest, fit_manifest = proposed_root / "manifest.json", fit_root / "manifest.json"
-    for path in (proposed_manifest, fit_manifest):
-        if not path.is_file():
-            raise FileNotFoundError(f"formal matched endpoint manifest is missing: {path}")
-    proposed_payload = json.loads(proposed_manifest.read_text(encoding="utf-8"))
-    fit_payload = json.loads(fit_manifest.read_text(encoding="utf-8"))
+    """Resolve independent candidate, comparator, and frozen mask-domain endpoint roots."""
+    candidate_root, comparator_root = Path(candidate_export_root), Path(comparator_export_root)
+    candidate_manifest, candidate_payload = _formal_endpoint_manifest(candidate_root)
+    comparator_manifest, comparator_payload = _formal_endpoint_manifest(comparator_root)
     requested = endpoint_contract(endpoint)
-    require_matched_endpoints(endpoint, proposed_payload.get("endpoint"))
-    require_matched_endpoints(endpoint, fit_payload.get("endpoint"))
+    require_matched_endpoints(endpoint, candidate_payload.get("endpoint"))
+    require_matched_endpoints(endpoint, comparator_payload.get("endpoint"))
+    if mask_reference_export_root is None:
+        if comparator_payload.get("method") != "Fit-first":
+            raise ValueError("Proposed-vs-Proposed comparisons require --mask-reference-export-root with the same-condition Fit-first export")
+        mask_reference_root, mask_reference_manifest, mask_reference_payload = comparator_root, comparator_manifest, comparator_payload
+        mask_reference_selection = "comparator_fit_first_default"
+    else:
+        mask_reference_root = Path(mask_reference_export_root)
+        mask_reference_manifest, mask_reference_payload = _formal_endpoint_manifest(mask_reference_root)
+        if mask_reference_payload.get("method") != "Fit-first":
+            raise ValueError("mask-reference-export-root must be a Fit-first fixed-L100 formal endpoint export")
+        mask_reference_selection = "explicit_fit_first_export"
+    require_matched_endpoints(endpoint, mask_reference_payload.get("endpoint"))
+    if subject is not None or condition is not None:
+        for role, payload in (("candidate", candidate_payload), ("comparator", comparator_payload), ("mask reference", mask_reference_payload)):
+            if subject is not None and payload.get("subject") != subject:
+                raise ValueError(f"{role} formal endpoint subject does not match the requested subject")
+            if condition is not None and payload.get("condition") != condition:
+                raise ValueError(f"{role} formal endpoint condition does not match the requested condition")
+    candidate_volumes = _formal_endpoint_volume_paths(candidate_root, candidate_payload)
+    comparator_volumes = _formal_endpoint_volume_paths(comparator_root, comparator_payload)
     paths: dict[str, dict[str, Path]] = {}
     for parameter in PARAMETERS:
         paths[parameter] = {
-            "proposed": proposed_root / f"{parameter.upper()}_3D.nii.gz",
-            "fit_first": fit_root / parameter / "volume_ms.nii.gz",
-            "l100_mask": fit_root / parameter / "query_effective_mask.nii.gz",
-            "sparse_mask": fit_root / parameter / "sparse_checkpoint_mask.nii.gz",
+            "candidate": candidate_volumes[parameter],
+            "comparator": comparator_volumes[parameter],
+            "l100_mask": mask_reference_root / parameter / "query_effective_mask.nii.gz",
+            "sparse_mask": mask_reference_root / parameter / "sparse_checkpoint_mask.nii.gz",
         }
         for path in paths[parameter].values():
             if not path.is_file():
@@ -97,10 +130,9 @@ def resolve_matched_endpoint_inputs(
     return paths, {
         "selection": "formal_matched_endpoint_exports",
         "endpoint": requested["endpoint"],
-        "proposed_manifest": _record(proposed_manifest),
-        "fit_first_manifest": _record(fit_manifest),
-        "proposed_root": str(proposed_root.resolve()),
-        "fit_first_root": str(fit_root.resolve()),
+        "candidate": {"method": candidate_payload["method"], "manifest": _record(candidate_manifest), "root": str(candidate_root.resolve())},
+        "comparator": {"method": comparator_payload["method"], "manifest": _record(comparator_manifest), "root": str(comparator_root.resolve())},
+        "mask_reference": {"method": mask_reference_payload["method"], "manifest": _record(mask_reference_manifest), "root": str(mask_reference_root.resolve()), "selection": mask_reference_selection},
     }
 
 
@@ -256,7 +288,8 @@ def run_l100_mask_paired_evaluation(*, subject: str, condition: str, r0_run_id: 
                                     sparse_manifest: str | Path, r0_native_maps_root: str | Path,
                                     r1_real_root: str | Path | None, mask_audit_root: str | Path | None, output: str | Path,
                                     endpoint: str = "psf128", proposed_export_root: str | Path | None = None,
-                                    fit_first_export_root: str | Path | None = None, proposed_label: str = "Proposed",
+                                    fit_first_export_root: str | Path | None = None, comparator_export_root: str | Path | None = None,
+                                    mask_reference_export_root: str | Path | None = None, proposed_label: str = "Proposed",
                                     comparator_label: str = "Fit-first fixed-L100 K128") -> Path:
     """Evaluate existing volumes only, atomically publishing a new audit directory."""
     import nibabel as nib
@@ -267,11 +300,18 @@ def run_l100_mask_paired_evaluation(*, subject: str, condition: str, r0_run_id: 
     sparse_manifest_payload = json.loads(manifest_path.read_text())
     if sparse_manifest_payload.get("subject") != subject or sparse_manifest_payload.get("condition") != condition.split("_")[0]:
         raise ValueError("subject/condition do not match the sparse manifest")
-    if (proposed_export_root is None) != (fit_first_export_root is None):
-        raise ValueError("formal matched evaluation requires both Proposed and Fit-first endpoint roots")
+    if fit_first_export_root is not None and comparator_export_root is not None:
+        raise ValueError("provide only one of fit_first_export_root or comparator_export_root")
+    comparator_export_root = comparator_export_root or fit_first_export_root
+    if (proposed_export_root is None) != (comparator_export_root is None):
+        raise ValueError("formal matched evaluation requires both candidate and comparator endpoint roots")
     if proposed_export_root is not None:
-        paths, proposed_selection = resolve_matched_endpoint_inputs(proposed_export_root, fit_first_export_root, endpoint)
+        paths, proposed_selection = resolve_matched_endpoint_inputs(
+            proposed_export_root, comparator_export_root, endpoint, mask_reference_export_root, subject=subject, condition=condition,
+        )
     else:
+        if mask_reference_export_root is not None:
+            raise ValueError("mask-reference-export-root requires formal candidate and comparator endpoint roots")
         if endpoint != "psf128":
             raise ValueError("legacy audit-root evaluation is PSF128-only; supply formal endpoint roots for central")
         if r1_real_root is None or mask_audit_root is None:
@@ -283,7 +323,7 @@ def run_l100_mask_paired_evaluation(*, subject: str, condition: str, r0_run_id: 
             paths[parameter] = {
                 "l100_mask": audit_root / parameter / "k1_reference_grid" / "l100_effective_mask_1mm.nii.gz",
                 "sparse_mask": audit_root / parameter / "k1_reference_grid" / "sparse_mask_on_l100_grid.nii.gz",
-                "fit_first": audit_root / parameter / "l100_mask" / "volume_ms.nii.gz", "proposed": proposed_paths[parameter],
+                "comparator": audit_root / parameter / "l100_mask" / "volume_ms.nii.gz", "candidate": proposed_paths[parameter],
             }
             for path in paths[parameter].values():
                 if not path.is_file(): raise FileNotFoundError(path)
@@ -303,8 +343,8 @@ def run_l100_mask_paired_evaluation(*, subject: str, condition: str, r0_run_id: 
                     reference = np.asarray(cache[native_key][index], float); source = np.asarray(cache["source_support"][index], bool)
                     l100 = reproject_binary_mask_to_native_plane(images[parameter]["l100_mask"].get_fdata(), images[parameter]["l100_mask"].affine, affine_ras, reference.shape)
                     sparse = reproject_binary_mask_to_native_plane(images[parameter]["sparse_mask"].get_fdata(), images[parameter]["sparse_mask"].affine, affine_ras, reference.shape)
-                    proposed, p_valid = reproject_volume_to_native_plane(images[parameter]["proposed"].get_fdata(), images[parameter]["proposed"].affine, affine_ras, reference.shape)
-                    fit_first, f_valid = reproject_volume_to_native_plane(images[parameter]["fit_first"].get_fdata(), images[parameter]["fit_first"].affine, affine_ras, reference.shape)
+                    proposed, p_valid = reproject_volume_to_native_plane(images[parameter]["candidate"].get_fdata(), images[parameter]["candidate"].affine, affine_ras, reference.shape)
+                    fit_first, f_valid = reproject_volume_to_native_plane(images[parameter]["comparator"].get_fdata(), images[parameter]["comparator"].affine, affine_ras, reference.shape)
                     regions = native_support_regions(source, reference, l100, sparse)
                     plane = {"parameter": parameter, "stack": stack, "original_group_idx": int(group), "coverage": mask_coverage(regions["native"], regions["l100_full"], regions["sparse_region"]), "regions": {}}
                     _save_native_masks(staging / "masks_native" / parameter / f"{stack}_group{int(group)}.npz", affine_ras, l100_native=l100, sparse_native=sparse, native_source=regions["native"], l100_full=regions["l100_full"], recovered_only=regions["recovered_only"], sparse_region=regions["sparse_region"])
@@ -359,12 +399,19 @@ def run_l100_mask_paired_evaluation(*, subject: str, condition: str, r0_run_id: 
         write_immutable_json(staging / "aggregate_metrics.json", aggregate)
         audit_manifest = {"git_sha": _git_sha(), "subject": subject, "condition": condition, "r0_run_id": r0_run_id, "r1_run_id": r1_run_id, "endpoint": endpoint_spec["endpoint"], "output_query_psf": endpoint_spec["output_query_psf"], "method_labels": {"proposed": proposed_label, "fit_first": comparator_label},
                           "native_reference": {stack: cache["provenance"] for stack, cache in selected.items()}, "sparse_manifest": _record(manifest_path),
-                          "proposed": {parameter: _record(paths[parameter]["proposed"]) for parameter in PARAMETERS}, "proposed_selection": proposed_selection,
-                          "fit_first_fixed_l100": {parameter: _record(paths[parameter]["fit_first"]) for parameter in PARAMETERS},
+                          "candidate_quantitative_volumes": {parameter: _record(paths[parameter]["candidate"]) for parameter in PARAMETERS},
+                          "comparator_quantitative_volumes": {parameter: _record(paths[parameter]["comparator"]) for parameter in PARAMETERS},
+                          "formal_endpoint_selection": proposed_selection,
                           "sampling_masks": {parameter: {name: _record(paths[parameter][name]) for name in ("l100_mask", "sparse_mask")} for parameter in PARAMETERS},
                           "mask_interpolation": "nearest-neighbor world-coordinate", "prediction_interpolation": "linear world-coordinate", "support_equations": SUPPORT_EQUATIONS,
                           "no_training": True, "no_refitting": True, "no_reconstruction": True, "k1_diagnostic_used_for_quantitative_comparison": False,
                           "boundary_discrepancy_policy": "record sparse-mask membership outside L100 after nearest projection; do not modify masks"}
+        if proposed_export_root is None or proposed_selection.get("comparator", {}).get("method") == "Fit-first":
+            audit_manifest.update({
+                "proposed": audit_manifest["candidate_quantitative_volumes"],
+                "proposed_selection": proposed_selection,
+                "fit_first_fixed_l100": audit_manifest["comparator_quantitative_volumes"],
+            })
         write_immutable_json(staging / "manifest.json", audit_manifest)
         output_exists = output.exists()
         if output_exists: raise FileExistsError(f"refusing overwrite: {output}")
@@ -381,7 +428,11 @@ def main() -> None:
     parser.add_argument("--sparse-manifest", required=True); parser.add_argument("--r0-native-maps-root", required=True)
     parser.add_argument("--r1-real-root"); parser.add_argument("--mask-audit-root"); parser.add_argument("--output", required=True)
     parser.add_argument("--endpoint", choices=("central", "psf128"), default="psf128")
-    parser.add_argument("--proposed-export-root"); parser.add_argument("--fit-first-export-root")
+    parser.add_argument("--proposed-export-root")
+    comparator = parser.add_mutually_exclusive_group()
+    comparator.add_argument("--fit-first-export-root")
+    comparator.add_argument("--comparator-export-root")
+    parser.add_argument("--mask-reference-export-root")
     parser.add_argument("--proposed-label", default="Proposed"); parser.add_argument("--comparator-label", default="Fit-first fixed-L100 K128")
     print(run_l100_mask_paired_evaluation(**vars(parser.parse_args())))
 

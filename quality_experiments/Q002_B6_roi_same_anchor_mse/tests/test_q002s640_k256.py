@@ -114,3 +114,6 @@ def test_k256_cyj_server_wrappers_are_immutable_and_limit_the_requested_cases() 
     assert "Q002S640_K256" in run and "--anchor-batch-size 640" in run
     assert "alias-q002s640-k256" in aliases and "--endpoint central" in aliases and "--endpoint psf128" in aliases
     assert "FIT_FIRST_OR_Q002S640" in evaluate and "--endpoint" in evaluate
+    assert "MASK_REFERENCE_EXPORT_ROOT" in evaluate
+    assert "--comparator-export-root \"$COMPARATOR\"" in evaluate
+    assert "--mask-reference-export-root \"$MASK_REFERENCE\"" in evaluate
