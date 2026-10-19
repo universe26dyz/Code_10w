@@ -1,8 +1,7 @@
-"""Read-only L100-sampling-mask held-out evaluation for a sparse R1 run.
+"""Read-only formal fixed-L100 matched-output evaluation for sparse R1 runs.
 
-This is deliberately separate from the formal evaluator.  It compares the
-existing Proposed volume and the existing fixed-L100-mask K128 fit-first
-volume on native planes selected by the immutable sparse manifest.
+The legacy audit-root PSF128 path remains readable for provenance, while new
+formal endpoint roots enforce central-to-central or PSF128-to-PSF128 pairing.
 """
 from __future__ import annotations
 
@@ -21,6 +20,7 @@ from .contracts import sha256, write_immutable_json
 from .evaluation import _metrics, _world_sample, reproject_volume_to_native_plane
 from .fit_first import select_verified_native_cache_groups
 from .heldout import _heldout_ids
+from .matched_output import endpoint_contract, primary_decomposition_contract, require_matched_endpoints
 from .visualization import DISPLAY_RANGES_MS, RESIDUAL_RANGES_MS, colorbars
 
 
@@ -66,6 +66,41 @@ def resolve_formal_proposed_volumes(
         ),
         "formal_evaluation_wrapper": "phase2_clean/server_commands/evaluate_real_sparse_pilot.sh",
         "resolved_root": str(root.resolve()),
+    }
+
+
+def resolve_matched_endpoint_inputs(
+    proposed_export_root: str | Path, fit_first_export_root: str | Path, endpoint: str,
+) -> tuple[dict[str, dict[str, Path]], dict[str, Any]]:
+    """Resolve two formal endpoint roots and prove their manifest semantics match."""
+    proposed_root, fit_root = Path(proposed_export_root), Path(fit_first_export_root)
+    proposed_manifest, fit_manifest = proposed_root / "manifest.json", fit_root / "manifest.json"
+    for path in (proposed_manifest, fit_manifest):
+        if not path.is_file():
+            raise FileNotFoundError(f"formal matched endpoint manifest is missing: {path}")
+    proposed_payload = json.loads(proposed_manifest.read_text(encoding="utf-8"))
+    fit_payload = json.loads(fit_manifest.read_text(encoding="utf-8"))
+    requested = endpoint_contract(endpoint)
+    require_matched_endpoints(endpoint, proposed_payload.get("endpoint"))
+    require_matched_endpoints(endpoint, fit_payload.get("endpoint"))
+    paths: dict[str, dict[str, Path]] = {}
+    for parameter in PARAMETERS:
+        paths[parameter] = {
+            "proposed": proposed_root / f"{parameter.upper()}_3D.nii.gz",
+            "fit_first": fit_root / parameter / "volume_ms.nii.gz",
+            "l100_mask": fit_root / parameter / "query_effective_mask.nii.gz",
+            "sparse_mask": fit_root / parameter / "sparse_checkpoint_mask.nii.gz",
+        }
+        for path in paths[parameter].values():
+            if not path.is_file():
+                raise FileNotFoundError(path)
+    return paths, {
+        "selection": "formal_matched_endpoint_exports",
+        "endpoint": requested["endpoint"],
+        "proposed_manifest": _record(proposed_manifest),
+        "fit_first_manifest": _record(fit_manifest),
+        "proposed_root": str(proposed_root.resolve()),
+        "fit_first_root": str(fit_root.resolve()),
     }
 
 
@@ -217,25 +252,38 @@ def _git_sha() -> str | None:
 
 def run_l100_mask_paired_evaluation(*, subject: str, condition: str, r0_run_id: str, r1_run_id: str,
                                     sparse_manifest: str | Path, r0_native_maps_root: str | Path,
-                                    r1_real_root: str | Path, mask_audit_root: str | Path, output: str | Path) -> Path:
+                                    r1_real_root: str | Path | None, mask_audit_root: str | Path | None, output: str | Path,
+                                    endpoint: str = "psf128", proposed_export_root: str | Path | None = None,
+                                    fit_first_export_root: str | Path | None = None) -> Path:
     """Evaluate existing volumes only, atomically publishing a new audit directory."""
     import nibabel as nib
 
     output = require_new_output(output)
-    manifest_path, cache_root, audit_root = Path(sparse_manifest), Path(r0_native_maps_root), Path(mask_audit_root)
+    endpoint_spec = endpoint_contract(endpoint)
+    manifest_path, cache_root = Path(sparse_manifest), Path(r0_native_maps_root)
     sparse_manifest_payload = json.loads(manifest_path.read_text())
     if sparse_manifest_payload.get("subject") != subject or sparse_manifest_payload.get("condition") != condition.split("_")[0]:
         raise ValueError("subject/condition do not match the sparse manifest")
-    proposed_paths, proposed_selection = resolve_formal_proposed_volumes(r1_real_root, r1_run_id, subject, condition)
-    paths: dict[str, dict[str, Path]] = {}
-    for parameter in PARAMETERS:
-        paths[parameter] = {
-            "l100_mask": audit_root / parameter / "k1_reference_grid" / "l100_effective_mask_1mm.nii.gz",
-            "sparse_mask": audit_root / parameter / "k1_reference_grid" / "sparse_mask_on_l100_grid.nii.gz",
-            "fit_first": audit_root / parameter / "l100_mask" / "volume_ms.nii.gz", "proposed": proposed_paths[parameter],
-        }
-        for path in paths[parameter].values():
-            if not path.is_file(): raise FileNotFoundError(path)
+    if (proposed_export_root is None) != (fit_first_export_root is None):
+        raise ValueError("formal matched evaluation requires both Proposed and Fit-first endpoint roots")
+    if proposed_export_root is not None:
+        paths, proposed_selection = resolve_matched_endpoint_inputs(proposed_export_root, fit_first_export_root, endpoint)
+    else:
+        if endpoint != "psf128":
+            raise ValueError("legacy audit-root evaluation is PSF128-only; supply formal endpoint roots for central")
+        if r1_real_root is None or mask_audit_root is None:
+            raise ValueError("legacy audit-root evaluation requires r1_real_root and mask_audit_root")
+        proposed_paths, proposed_selection = resolve_formal_proposed_volumes(r1_real_root, r1_run_id, subject, condition)
+        audit_root = Path(mask_audit_root)
+        paths = {}
+        for parameter in PARAMETERS:
+            paths[parameter] = {
+                "l100_mask": audit_root / parameter / "k1_reference_grid" / "l100_effective_mask_1mm.nii.gz",
+                "sparse_mask": audit_root / parameter / "k1_reference_grid" / "sparse_mask_on_l100_grid.nii.gz",
+                "fit_first": audit_root / parameter / "l100_mask" / "volume_ms.nii.gz", "proposed": proposed_paths[parameter],
+            }
+            for path in paths[parameter].values():
+                if not path.is_file(): raise FileNotFoundError(path)
     images = {parameter: {name: nib.load(str(path)) for name, path in values.items()} for parameter, values in paths.items()}
     selected = {stack: select_verified_native_cache_groups(cache_root, manifest_path, stack, _heldout_ids(sparse_manifest_payload, stack)) for stack in ("2ch", "4ch")}
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -283,28 +331,33 @@ def run_l100_mask_paired_evaluation(*, subject: str, condition: str, r0_run_id: 
                         render_summary_triptych(parameter, reference, proposed, fit_first, regions["recovered_only"], sparse, root / "summary_representative_recovered_only.png", title=f"{subject} {condition} {parameter.upper()} representative {stack} group {int(group)}; L100 minus sparse")
                         representative_rendered.add(parameter)
                     per_plane.append(plane)
-        aggregate: dict[str, Any] = {"statistical_unit": "subject; voxel-pooled held-out native-plane values, not per-plane means", "regions": {}, "mask_coverage": {}}
+        aggregate: dict[str, Any] = {"statistical_unit": "subject; voxel-pooled held-out native-plane values, not per-plane means", "endpoint": endpoint_spec["endpoint"], "regions": {}, "mask_coverage": {}, "primary_decomposition": {}}
         for (parameter, stack, region), item in pooled.items():
             section = aggregate["regions"].setdefault(parameter, {}).setdefault(stack, {})
             proposed_metrics = _pooled_metrics(item["reference"], item["proposed"], item["native_total"])
             fit_metrics = _pooled_metrics(item["reference"], item["fit_first"], item["native_total"])
             section[region] = {"proposed": proposed_metrics, "fit_first": fit_metrics, "paired_deltas": _delta(proposed_metrics, fit_metrics)}
         for (parameter, stack), values in coverage_pooled.items():
-            aggregate["mask_coverage"].setdefault(parameter, {})[stack] = pooled_mask_coverage(values)
+            coverage = pooled_mask_coverage(values)
+            aggregate["mask_coverage"].setdefault(parameter, {})[stack] = coverage
+            aggregate["primary_decomposition"].setdefault(parameter, {})[stack] = primary_decomposition_contract(
+                coverage["l100_native_mask_voxels_within_source"], coverage["sparse_not_l100_boundary_discrepancy_voxels"]
+            )
         summary_rows = []
         for parameter, stacks in aggregate["regions"].items():
             for stack, regions in stacks.items():
                 for region, metrics in regions.items():
                     for method in ("proposed", "fit_first"):
                         summary_rows.append({"scope": "subject_voxel_pooled", "parameter": parameter, "stack": stack, "region": region, "method": method, **metrics[method]})
+                    summary_rows.append({"scope": "subject_voxel_pooled", "parameter": parameter, "stack": stack, "region": region, "method": "proposed_minus_fit_first", **metrics["paired_deltas"]})
         with (staging / "summary.csv").open("w", newline="") as handle:
             fields = sorted({key for row in summary_rows for key in row}); writer = csv.DictWriter(handle, fieldnames=fields); writer.writeheader(); writer.writerows(summary_rows)
         write_immutable_json(staging / "per_plane_metrics.json", {"subject": subject, "condition": condition, "planes": per_plane, "support_equations": SUPPORT_EQUATIONS})
         write_immutable_json(staging / "aggregate_metrics.json", aggregate)
-        audit_manifest = {"git_sha": _git_sha(), "subject": subject, "condition": condition, "r0_run_id": r0_run_id, "r1_run_id": r1_run_id,
+        audit_manifest = {"git_sha": _git_sha(), "subject": subject, "condition": condition, "r0_run_id": r0_run_id, "r1_run_id": r1_run_id, "endpoint": endpoint_spec["endpoint"], "output_query_psf": endpoint_spec["output_query_psf"],
                           "native_reference": {stack: cache["provenance"] for stack, cache in selected.items()}, "sparse_manifest": _record(manifest_path),
                           "proposed": {parameter: _record(paths[parameter]["proposed"]) for parameter in PARAMETERS}, "proposed_selection": proposed_selection,
-                          "fit_first_fixed_l100_k128": {parameter: _record(paths[parameter]["fit_first"]) for parameter in PARAMETERS},
+                          "fit_first_fixed_l100": {parameter: _record(paths[parameter]["fit_first"]) for parameter in PARAMETERS},
                           "sampling_masks": {parameter: {name: _record(paths[parameter][name]) for name in ("l100_mask", "sparse_mask")} for parameter in PARAMETERS},
                           "mask_interpolation": "nearest-neighbor world-coordinate", "prediction_interpolation": "linear world-coordinate", "support_equations": SUPPORT_EQUATIONS,
                           "no_training": True, "no_refitting": True, "no_reconstruction": True, "k1_diagnostic_used_for_quantitative_comparison": False,
@@ -323,7 +376,9 @@ def main() -> None:
     parser.add_argument("--subject", required=True); parser.add_argument("--condition", required=True)
     parser.add_argument("--r0-run-id", required=True); parser.add_argument("--r1-run-id", required=True)
     parser.add_argument("--sparse-manifest", required=True); parser.add_argument("--r0-native-maps-root", required=True)
-    parser.add_argument("--r1-real-root", required=True); parser.add_argument("--mask-audit-root", required=True); parser.add_argument("--output", required=True)
+    parser.add_argument("--r1-real-root"); parser.add_argument("--mask-audit-root"); parser.add_argument("--output", required=True)
+    parser.add_argument("--endpoint", choices=("central", "psf128"), default="psf128")
+    parser.add_argument("--proposed-export-root"); parser.add_argument("--fit-first-export-root")
     print(run_l100_mask_paired_evaluation(**vars(parser.parse_args())))
 
 

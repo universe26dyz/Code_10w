@@ -108,3 +108,20 @@ def test_posthoc_module_does_not_train_refit_or_reconstruct() -> None:
     source = Path(audit.__file__).read_text(encoding="utf-8")
     assert '"no_training": True' in source and '"no_refitting": True' in source and '"no_reconstruction": True' in source
     assert "nesvor reconstruct" not in source and "train(" not in source
+
+
+def test_formal_endpoint_inputs_refuse_manifest_mismatch(tmp_path: Path) -> None:
+    proposed = tmp_path / "proposed"; fit_first = tmp_path / "fit_first"
+    proposed.mkdir(); fit_first.mkdir()
+    (proposed / "manifest.json").write_text('{"endpoint": "central"}', encoding="utf-8")
+    (fit_first / "manifest.json").write_text('{"endpoint": "psf128"}', encoding="utf-8")
+    with pytest.raises(ValueError, match="endpoint mismatch"):
+        audit.resolve_matched_endpoint_inputs(proposed, fit_first, "central")
+
+
+def test_boundary_discrepancy_only_allows_exact_primary_decomposition_at_zero() -> None:
+    exact = audit.primary_decomposition_contract(10, 0)
+    inexact = audit.primary_decomposition_contract(10, 1)
+    assert exact["decomposition_exact"] is True
+    assert inexact["decomposition_exact"] is False
+    assert inexact["primary_region"] == "l100_full"
