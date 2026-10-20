@@ -706,7 +706,15 @@ def _render_native_stack(config: Mapping[str, Any], output: Path, inputs: dict[s
         method_sources: dict[str, tuple[str, Any]] = {}
         for method in methods:
             configured = config["methods"][method]
-            if "native_bundle" in configured:
+            if "fit_first_native_bundle" in configured:
+                root = Path(configured["fit_first_native_bundle"])
+                manifest_path = root / "manifest.json"
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                if manifest.get("schema") != "fit_first_native_prediction_bundle/v1":
+                    raise ValueError(f"{method}: Fit-first final-pose bundle schema mismatch")
+                method_sources[method] = ("fit_first_native_bundle", root)
+                inputs.setdefault(f"{method}_fit_first_native_bundle_manifest", _file_record(manifest_path))
+            elif "native_bundle" in configured:
                 root = Path(configured["native_bundle"])
                 manifest_path = root / "manifest.json"
                 manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -738,6 +746,14 @@ def _render_native_stack(config: Mapping[str, Any], output: Path, inputs: dict[s
                     if values.shape != source_support.shape:
                         raise ValueError(f"{plane_path}: native plane shape does not match current reference")
                     valid = np.isfinite(values)
+                elif kind == "fit_first_native_bundle":
+                    plane_path = source / "planes" / parameter / stack / f"group{group:03d}.npz"
+                    with np.load(plane_path, allow_pickle=False) as bundle:
+                        if not {"prediction_ms", "valid"}.issubset(bundle.files):
+                            raise ValueError(f"{plane_path}: missing Fit-first prediction_ms/valid")
+                        values, valid = np.asarray(bundle["prediction_ms"], float), np.asarray(bundle["valid"], bool)
+                    if values.shape != source_support.shape or valid.shape != source_support.shape:
+                        raise ValueError(f"{plane_path}: final-pose native plane shape does not match current reference")
                 else:
                     image = source
                     values, valid = reproject_volume_to_native_plane(image.get_fdata(), image.affine, affine, source_support.shape)
@@ -779,8 +795,13 @@ def render_final_figures(config_path: str | Path, output: str | Path) -> Path:
     for method, maps in config["methods"].items():
         if method not in METHODS and method != "Fit-first":
             raise ValueError(f"unsupported method label: {method}")
-        if set(maps) not in (set(PARAMETERS), {"native_bundle"}, set(PARAMETERS) | {"native_bundle"}):
-            raise ValueError(f"{method} must provide t1/t2 maps, native_bundle, or both")
+        allowed = set(PARAMETERS) | {"native_bundle", "fit_first_native_bundle"}
+        if not set(maps).issubset(allowed) or not set(maps):
+            raise ValueError(f"{method} contains unsupported map/bundle keys")
+        if not (set(PARAMETERS).issubset(maps) or "native_bundle" in maps or "fit_first_native_bundle" in maps):
+            raise ValueError(f"{method} must provide t1/t2 maps or a native bundle")
+        if method == "Fit-first" and "fit_first_native_bundle" not in maps:
+            raise ValueError("formal Fit-first figures require fit_first_native_bundle; R0 volume reprojection is not a formal endpoint")
     if "native" not in config or "longitudinal" not in config or "l100_masks" not in config:
         raise ValueError("figure config requires longitudinal, native, and frozen L100-mask inputs")
     output.parent.mkdir(parents=True, exist_ok=True)

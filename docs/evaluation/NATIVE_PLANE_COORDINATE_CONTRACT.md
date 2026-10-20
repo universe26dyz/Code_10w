@@ -1,28 +1,38 @@
-# Native-plane coordinate contract
+# Native-plane evaluation coordinate contract
 
-## Proposed Q002/Q004
+## Proposed / Q002 / Q004
 
-The native pixel lattice is converted to the historical centred local grid,
-then `space.local_to_train`, then the checkpoint's final learned rigid pose.
-The resulting `world_train` coordinates are the only inputs to `model.inr`.
-The original R0/native affine must not replace that learned pose.
+The native pixel lattice is converted through the historical local grid and
+`space.local_to_train` into the checkpoint's final learned rigid pose:
 
-Central prediction is `model.inr(world_train)`.  PSF128 first converts the
-same centre with `space.train_ras_to_physical`, adds the frozen formal K=128
-physical-RAS Gaussian offsets, converts samples with
-`space.physical_ras_to_train`, evaluates the INR, and averages T1/T2 in map
-domain.  A physical-RAS NIfTI audit sample must convert `world_train` with
-`space.train_ras_to_physical` before applying its affine.
+`native pixels -> local grid -> local_to_train -> final learned pose -> INR(world_train)`.
+
+Central prediction evaluates that coordinate directly. PSF128 converts the
+same centre with `train_ras_to_physical`, applies the frozen physical-RAS
+Gaussian offsets, maps them back through `physical_ras_to_train`, then queries
+and averages T1/T2 in map domain. A physical-RAS NIfTI audit must first convert
+`world_train` with `train_ras_to_physical`; training-space coordinates must
+never be passed to a physical NIfTI affine.
 
 ## Fit-first
 
-Fit-first runs NeSVoR with stack registration and transformation optimization.
-For each parameter and original group, its final native-plane geometry is the
-matching `nesvor/<parameter>/slices/<output-index>.nii.gz` affine emitted by
-`--output-slices`.  `model.pt` is checkpoint provenance, not a per-slice pose
-table.  R0 geometry may be used only when the immutable pose audit proves the
-two complete voxel geometries mathematically identical.
+The R0/native affine defines reference pixel ordering, but the independent
+T1/T2 NeSVoR reconstructions use their parameter-specific final
+`--output-slices` pose. The immutable endpoint is:
 
-Historical SCMR `registered_ms` and `synthetic_ms` are likewise represented on
-parameter-specific final registered slice geometry.  Fit-first and SCMR must
-not silently substitute the original native affine for those final poses.
+`original [row,col] -> proven NeSVoR I/O reindex/flip -> final T1 or T2 pose -> physical RAS -> volume_ms -> original [row,col]`.
+
+`model.pt` is checkpoint provenance, not a per-slice pose store. Output-slice
+values validate I/O correspondence; predictions are sampled from `volume_ms`.
+Historical SCMR `registered_ms`/`synthetic_ms` likewise use parameter-specific
+registered final geometry.
+
+> 配准与 pose 优化会影响重建本身；若在最终评估端点改用 R0 affine，便会造成重建 pose 与评估 plane 不一致。
+
+Before a Fit-first final-pose bundle can be built, audit v2 must pass
+`RECONSTRUCTION_INPUT_GEOMETRY_VALID`: R0 geometry and exact NeSVoR
+`load_stack`/`affine2transformation` initial geometry agree after recorded
+reindexing, spacing, corner/centre and normalized-value checks. A raw affine
+difference is only an axis-convention diagnostic, not evidence of motion. A
+real mismatch records `RECONSTRUCTION_INPUT_GEOMETRY_MISMATCH`, fails closed,
+and does not alter reconstruction, training, or formal metrics.

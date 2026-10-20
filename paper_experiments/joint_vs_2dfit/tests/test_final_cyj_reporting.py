@@ -159,6 +159,29 @@ def test_native_mosaic_reads_proposed_direct_native_bundle_without_volume_reproj
     assert calls == ["fit", "fit"]
 
 
+def test_native_mosaic_reads_fit_first_final_pose_bundle_without_r0_reprojection(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from paper_experiments.joint_vs_2dfit.phase2_clean import final_cyj_reporting as reporting
+
+    sparse_manifest = tmp_path / "sparse.json"
+    sparse_manifest.write_text(json.dumps({"condition": "L100", "stacks": {"2ch": {}}}), encoding="utf-8")
+    mask = _nifti(tmp_path / "mask.nii.gz", np.ones((2, 3, 2)), np.eye(4))
+    fit = tmp_path / "fit_bundle"
+    for parameter, value in (("t1", 777.0), ("t2", 66.0)):
+        target = fit / "planes" / parameter / "2ch"; target.mkdir(parents=True)
+        np.savez_compressed(target / "group003.npz", prediction_ms=np.full((2, 3), value), valid=np.ones((2, 3), bool))
+    (fit / "manifest.json").write_text(json.dumps({"schema": "fit_first_native_prediction_bundle/v1"}), encoding="utf-8")
+    cache_files = [tmp_path / name for name in ("native_maps.npz", "geometry.npz", "native_manifest.json")]
+    for path in cache_files: path.write_bytes(b"cache")
+    selected = {"group_idx": np.array([3]), "source_support": np.ones((1, 2, 3), bool), "affine_lps_rc": np.eye(4)[None], "pixel_spacing_rc_mm": np.ones((1, 2)), "t1_ms": np.full((1, 2, 3), 1000.0), "t2_ms": np.full((1, 2, 3), 80.0), "provenance": dict(zip(("native_maps_path", "geometry_path", "manifest_path"), map(str, cache_files)))}
+    monkeypatch.setattr(reporting, "_heldout_ids", lambda sparse, stack: [3]); monkeypatch.setattr(reporting, "select_verified_native_cache_groups", lambda *args: selected)
+    monkeypatch.setattr(reporting, "reproject_binary_mask_to_native_plane", lambda *args: np.ones((2, 3), bool))
+    monkeypatch.setattr(reporting, "reproject_volume_to_native_plane", lambda *args: pytest.fail("formal Fit-first endpoint must not reproject R0 affine"))
+    rendered: list[object] = []; monkeypatch.setattr(reporting, "_plot_native_mosaic", lambda path, rows, *, title: rendered.append(rows))
+    config = {"subject": "CYJ", "condition": "L100_fold0", "endpoint": "central", "methods": {"Fit-first": {"fit_first_native_bundle": str(fit)}}, "l100_masks": {"t1": str(mask), "t2": str(mask)}, "native": {"mode": "all_groups", "stack": "2ch", "sparse_manifest": str(sparse_manifest), "r0_native_maps_root": str(tmp_path)}}
+    reporting._render_native(config, tmp_path, {})
+    assert next(panel for panel in rendered[0][0]["panels"] if panel["label"] == "Fit-first")["values"][0, 0] == 777.0
+
+
 def _nifti(path: Path, values: np.ndarray, affine: np.ndarray) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     nib.save(nib.Nifti1Image(values.astype(np.float32), affine), path)

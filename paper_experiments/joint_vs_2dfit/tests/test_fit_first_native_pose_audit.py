@@ -1,4 +1,4 @@
-"""CPU contract for frozen Fit-first final-NeSVoR native-pose provenance."""
+"""CPU regression coverage for the Fit-first final-pose contract."""
 from __future__ import annotations
 
 import json
@@ -6,39 +6,74 @@ from pathlib import Path
 
 import nibabel as nib
 import numpy as np
+import pytest
 
-from paper_experiments.joint_vs_2dfit.phase2_clean import fit_first_native_pose_audit as audit
-
-
-def _volume(path: Path, affine: np.ndarray) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    nib.save(nib.Nifti1Image(np.ones((2, 3, 1), dtype=np.float32), affine), path)
+from paper_experiments.joint_vs_2dfit.phase2_clean.fit_first_native_bundles import build_fit_first_native_prediction_bundle
+from paper_experiments.joint_vs_2dfit.phase2_clean.fit_first_native_pose_audit import audit_fit_first_native_poses
 
 
-def test_audit_maps_each_original_group_to_final_output_slice_and_rejects_r0_fallback(tmp_path: Path) -> None:
-    baseline, r0 = tmp_path / "baseline", tmp_path / "r0"
-    group_ids = {"sax": [5], "2ch": [2], "4ch": [8]}
-    for stack, groups in group_ids.items():
-        native = baseline / "native_maps" / stack; native.mkdir(parents=True)
-        np.savez_compressed(native / "native_maps.npz", group_idx=np.asarray(groups, dtype=np.int64), t1_ms=np.ones((len(groups), 2, 3), dtype=np.float32))
-        inputs = baseline / "nesvor_inputs" / stack; inputs.mkdir(parents=True)
-        (inputs / "manifest.json").write_text(json.dumps({"group_idx": groups}), encoding="utf-8")
-        cache = r0 / stack; cache.mkdir(parents=True)
-        np.savez_compressed(cache / "geometry.npz", affine_lps_rc=np.eye(4)[None])
-        np.savez_compressed(cache / "native_maps.npz", group_idx=np.asarray(groups, dtype=np.int64), t1_ms=np.ones((len(groups), 2, 3), dtype=np.float32))
+def _write_case(root: Path, r0: Path, *, final_translation: float = 2.0, negative_det: bool = False) -> None:
+    groups = {"sax": [5], "2ch": [2], "4ch": [8]}
+    ras = np.eye(4, dtype=float)
+    if negative_det:
+        ras[0, 0] = -1.0
+    lps = np.diag([-1.0, -1.0, 1.0, 1.0]) @ ras
+    for stack, ids in groups.items():
+        maps_root, r0_stack = root / "native_maps" / stack, r0 / stack
+        maps_root.mkdir(parents=True); r0_stack.mkdir(parents=True)
+        t1 = np.array([[[1000, 1100, np.nan], [1200, 1300, 1400]]], np.float32)
+        t2 = np.array([[[100, 110, np.nan], [120, 130, 140]]], np.float32)
+        np.savez_compressed(maps_root / "native_maps.npz", group_idx=np.asarray(ids), t1_ms=t1, t2_ms=t2)
+        np.savez_compressed(r0_stack / "native_maps.npz", group_idx=np.asarray(ids), t1_ms=t1, t2_ms=t2)
+        np.savez_compressed(r0_stack / "geometry.npz", affine_lps_rc=lps[None])
+        inputs = root / "nesvor_inputs" / stack
+        inputs.mkdir(parents=True); (inputs / "manifest.json").write_text(json.dumps({"group_idx": ids}), encoding="utf-8")
+        for parameter, raw, scale in (("t1", t1, 2500), ("t2", t2, 200)):
+            values = np.where(np.isfinite(raw), raw / scale, 0.0)[0]
+            (inputs / parameter).mkdir(exist_ok=True)
+            nib.save(nib.Nifti1Image(values[:, :, None], ras), inputs / parameter / "stack.nii.gz")
     for parameter in ("t1", "t2"):
-        root = baseline / "nesvor" / parameter; (root / "slices").mkdir(parents=True)
-        (root / "result.json").write_text(json.dumps({"registration": "stack", "no_transformation_optimization": False}), encoding="utf-8")
-        (root / "model.pt").write_bytes(b"checkpoint")
-        for index in range(3):
-            affine = np.eye(4); affine[0, 3] = 10.0 + index
-            _volume(root / "slices" / f"{index}.nii.gz", affine)
+        nesvor = root / "nesvor" / parameter; (nesvor / "slices").mkdir(parents=True)
+        (nesvor / "result.json").write_text(json.dumps({"registration": "stack", "no_transformation_optimization": False}), encoding="utf-8")
+        (nesvor / "model.pt").write_bytes(b"checkpoint")
+        volume = np.indices((12, 12, 12), dtype=np.float32)[0] + (100 if parameter == "t1" else 10)
+        nib.save(nib.Nifti1Image(volume, np.eye(4)), nesvor / "volume_ms.nii.gz")
+        for index, stack in enumerate(("sax", "2ch", "4ch")):
+            raw = np.load(r0 / stack / "native_maps.npz")[f"{parameter}_ms"][0]
+            values = np.where(np.isfinite(raw), raw / (2500 if parameter == "t1" else 200), 0.0)
+            if negative_det:
+                # save_nii_volume writes the internal row axis after the
+                # affine2transformation negative-determinant flip.
+                values = values[::-1]
+            final = ras.copy(); final[0, 3] = final_translation + (0.25 if parameter == "t2" else 0.0)
+            nib.save(nib.Nifti1Image(values[:, :, None], final), nesvor / "slices" / f"{index}.nii.gz")
 
-    output = audit.audit_fit_first_native_poses(baseline_root=baseline, r0_native_maps_root=r0, output=tmp_path / "audit")
+
+@pytest.mark.parametrize("negative_det", [False, True])
+def test_audit_separates_representation_flip_from_true_final_motion(tmp_path: Path, negative_det: bool) -> None:
+    baseline, r0 = tmp_path / "baseline", tmp_path / "r0"
+    _write_case(baseline, r0, negative_det=negative_det)
+    output = audit_fit_first_native_poses(baseline_root=baseline, r0_native_maps_root=r0, output=tmp_path / "audit")
     manifest = json.loads((output / "manifest.json").read_text(encoding="utf-8"))
-    records = manifest["parameters"]["t1"]["groups"]
-    assert [(row["stack"], row["original_group_idx"], row["output_slice_index"]) for row in records] == [("sax", 5, 0), ("2ch", 2, 1), ("4ch", 8, 2)]
-    assert all(row["authoritative_geometry"] == "nesvor_output_slices_final_optimized_affine" for row in records)
-    assert all(row["r0_affine_mathematically_equivalent"] is False for row in records)
-    assert manifest["fit_first_endpoint_policy"] == "must_use_final_nesvor_output_slices_unless_equivalence_is_proven"
-    assert not (output / "metrics.json").exists()
+    assert manifest["reconstruction_input_geometry_gate"]["status"] == "RECONSTRUCTION_INPUT_GEOMETRY_VALID"
+    record = manifest["parameters"]["t1"]["groups"][0]
+    assert record["r0_vs_initial"]["status"] == "PASS_REPRESENTATION_EQUIVALENT"
+    assert record["reindex_flip"]["flip_original_row"] is negative_det
+    assert record["initial_vs_final"]["center_displacement_mm"] == pytest.approx(2.0)
+    assert record["t1_final_vs_t2_final"]["center_displacement_mm"] == pytest.approx(.25)
+    assert record["raw_affine_diagnostic"]["raw_affine_axis_convention_difference_not_motion"]
+
+
+def test_bundle_uses_volume_not_output_slice_and_refuses_invalid_gate(tmp_path: Path) -> None:
+    baseline, r0 = tmp_path / "baseline", tmp_path / "r0"
+    _write_case(baseline, r0)
+    audit_root = audit_fit_first_native_poses(baseline_root=baseline, r0_native_maps_root=r0, output=tmp_path / "audit")
+    bundle = build_fit_first_native_prediction_bundle(audit_root=audit_root, baseline_root=baseline, r0_native_maps_root=r0, output=tmp_path / "bundle")
+    with np.load(bundle / "planes" / "t1" / "sax" / "group005.npz") as plane:
+        assert np.allclose(plane["prediction_ms"], [[102, 102, 102], [103, 103, 103]])
+        assert plane["valid"].all()
+    audit = json.loads((audit_root / "manifest.json").read_text(encoding="utf-8"))
+    audit["reconstruction_input_geometry_gate"]["status"] = "RECONSTRUCTION_INPUT_GEOMETRY_MISMATCH"
+    (audit_root / "manifest.json").write_text(json.dumps(audit), encoding="utf-8")
+    with pytest.raises(ValueError, match="RECONSTRUCTION_INPUT_GEOMETRY_MISMATCH"):
+        build_fit_first_native_prediction_bundle(audit_root=audit_root, baseline_root=baseline, r0_native_maps_root=r0, output=tmp_path / "rejected")

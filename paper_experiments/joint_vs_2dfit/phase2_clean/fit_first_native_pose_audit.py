@@ -1,4 +1,8 @@
-"""Read-only provenance audit for Fit-first final NeSVoR native-plane geometry."""
+"""Fail-closed provenance audit for Fit-first final-NeSVoR native planes.
+
+This does not reconstruct, train, render, or modify metrics. It proves the
+geometry bridge needed before a final-pose volume endpoint is allowed.
+"""
 from __future__ import annotations
 
 import argparse
@@ -11,95 +15,170 @@ from typing import Any
 import numpy as np
 
 from .contracts import sha256, write_immutable_json
-
+from .fit_first_native_geometry import (
+    initial_world_grid_original_order,
+    load_final_output_slices,
+    load_initial_stack_slices,
+    negative_determinant_reindex,
+    pose_delta,
+)
 
 STACKS = ("sax", "2ch", "4ch")
 PARAMETERS = ("t1", "t2")
+_SCALE = {"t1": 2500.0, "t2": 200.0}
+_TOL_MM, _TOL_VALUE = 1e-4, 1e-5
 
 
 def _record(path: Path) -> dict[str, str]:
     return {"path": str(path.resolve()), "sha256": sha256(path)}
 
 
-def _final_slice_paths(root: Path) -> list[Path]:
+def _slice_paths(root: Path) -> list[Path]:
     paths = sorted((root / "slices").glob("[0-9]*.nii.gz"), key=lambda path: int(path.name.split(".", 1)[0]))
-    if not paths:
-        raise FileNotFoundError(f"missing NeSVoR --output-slices under {root / 'slices'}")
     observed = [int(path.name.split(".", 1)[0]) for path in paths]
-    if observed != list(range(len(paths))):
-        raise ValueError(f"NeSVoR output-slices must be contiguous zero-based IDs, got {observed}")
+    if not paths or observed != list(range(len(paths))):
+        raise ValueError(f"{root}: --output-slices must be contiguous zero-based NIfTI IDs")
     return paths
 
 
-def _original_groups(baseline_root: Path) -> list[tuple[str, int, int]]:
-    """Recover the stable NeSVoR input-stack order from exported group manifests."""
-    result: list[tuple[str, int, int]] = []
+def _ordered_groups(baseline_root: Path) -> list[tuple[str, int, int]]:
+    records: list[tuple[str, int, int]] = []
     output_index = 0
     for stack in STACKS:
-        input_manifest = baseline_root / "nesvor_inputs" / stack / "manifest.json"
-        native_maps = baseline_root / "native_maps" / stack / "native_maps.npz"
-        if not input_manifest.is_file() or not native_maps.is_file():
-            raise FileNotFoundError(f"{stack}: missing immutable NeSVoR input/group provenance")
-        declared = [int(value) for value in json.loads(input_manifest.read_text(encoding="utf-8")).get("group_idx", [])]
-        with np.load(native_maps, allow_pickle=False) as maps:
-            actual = [int(value) for value in maps["group_idx"]]
-        if declared != actual or len(declared) != len(set(declared)):
-            raise ValueError(f"{stack}: NeSVoR input group order is not proven by native-map provenance")
-        for group in declared:
-            result.append((stack, group, output_index)); output_index += 1
-    return result
+        path = baseline_root / "nesvor_inputs" / stack / "manifest.json"
+        if not path.is_file():
+            raise FileNotFoundError(f"{stack}: missing exported NeSVoR input manifest")
+        groups = [int(value) for value in json.loads(path.read_text(encoding="utf-8")).get("group_idx", [])]
+        if not groups or len(groups) != len(set(groups)):
+            raise ValueError(f"{stack}: immutable export group order is absent or ambiguous")
+        for group in groups:
+            records.append((stack, group, output_index))
+            output_index += 1
+    return records
 
 
-def _r0_geometry(r0_root: Path, stack: str, group: int) -> tuple[np.ndarray, tuple[int, int, int]]:
-    geometry_path, maps_path = r0_root / stack / "geometry.npz", r0_root / stack / "native_maps.npz"
-    with np.load(geometry_path, allow_pickle=False) as geometry, np.load(maps_path, allow_pickle=False) as maps:
+def _r0(root: Path, stack: str, group: int, parameter: str) -> tuple[np.ndarray, np.ndarray]:
+    with np.load(root / stack / "geometry.npz", allow_pickle=False) as geometry, np.load(root / stack / "native_maps.npz", allow_pickle=False) as maps:
         groups = [int(value) for value in maps["group_idx"]]
         if groups.count(group) != 1:
-            raise ValueError(f"{stack}: R0 geometry lacks original group {group}")
+            raise ValueError(f"{stack}: R0 lacks exactly one original group {group}")
         index = groups.index(group)
-        affine_lps_rc = np.asarray(geometry["affine_lps_rc"][index], float)
-        shape_rc = tuple(int(value) for value in np.asarray(maps["t1_ms"])[index].shape)
-    affine_ras_rc = np.diag([-1.0, -1.0, 1.0, 1.0]) @ affine_lps_rc
-    return affine_ras_rc, (*shape_rc, 1)
+        values = np.asarray(maps[f"{parameter}_ms"][index], float)
+        affine_lps = np.asarray(geometry["affine_lps_rc"][index], float)
+    return np.diag([-1.0, -1.0, 1.0, 1.0]) @ affine_lps, values
 
 
-def _equivalent_r0_and_final(r0_affine_ras: np.ndarray, r0_shape: tuple[int, int, int], final_affine_ras: np.ndarray, final_shape: tuple[int, ...]) -> bool:
-    """Deliberately strict: a fallback is allowed only for identical voxel geometry."""
-    return tuple(final_shape) == tuple(r0_shape) and bool(np.allclose(r0_affine_ras, final_affine_ras, rtol=0.0, atol=1e-5))
+def _r0_world(affine: np.ndarray, shape: tuple[int, int]) -> np.ndarray:
+    rows, cols = np.indices(shape, dtype=float)
+    voxels = np.stack((rows, cols, np.zeros_like(rows), np.ones_like(rows)), axis=0)
+    return (affine @ voxels.reshape(4, -1)).reshape(4, *shape)
+
+
+def _normalised(values_ms: np.ndarray, parameter: str) -> np.ndarray:
+    values = np.asarray(values_ms, np.float32) / _SCALE[parameter]
+    return np.where(np.isfinite(values), values, 0.0)
+
+
+def _initial_values_original_order(initial: Any, shape: tuple[int, int], flip_row: bool) -> np.ndarray:
+    values = initial.image.squeeze(0).detach().cpu().numpy()  # internal [col,row]
+    rows, cols = np.indices(shape)
+    return values[cols, shape[0] - 1 - rows if flip_row else rows]
+
+
+def _final_values_original_order(path: Path, shape: tuple[int, int], flip_row: bool) -> np.ndarray:
+    import nibabel as nib
+
+    values = np.asarray(nib.load(str(path)).get_fdata(), float)
+    if values.shape != (*shape, 1):
+        raise ValueError(f"{path}: final output-slice shape {values.shape} does not preserve source {(*shape, 1)}")
+    rows, cols = np.indices(shape)
+    return values[shape[0] - 1 - rows if flip_row else rows, cols, 0]
+
+
+def _max_error(a: np.ndarray, b: np.ndarray) -> float:
+    return float(np.max(np.abs(np.asarray(a, float) - np.asarray(b, float))))
+
+
+def _result_proves_pose_optimisation(path: Path) -> None:
+    result = json.loads(path.read_text(encoding="utf-8"))
+    args = result.get("args", result)
+    registration = args.get("registration", result.get("registration"))
+    disabled = args.get("no_transformation_optimization", result.get("no_transformation_optimization"))
+    if registration != "stack" or disabled is not False:
+        raise ValueError(f"{path}: does not prove --registration stack with transformation optimisation enabled")
 
 
 def audit_fit_first_native_poses(*, baseline_root: str | Path, r0_native_maps_root: str | Path, output: str | Path) -> Path:
-    """Freeze final optimized NeSVoR geometry; never compute or overwrite metrics."""
+    """Audit representation changes separately from true final rigid motion."""
     import nibabel as nib
 
-    baseline_root, r0_native_maps_root, output = Path(baseline_root), Path(r0_native_maps_root), Path(output)
+    baseline_root, r0_root, output = Path(baseline_root), Path(r0_native_maps_root), Path(output)
     if output.exists():
         raise FileExistsError(f"refusing overwrite: {output}")
-    ordered_groups = _original_groups(baseline_root)
+    ordered = _ordered_groups(baseline_root)
     output.parent.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(prefix=f".{output.name}.staging-", dir=output.parent))
     try:
         parameters: dict[str, Any] = {}
+        gate_failures: list[str] = []
+        finals_by_parameter: dict[str, list[Any]] = {}
         for parameter in PARAMETERS:
             root = baseline_root / "nesvor" / parameter
             result_path, model_path = root / "result.json", root / "model.pt"
             if not result_path.is_file() or not model_path.is_file():
-                raise FileNotFoundError(f"{parameter}: missing NeSVoR result.json/model.pt")
-            result = json.loads(result_path.read_text(encoding="utf-8"))
-            if result.get("registration") != "stack" or result.get("no_transformation_optimization") is not False:
-                raise ValueError(f"{parameter}: result.json does not prove final stack transformation optimization")
-            slices = _final_slice_paths(root)
-            if len(slices) != len(ordered_groups):
-                raise ValueError(f"{parameter}: output-slices count does not match immutable input group lattice")
+                raise FileNotFoundError(f"{parameter}: result.json/model.pt required for provenance")
+            _result_proves_pose_optimisation(result_path)
+            final_paths, finals = _slice_paths(root), load_final_output_slices(root / "slices")
+            if len(final_paths) != len(ordered) or len(finals) != len(ordered):
+                raise ValueError(f"{parameter}: output-slices do not match complete original group lattice")
+            initials = {stack: load_initial_stack_slices(baseline_root / "nesvor_inputs" / stack / parameter / "stack.nii.gz") for stack in STACKS}
+            local_group_order = {stack: [group for name, group, _ in ordered if name == stack] for stack in STACKS}
+            descriptors: dict[str, dict[str, Any]] = {}
+            for stack in STACKS:
+                first_group = local_group_order[stack][0]
+                _, values = _r0(r0_root, stack, first_group, parameter)
+                descriptors[stack] = negative_determinant_reindex(baseline_root / "nesvor_inputs" / stack / parameter / "stack.nii.gz", tuple(values.shape))
             groups: list[dict[str, Any]] = []
-            for stack, group, output_index in ordered_groups:
-                final_slice = slices[output_index]
-                image = nib.load(str(final_slice))
-                r0_affine, r0_shape = _r0_geometry(r0_native_maps_root, stack, group)
-                equivalent = _equivalent_r0_and_final(r0_affine, r0_shape, np.asarray(image.affine, float), tuple(image.shape))
-                groups.append({"stack": stack, "original_group_idx": group, "output_slice_index": output_index, "authoritative_geometry": "nesvor_output_slices_final_optimized_affine", "final_output_slice": _record(final_slice), "final_shape_xyz": list(image.shape), "final_affine_ras_mm": np.asarray(image.affine, float).tolist(), "r0_shape_rc1": list(r0_shape), "r0_affine_ras_mm": r0_affine.tolist(), "r0_affine_mathematically_equivalent": equivalent, "fallback_rule": "R0/native affine is prohibited unless this record is mathematically equivalent"})
-            parameters[parameter] = {"result": _record(result_path), "model": _record(model_path), "model_pose_role": "model.pt is checkpoint provenance; per-group final geometry is authoritatively encoded by --output-slices NIfTI affines", "groups": groups}
-        write_immutable_json(staging / "manifest.json", {"schema": "fit_first_native_pose_audit/v1", "baseline_root": str(baseline_root.resolve()), "r0_native_maps_root": str(r0_native_maps_root.resolve()), "input_group_order": "nesvor_inputs stack order sax -> 2ch -> 4ch; group_idx order frozen in each immutable export manifest", "fit_first_endpoint_policy": "must_use_final_nesvor_output_slices_unless_equivalence_is_proven", "scmr_comparison": "historical registered_ms and synthetic_ms are both expressed on the parameter-specific registered/final-pose slice geometry; this audit freezes the same final-pose source for Fit-first native-plane endpoints", "parameters": parameters, "no_training": True, "no_reconstruction": True, "no_metrics_modified": True, "no_formal_export_modified": True})
+            for stack, group, output_index in ordered:
+                r0_affine, r0_values = _r0(r0_root, stack, group, parameter)
+                shape = tuple(int(value) for value in r0_values.shape)
+                initial = initials[stack][local_group_order[stack].index(group)]
+                final, final_path, descriptor = finals[output_index], final_paths[output_index], descriptors[stack]
+                expected = _normalised(r0_values, parameter)
+                initial_world = initial_world_grid_original_order(initial, shape, descriptor)
+                r0_world = _r0_world(r0_affine, shape)[:3].transpose(1, 2, 0)
+                expected_spacing = [float(np.linalg.norm(r0_affine[:3, axis])) for axis in (0, 1)]
+                initial_value_error = _max_error(_initial_values_original_order(initial, shape, descriptor["flip_original_row"]), expected)
+                final_value_error = _max_error(_final_values_original_order(final_path, shape, descriptor["flip_original_row"]), expected)
+                geometry_error = _max_error(initial_world, r0_world)
+                corners = ((0, 0), (0, shape[1] - 1), (shape[0] - 1, 0), (shape[0] - 1, shape[1] - 1))
+                corner_error = float(max(np.linalg.norm(initial_world[row, col] - r0_world[row, col]) for row, col in corners))
+                center = ((shape[0] - 1) // 2, (shape[1] - 1) // 2)
+                center_error = float(np.linalg.norm(initial_world[center] - r0_world[center]))
+                spacing_error = float(max(abs(initial.resolution_x - expected_spacing[0]), abs(initial.resolution_y - expected_spacing[1])))
+                passed = geometry_error <= _TOL_MM and spacing_error <= _TOL_MM and initial_value_error <= _TOL_VALUE and final_value_error <= _TOL_VALUE
+                if not passed:
+                    gate_failures.append(f"{parameter}/{stack}/group{group:03d}")
+                final_affine = np.asarray(nib.load(str(final_path)).affine, float)
+                raw_equivalent = tuple(nib.load(str(final_path)).shape) == (*shape, 1) and bool(np.allclose(r0_affine, final_affine, rtol=0, atol=1e-5))
+                groups.append({
+                    "stack": stack, "original_group_idx": group, "output_slice_index": output_index,
+                    "authoritative_final_geometry": "nesvor_output_slices_final_optimized_affine", "final_output_slice": _record(final_path), "final_affine_ras_mm": final_affine.tolist(),
+                    "r0_vs_initial": {"shape_rc": list(shape), "expected_spacing_rc_mm": expected_spacing, "initial_spacing_rc_mm": [float(initial.resolution_x), float(initial.resolution_y)], "max_world_error_mm": geometry_error, "corner_max_error_mm": corner_error, "center_error_mm": center_error, "max_normalized_value_error": initial_value_error, "status": "PASS_REPRESENTATION_EQUIVALENT" if geometry_error <= _TOL_MM and spacing_error <= _TOL_MM and initial_value_error <= _TOL_VALUE else "RECONSTRUCTION_INPUT_GEOMETRY_MISMATCH"},
+                    "initial_vs_final": pose_delta(initial, final), "output_slice_value_validation": {"max_normalized_value_error": final_value_error, "status": "PASS" if final_value_error <= _TOL_VALUE else "FAIL"}, "reindex_flip": descriptor,
+                    "raw_affine_diagnostic": {"r0_vs_final_mathematically_equivalent": raw_equivalent, "raw_affine_axis_convention_difference_not_motion": not raw_equivalent},
+                })
+            parameters[parameter] = {"result": _record(result_path), "model": _record(model_path), "model_pose_role": "model.pt is checkpoint provenance only; final per-group pose is the corresponding --output-slices transformation", "groups": groups}
+            finals_by_parameter[parameter] = finals
+        for index, (t1, t2) in enumerate(zip(parameters["t1"]["groups"], parameters["t2"]["groups"])):
+            delta = pose_delta(finals_by_parameter["t1"][index], finals_by_parameter["t2"][index])
+            t1["t1_final_vs_t2_final"] = delta; t2["t1_final_vs_t2_final"] = delta
+        status = "RECONSTRUCTION_INPUT_GEOMETRY_VALID" if not gate_failures else "RECONSTRUCTION_INPUT_GEOMETRY_MISMATCH"
+        write_immutable_json(staging / "manifest.json", {
+            "schema": "fit_first_native_pose_audit/v2", "baseline_root": str(baseline_root.resolve()), "r0_native_maps_root": str(r0_root.resolve()), "input_group_order": "sax -> 2ch -> 4ch; immutable exported group_idx order",
+            "reconstruction_input_geometry_gate": {"status": status, "failures": gate_failures, "pass_action": "final-pose endpoint bundle is permitted; no retraining required", "fail_action": "fail closed: do not build formal endpoint and do not change reconstruction/training"},
+            "fit_first_endpoint_policy": "only final NeSVoR output-slice pose may define Fit-first native prediction; original R0 affine is reference geometry only", "scmr_comparison": "historical registered_ms/synthetic_ms uses parameter-specific registered slice geometry; this endpoint has the same final-pose semantics", "parameters": parameters, "no_training": True, "no_reconstruction": True, "no_metrics_modified": True,
+        })
         staging.rename(output)
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True)
