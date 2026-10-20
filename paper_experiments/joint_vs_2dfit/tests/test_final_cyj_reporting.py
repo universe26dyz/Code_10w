@@ -10,6 +10,18 @@ import numpy as np
 import pytest
 
 
+def _scmr_masks(root: Path, *, stack: str, groups: list[int], shape: tuple[int, int]) -> Path:
+    from paper_experiments.joint_vs_2dfit.phase2_clean import scmr_central_component_mask as scmr
+
+    inputs = root / "scmr_inputs"
+    for parameter in ("t1", "t2"):
+        for group in groups:
+            target = inputs / "planes" / parameter / stack / f"group{group:03d}.npz"; target.parent.mkdir(parents=True, exist_ok=True)
+            values = np.ones(shape, float); support = np.ones(shape, bool)
+            np.savez_compressed(target, reference=values, prediction=values, original=values, registered=values, synthetic=values, training_mask=support, synthetic_support=support, fitting_valid_mask=support, phase4r_l100=support, source_support=support)
+    return scmr.run_scmr_central_component_mask(inputs, root / "scmr_masks")
+
+
 def _metrics(value: float) -> dict[str, object]:
     return {"rmse": value, "mae": value / 2, "bias": -value / 10, "voxel_count": 10, "coverage_fraction": 1.0}
 
@@ -102,6 +114,7 @@ def test_all_groups_native_render_uses_every_heldout_group_and_records_mode(monk
     sparse_manifest = tmp_path / "sparse.json"
     sparse_manifest.write_text(json.dumps({"condition": "L25", "stacks": {"2ch": {"heldout_original_group_ids": [3, 8]}}}), encoding="utf-8")
     mask = _nifti(tmp_path / "mask.nii.gz", np.ones((2, 3, 2)), np.eye(4))
+    scmr_masks = _scmr_masks(tmp_path, stack="2ch", groups=[3, 8], shape=(2, 3))
     maps = {method: {parameter: str(_nifti(tmp_path / method / f"{parameter}.nii.gz", np.ones((2, 3, 2)), np.eye(4))) for parameter in ("t1", "t2")} for method in ("Fit-first", "Q002S640", "Q004S640")}
     cache_files = [tmp_path / name for name in ("native_maps.npz", "geometry.npz", "native_manifest.json")]
     for path in cache_files:
@@ -115,19 +128,34 @@ def test_all_groups_native_render_uses_every_heldout_group_and_records_mode(monk
     requested: list[list[int]] = []
     monkeypatch.setattr(reporting, "_heldout_ids", lambda sparse, stack: [3, 8])
     monkeypatch.setattr(reporting, "select_verified_native_cache_groups", lambda root, manifest, stack, groups: requested.append(groups) or selected)
-    monkeypatch.setattr(reporting, "reproject_binary_mask_to_native_plane", lambda mask, affine, plane, shape: np.ones(shape, bool))
     monkeypatch.setattr(reporting, "reproject_volume_to_native_plane", lambda values, affine, plane, shape: (np.full(shape, 900.0), np.ones(shape, bool)))
     rendered: list[object] = []
     original_plot = reporting._plot_native_mosaic
     monkeypatch.setattr(reporting, "_plot_native_mosaic", lambda path, rows, *, title: (rendered.append(rows), original_plot(path, rows, title=title))[1])
-    config = {"subject": "CYJ", "condition": "L25_fold0", "endpoint": "central", "methods": maps, "l100_masks": {"t1": str(mask), "t2": str(mask)}, "native": {"mode": "all_groups", "stack": "2ch", "sparse_manifest": str(sparse_manifest), "r0_native_maps_root": str(tmp_path / "cache")}}
+    config = {"subject": "CYJ", "condition": "L25_fold0", "endpoint": "central", "methods": maps, "l100_masks": {"t1": str(mask), "t2": str(mask)}, "scmr_mask_root": str(scmr_masks), "native": {"mode": "all_groups", "stack": "2ch", "sparse_manifest": str(sparse_manifest), "r0_native_maps_root": str(tmp_path / "cache")}}
     records = reporting._render_native(config, tmp_path, {})
     assert requested == [[3, 8]]
     assert all(record["mode"] == "all_groups" and record["original_group_ids"] == [3, 8] for record in records)
+    assert all(record["primary_native_mask"] == "scmr_style_central_component" for record in records)
+    assert all("reprojected_frozen_L100_mask" not in record["display_support"] for record in records)
     expected_columns = ["Native reference", "Fit-first", "Q002S640", "Q004S640", "|Fit-first − Native|", "|Q002S640 − Native|", "|Q004S640 − Native|"]
     assert [panel["label"] for panel in rendered[0][0]["panels"]] == expected_columns
     assert all(panel["cmap"].name == rendered[0][0]["panels"][0]["cmap"].name and panel["range_ms"] == rendered[0][0]["panels"][0]["range_ms"] for panel in rendered[0][0]["panels"])
     assert all((tmp_path / record["file"]).is_file() for record in records)
+
+
+def test_formal_native_mosaic_fails_closed_on_missing_scmr_plane(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from paper_experiments.joint_vs_2dfit.phase2_clean import final_cyj_reporting as reporting
+
+    sparse = tmp_path / "sparse.json"; sparse.write_text(json.dumps({"condition": "L100", "stacks": {"2ch": {}}}), encoding="utf-8")
+    mask = _nifti(tmp_path / "mask.nii.gz", np.ones((2, 3, 2)), np.eye(4))
+    scmr_masks = _scmr_masks(tmp_path, stack="2ch", groups=[3], shape=(2, 3))
+    selected = {"group_idx": np.array([4]), "source_support": np.ones((1, 2, 3), bool), "affine_lps_rc": np.eye(4)[None], "pixel_spacing_rc_mm": np.ones((1, 2)), "t1_ms": np.ones((1, 2, 3)), "t2_ms": np.ones((1, 2, 3)), "provenance": {key: str(path) for key, path in zip(("native_maps_path", "geometry_path", "manifest_path"), [tmp_path / "a", tmp_path / "b", tmp_path / "c"])} }
+    for path in (tmp_path / "a", tmp_path / "b", tmp_path / "c"): path.write_bytes(b"x")
+    monkeypatch.setattr(reporting, "_heldout_ids", lambda *args: [4]); monkeypatch.setattr(reporting, "select_verified_native_cache_groups", lambda *args: selected)
+    config = {"subject": "CYJ", "condition": "L100_fold0", "endpoint": "central", "methods": {"Q004S640": {"t1": str(mask), "t2": str(mask)}}, "l100_masks": {"t1": str(mask), "t2": str(mask)}, "scmr_mask_root": str(scmr_masks), "native": {"mode": "all_groups", "stack": "2ch", "sparse_manifest": str(sparse), "r0_native_maps_root": str(tmp_path)}}
+    with pytest.raises(ValueError, match="lacks exactly one"):
+        reporting._render_native(config, tmp_path, {})
 
 
 def test_native_mosaic_reads_proposed_direct_native_bundle_without_volume_reprojection(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -136,6 +164,7 @@ def test_native_mosaic_reads_proposed_direct_native_bundle_without_volume_reproj
     sparse_manifest = tmp_path / "sparse.json"
     sparse_manifest.write_text(json.dumps({"condition": "L100", "stacks": {"2ch": {}}}), encoding="utf-8")
     mask = _nifti(tmp_path / "mask.nii.gz", np.ones((2, 3, 2)), np.eye(4))
+    scmr_masks = _scmr_masks(tmp_path, stack="2ch", groups=[3], shape=(2, 3))
     bundle = tmp_path / "q004_bundle"
     (bundle / "planes" / "2ch").mkdir(parents=True)
     (bundle / "manifest.json").write_text(json.dumps({"schema": "direct_native_prediction_bundle/v1", "endpoint": "central"}), encoding="utf-8")
@@ -147,12 +176,11 @@ def test_native_mosaic_reads_proposed_direct_native_bundle_without_volume_reproj
     selected = {"group_idx": np.array([3]), "source_support": np.ones((1, 2, 3), bool), "affine_lps_rc": np.repeat(np.eye(4)[None], 1, axis=0), "pixel_spacing_rc_mm": np.ones((1, 2)), "t1_ms": np.full((1, 2, 3), 1000.0), "t2_ms": np.full((1, 2, 3), 80.0), "provenance": dict(zip(("native_maps_path", "geometry_path", "manifest_path"), map(str, cache_files)))}
     monkeypatch.setattr(reporting, "_heldout_ids", lambda sparse, stack: [3])
     monkeypatch.setattr(reporting, "select_verified_native_cache_groups", lambda *args: selected)
-    monkeypatch.setattr(reporting, "reproject_binary_mask_to_native_plane", lambda *args: np.ones((2, 3), bool))
     calls: list[str] = []
     monkeypatch.setattr(reporting, "reproject_volume_to_native_plane", lambda *args: (calls.append("fit") or np.full((2, 3), 900.0), np.ones((2, 3), bool)))
     rendered: list[object] = []
     monkeypatch.setattr(reporting, "_plot_native_mosaic", lambda path, rows, *, title: rendered.append(rows))
-    config = {"subject": "CYJ", "condition": "L100_fold0", "endpoint": "central", "methods": {"Fit-first": fit, "Q004S640": {"native_bundle": str(bundle)}}, "l100_masks": {"t1": str(mask), "t2": str(mask)}, "native": {"mode": "all_groups", "stack": "2ch", "sparse_manifest": str(sparse_manifest), "r0_native_maps_root": str(tmp_path)}}
+    config = {"subject": "CYJ", "condition": "L100_fold0", "endpoint": "central", "methods": {"Fit-first": fit, "Q004S640": {"native_bundle": str(bundle)}}, "l100_masks": {"t1": str(mask), "t2": str(mask)}, "scmr_mask_root": str(scmr_masks), "native": {"mode": "all_groups", "stack": "2ch", "sparse_manifest": str(sparse_manifest), "r0_native_maps_root": str(tmp_path)}}
     reporting._render_native(config, tmp_path, {})
     q004 = next(panel for panel in rendered[0][0]["panels"] if panel["label"] == "Q004S640")
     assert np.all(q004["values"] == 800.0)
@@ -165,6 +193,7 @@ def test_native_mosaic_reads_fit_first_final_pose_bundle_without_r0_reprojection
     sparse_manifest = tmp_path / "sparse.json"
     sparse_manifest.write_text(json.dumps({"condition": "L100", "stacks": {"2ch": {}}}), encoding="utf-8")
     mask = _nifti(tmp_path / "mask.nii.gz", np.ones((2, 3, 2)), np.eye(4))
+    scmr_masks = _scmr_masks(tmp_path, stack="2ch", groups=[3], shape=(2, 3))
     fit = tmp_path / "fit_bundle"
     for parameter, value in (("t1", 777.0), ("t2", 66.0)):
         target = fit / "planes" / parameter / "2ch"; target.mkdir(parents=True)
@@ -174,10 +203,9 @@ def test_native_mosaic_reads_fit_first_final_pose_bundle_without_r0_reprojection
     for path in cache_files: path.write_bytes(b"cache")
     selected = {"group_idx": np.array([3]), "source_support": np.ones((1, 2, 3), bool), "affine_lps_rc": np.eye(4)[None], "pixel_spacing_rc_mm": np.ones((1, 2)), "t1_ms": np.full((1, 2, 3), 1000.0), "t2_ms": np.full((1, 2, 3), 80.0), "provenance": dict(zip(("native_maps_path", "geometry_path", "manifest_path"), map(str, cache_files)))}
     monkeypatch.setattr(reporting, "_heldout_ids", lambda sparse, stack: [3]); monkeypatch.setattr(reporting, "select_verified_native_cache_groups", lambda *args: selected)
-    monkeypatch.setattr(reporting, "reproject_binary_mask_to_native_plane", lambda *args: np.ones((2, 3), bool))
     monkeypatch.setattr(reporting, "reproject_volume_to_native_plane", lambda *args: pytest.fail("formal Fit-first endpoint must not reproject R0 affine"))
     rendered: list[object] = []; monkeypatch.setattr(reporting, "_plot_native_mosaic", lambda path, rows, *, title: rendered.append(rows))
-    config = {"subject": "CYJ", "condition": "L100_fold0", "endpoint": "central", "methods": {"Fit-first": {"fit_first_native_bundle": str(fit)}}, "l100_masks": {"t1": str(mask), "t2": str(mask)}, "native": {"mode": "all_groups", "stack": "2ch", "sparse_manifest": str(sparse_manifest), "r0_native_maps_root": str(tmp_path)}}
+    config = {"subject": "CYJ", "condition": "L100_fold0", "endpoint": "central", "methods": {"Fit-first": {"fit_first_native_bundle": str(fit)}}, "l100_masks": {"t1": str(mask), "t2": str(mask)}, "scmr_mask_root": str(scmr_masks), "native": {"mode": "all_groups", "stack": "2ch", "sparse_manifest": str(sparse_manifest), "r0_native_maps_root": str(tmp_path)}}
     reporting._render_native(config, tmp_path, {})
     assert next(panel for panel in rendered[0][0]["panels"] if panel["label"] == "Fit-first")["values"][0, 0] == 777.0
 
@@ -354,6 +382,7 @@ def test_all_source_native_render_records_displayed_statuses(monkeypatch: pytest
 
     sparse_manifest = tmp_path / "sparse.json"; sparse_manifest.write_text(json.dumps({"condition": "L50", "stacks": {"sax": {"heldout_original_group_ids": [2]}}}), encoding="utf-8")
     mask = _nifti(tmp_path / "mask.nii.gz", np.ones((2, 3, 2)), np.eye(4))
+    scmr_masks = _scmr_masks(tmp_path, stack="sax", groups=[1, 2, 3], shape=(2, 3))
     maps = {method: {parameter: str(_nifti(tmp_path / method / f"{parameter}.nii.gz", np.ones((2, 3, 2)), np.eye(4))) for parameter in ("t1", "t2")} for method in ("Fit-first", "Q002S640", "Q004S640")}
     cache_files = [tmp_path / name for name in ("native_maps.npz", "geometry.npz", "native_manifest.json")]
     for path in cache_files:
@@ -361,9 +390,8 @@ def test_all_source_native_render_records_displayed_statuses(monkeypatch: pytest
     selected = {"group_idx": np.array([1, 2, 3]), "source_support": np.ones((3, 2, 3), bool), "affine_lps_rc": np.repeat(np.eye(4)[None], 3, axis=0), "pixel_spacing_rc_mm": np.ones((3, 2)), "t1_ms": np.full((3, 2, 3), 1000.0), "t2_ms": np.full((3, 2, 3), 80.0), "provenance": dict(zip(("native_maps_path", "geometry_path", "manifest_path"), map(str, cache_files)))}
     monkeypatch.setattr(reporting, "_load_all_verified_native_cache_groups", lambda *args: selected)
     monkeypatch.setattr(reporting, "_heldout_ids", lambda sparse, stack: [2])
-    monkeypatch.setattr(reporting, "reproject_binary_mask_to_native_plane", lambda *args: np.ones((2, 3), bool))
     monkeypatch.setattr(reporting, "reproject_volume_to_native_plane", lambda values, affine, plane, shape: (np.full(shape, 900.0), np.ones(shape, bool)))
-    config = {"subject": "CYJ", "condition": "L50_fold0", "endpoint": "central", "methods": maps, "l100_masks": {"t1": str(mask), "t2": str(mask)}, "native": {"mode": "all_source_groups", "stack": "sax", "sparse_manifest": str(sparse_manifest), "r0_native_maps_root": str(tmp_path)}}
+    config = {"subject": "CYJ", "condition": "L50_fold0", "endpoint": "central", "methods": maps, "l100_masks": {"t1": str(mask), "t2": str(mask)}, "scmr_mask_root": str(scmr_masks), "native": {"mode": "all_source_groups", "stack": "sax", "sparse_manifest": str(sparse_manifest), "r0_native_maps_root": str(tmp_path)}}
     records = reporting._render_native(config, tmp_path, {})
     assert all(record["original_group_ids"] == [1, 2, 3] for record in records)
     assert all(record["displayed_groups"] == [{"group_idx": 1, "status": "observed", "label": "group 01 [observed]"}, {"group_idx": 2, "status": "held-out", "label": "group 02 [held-out]"}, {"group_idx": 3, "status": "observed", "label": "group 03 [observed]"}] for record in records)

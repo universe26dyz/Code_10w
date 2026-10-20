@@ -41,3 +41,12 @@ directly from NeSVoR internal rigid transforms. A raw affine difference is
 only an axis-convention diagnostic, not evidence of motion. A real mismatch
 records `RECONSTRUCTION_INPUT_GEOMETRY_MISMATCH`, fails closed, and does not
 alter reconstruction, training, or formal metrics.
+
+## Final native support and longitudinal endpoint
+
+Final native figures and paired native metrics use immutable
+`scmr_style_central_component` support (with source, valid/in-volume and
+finite gates); `phase4r_l100` and `phase4r_l100_central_component` are
+sensitivity/control domains only. Longitudinal reconstruction panels remain
+samples from each method's 3-D volume on one dense physical plane, with
+`in_volume AND finite` support, rather than any native-slice/bundle stacking.

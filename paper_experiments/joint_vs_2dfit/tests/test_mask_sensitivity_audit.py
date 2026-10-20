@@ -60,8 +60,8 @@ def test_rejects_misaligned_support_arrays() -> None:
 
 
 def test_generator_outputs_sensitivity_ready_bundles_and_audit_is_immutable(tmp_path) -> None:
-    inputs = tmp_path / "inputs"; inputs.mkdir()
-    np.savez_compressed(inputs / "t1_2ch_group000.npz", reference=np.array([[0.0, 0.0]]), prediction=np.array([[0.0, 10.0]]), original=np.array([[1.0, 1.0]]), registered=np.array([[1.0, 1.0]]), synthetic=np.array([[1.0, 1.0]]), training_mask=np.array([[True, False]]), synthetic_support=np.array([[True, True]]), fitting_valid_mask=np.array([[True, True]]), phase4r_l100=np.array([[False, True]]), source_support=np.array([[True, True]]))
+    inputs = tmp_path / "inputs"; target = inputs / "planes" / "t1" / "2ch" / "group000.npz"; target.parent.mkdir(parents=True)
+    np.savez_compressed(target, reference=np.array([[0.0, 0.0]]), prediction=np.array([[0.0, 10.0]]), original=np.array([[1.0, 1.0]]), registered=np.array([[1.0, 1.0]]), synthetic=np.array([[1.0, 1.0]]), training_mask=np.array([[True, False]]), synthetic_support=np.array([[True, True]]), fitting_valid_mask=np.array([[True, True]]), phase4r_l100=np.array([[False, True]]), source_support=np.array([[True, True]]))
     masks = scmr.run_scmr_central_component_mask(inputs, tmp_path / "masks")
     output = audit.run_mask_sensitivity_audit(masks, tmp_path / "audit")
     manifest = json.loads((output / "manifest.json").read_text())

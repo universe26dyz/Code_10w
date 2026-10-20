@@ -15,7 +15,7 @@ import numpy as np
 
 from .contracts import sha256, write_immutable_json
 from .evaluation import _world_sample, reproject_volume_to_native_plane
-from .l100_mask_paired_eval import reproject_binary_mask_to_native_plane
+from .scmr_central_component_mask import load_validated_scmr_mask_plane
 from .fit_first import NATIVE_FIT_METHOD, _complete_source_group, _dictionary_contract, select_verified_native_cache_groups
 from .heldout import _heldout_ids
 from .visualization import DISPLAY_RANGES_MS, colorbars
@@ -699,9 +699,8 @@ def _render_native_stack(config: Mapping[str, Any], output: Path, inputs: dict[s
     records: list[dict[str, Any]] = []
     group_statuses = native_group_statuses(display_groups, sparse, stack)
     methods = native_mosaic_methods(config["methods"])
+    formal_mask_root = Path(config["scmr_mask_root"])
     for parameter, display_parameter in PARAMETERS.items():
-        mask_path = _load_mask_spec(config, parameter)
-        mask_image = _image(mask_path)
         cmap, limits = colorbars().mapping[display_parameter], DISPLAY_RANGES_MS[display_parameter]
         method_sources: dict[str, tuple[str, Any]] = {}
         for method in methods:
@@ -726,13 +725,15 @@ def _render_native_stack(config: Mapping[str, Any], output: Path, inputs: dict[s
                 method_sources[method] = ("volume", _image(configured[parameter]))
         mosaic_rows: list[dict[str, Any]] = []
         shapes: dict[str, list[int]] = {}
+        mask_artifacts: list[dict[str, Any]] = []
         for group in display_groups:
             index = selected_indices[group]
             affine = np.diag([-1.0, -1.0, 1.0, 1.0]) @ np.asarray(selected["affine_lps_rc"][index], float)
             source_support = np.asarray(selected["source_support"][index], bool)
-            l100 = reproject_binary_mask_to_native_plane(mask_image.get_fdata() > .5, mask_image.affine, affine, source_support.shape)
-            support = source_support & l100
             reference = np.asarray(selected[f"{parameter}_ms"][index], float)
+            masks, mask_provenance = load_validated_scmr_mask_plane(formal_mask_root, parameter=parameter, stack=stack, original_group_idx=group, shape_rc=tuple(reference.shape), source_support=source_support)
+            support = source_support & masks["scmr_style_central_component"]
+            mask_artifacts.append(mask_provenance)
             panels = [{"label": "Native reference", "values": reference, "support": support & np.isfinite(reference), "cmap": cmap, "range_ms": limits}]
             method_panels: list[tuple[str, np.ndarray, np.ndarray]] = []
             for method, (kind, source) in method_sources.items():
@@ -767,8 +768,8 @@ def _render_native_stack(config: Mapping[str, Any], output: Path, inputs: dict[s
             shapes[str(group)] = list(source_support.shape)
         filename = f"native_{stack}_group{display_groups[0]}_{display_parameter}.png" if mode == "single" else f"native_{stack}_{mode}_{display_parameter}.png"
         _plot_native_mosaic(output / filename, mosaic_rows, title=f"{config['subject']} {config['condition']} {config['endpoint']} — {stack} native {mode} {display_parameter}")
-        inputs[f"native_l100_mask_{parameter}"] = _file_record(mask_path)
-        records.append({"parameter": display_parameter, "file": filename, "stack": stack, "mode": mode, "original_group_idx": display_groups[0] if mode == "single" else None, "original_group_ids": display_groups, "displayed_groups": [{"group_idx": group, "status": group_statuses[group], "label": native_group_label(group, group_statuses[group])} for group in display_groups], "native_reference": provenance, "frozen_l100_source": _file_record(mask_path), "plane_shapes_rc": shapes, "display_support": "source_support AND reprojected_frozen_L100_mask; myocardium is contour-only", "interpolation": {"map": "linear", "mask": "nearest-neighbor"}, "no_auto_crop": True, "physical_aspect_ratio_preserved": True, "colorbars": {"shared_parameter": "dedicated_axis", "range_ms": list(limits), "colormap": "same_parameter_map_lut"}, "error_display": {"quantity": "absolute_error_ms", "colormap": "same_parameter_map_lut", "range_ms": list(limits), "no_residual_colorbar": True}})
+        inputs.setdefault("scmr_mask_manifest", _file_record(formal_mask_root / "manifest.json"))
+        records.append({"parameter": display_parameter, "file": filename, "stack": stack, "mode": mode, "original_group_idx": display_groups[0] if mode == "single" else None, "original_group_ids": display_groups, "displayed_groups": [{"group_idx": group, "status": group_statuses[group], "label": native_group_label(group, group_statuses[group])} for group in display_groups], "native_reference": provenance, "primary_native_mask": "scmr_style_central_component", "mask_artifacts": mask_artifacts, "plane_shapes_rc": shapes, "display_support": "source_support AND scmr_style_central_component; per-method panels additionally require endpoint-valid AND finite(reference, prediction)", "interpolation": {"map": "linear", "mask": "artifact-defined native-plane support"}, "no_auto_crop": True, "physical_aspect_ratio_preserved": True, "colorbars": {"shared_parameter": "dedicated_axis", "range_ms": list(limits), "colormap": "same_parameter_map_lut"}, "error_display": {"quantity": "absolute_error_ms", "colormap": "same_parameter_map_lut", "range_ms": list(limits), "no_residual_colorbar": True}})
     return records
 
 
@@ -804,6 +805,8 @@ def render_final_figures(config_path: str | Path, output: str | Path) -> Path:
             raise ValueError("formal Fit-first figures require fit_first_native_bundle; R0 volume reprojection is not a formal endpoint")
     if "native" not in config or "longitudinal" not in config or "l100_masks" not in config:
         raise ValueError("figure config requires longitudinal, native, and frozen L100-mask inputs")
+    if config["native"] and not config.get("scmr_mask_root"):
+        raise ValueError("formal native figures require immutable scmr_mask_root")
     output.parent.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(prefix=f".{output.name}.staging-", dir=output.parent))
     try:
