@@ -25,6 +25,7 @@ METHODS = ("Q002S640", "Q002S640_K256", "Q004S640")
 ENDPOINTS = ("central", "psf128")
 EXPECTED_FOLDS = {"L100": (0,), "L50": (0, 1), "L25": (0, 1, 2, 3)}
 PARAMETERS = {"t1": "T1", "t2": "T2"}
+NATIVE_MOSAIC_METHODS = ("Fit-first", "Q002S640", "Q004S640")
 
 
 def _git_sha() -> str | None:
@@ -258,6 +259,12 @@ def final_panel_specifications(parameter: str, methods: tuple[str, ...]) -> tupl
     return tuple(specs)
 
 
+def native_mosaic_methods(methods: Mapping[str, Any]) -> tuple[str, ...]:
+    """Put the formal comparison methods first, independent of JSON key order."""
+    formal = tuple(method for method in NATIVE_MOSAIC_METHODS if method in methods)
+    return formal + tuple(method for method in methods if method not in formal)
+
+
 def _load_mask_spec(config: Mapping[str, Any], parameter: str) -> Path:
     value = config["l100_masks"][parameter.lower()]
     return Path(value["path"] if isinstance(value, Mapping) else value)
@@ -308,7 +315,7 @@ def _native_mosaic_row(row: Any) -> tuple[int, list[dict[str, Any]], list[float]
 
 
 def _plot_native_mosaic(path: Path, rows: list[Any], *, title: str) -> None:
-    """Render all requested native planes with dedicated map and error colorbars."""
+    """Render all requested native planes with one shared parameter colorbar."""
     import matplotlib.pyplot as plt
 
     if not rows:
@@ -317,9 +324,9 @@ def _plot_native_mosaic(path: Path, rows: list[Any], *, title: str) -> None:
     panel_count = len(normalized[0][1])
     if not panel_count or any(len(panels) != panel_count for _, panels, _, _ in normalized):
         raise ValueError("native mosaic rows must have an identical non-empty panel layout")
-    figure = plt.figure(figsize=(2.5 * panel_count + 1.0, max(3.2, 2.55 * len(normalized) + .5)))
-    grid = figure.add_gridspec(len(normalized), panel_count + 2, width_ratios=[1.0] * panel_count + [.06, .06], wspace=.12, hspace=.12)
-    map_handle = error_handle = None
+    figure = plt.figure(figsize=(2.5 * panel_count + .65, max(3.2, 2.55 * len(normalized) + .5)))
+    grid = figure.add_gridspec(len(normalized), panel_count + 1, width_ratios=[1.0] * panel_count + [.06], wspace=.12, hspace=.12)
+    map_handle = None
     for row_index, (group, panels, extent, contour) in enumerate(normalized):
         for column, panel in enumerate(panels):
             axis = figure.add_subplot(grid[row_index, column])
@@ -332,16 +339,12 @@ def _plot_native_mosaic(path: Path, rows: list[Any], *, title: str) -> None:
             if column == 0:
                 axis.set_ylabel(f"group {group}", fontsize=8)
             axis.set_xticks([]); axis.set_yticks([])
-            if panel["label"].startswith("|"):
-                error_handle = image
-            else:
+            if not panel["label"].startswith("|"):
                 map_handle = image
     map_colorbar_axis = figure.add_subplot(grid[:, panel_count])
-    error_colorbar_axis = figure.add_subplot(grid[:, panel_count + 1])
     if map_handle is None:
         raise ValueError("native mosaic needs a quantitative-map panel")
-    figure.colorbar(map_handle, cax=map_colorbar_axis, label="map (ms)")
-    figure.colorbar(error_handle if error_handle is not None else map_handle, cax=error_colorbar_axis, label="absolute error (ms)")
+    figure.colorbar(map_handle, cax=map_colorbar_axis, label="parameter (ms); shared map/error scale")
     figure.suptitle(title, fontsize=10)
     figure.subplots_adjust(top=.9, bottom=.03, left=.03, right=.98)
     figure.savefig(path, dpi=220, bbox_inches="tight")
@@ -446,7 +449,7 @@ def _render_native_stack(config: Mapping[str, Any], output: Path, inputs: dict[s
         inputs.setdefault(f"native_cache_{key}", record)
         inputs[f"native_cache_{stack}_{key}"] = record
     records: list[dict[str, Any]] = []
-    methods = tuple(config["methods"])
+    methods = native_mosaic_methods(config["methods"])
     for parameter, display_parameter in PARAMETERS.items():
         mask_path = _load_mask_spec(config, parameter)
         mask_image = _image(mask_path)
@@ -462,13 +465,13 @@ def _render_native_stack(config: Mapping[str, Any], output: Path, inputs: dict[s
             support = source_support & l100
             reference = np.asarray(selected[f"{parameter}_ms"][index], float)
             panels = [{"label": "Native reference", "values": reference, "support": support & np.isfinite(reference), "cmap": cmap, "range_ms": limits}]
+            method_panels: list[tuple[str, np.ndarray, np.ndarray]] = []
             for method, image in method_images.items():
                 values, valid = reproject_volume_to_native_plane(image.get_fdata(), image.affine, affine, source_support.shape)
                 available = support & valid & np.isfinite(reference) & np.isfinite(values)
-                panels.extend((
-                    {"label": method, "values": values, "support": available, "cmap": cmap, "range_ms": limits},
-                    {"label": f"|{method} − Native|", "values": np.abs(values - reference), "support": available, "cmap": cmap, "range_ms": limits},
-                ))
+                method_panels.append((method, values, available))
+            panels.extend({"label": method, "values": values, "support": available, "cmap": cmap, "range_ms": limits} for method, values, available in method_panels)
+            panels.extend({"label": f"|{method} − Native|", "values": np.abs(values - reference), "support": available, "cmap": cmap, "range_ms": limits} for method, values, available in method_panels)
             spacing = np.asarray(selected["pixel_spacing_rc_mm"][index], float)
             extent = [0.0, float(source_support.shape[0] - 1) * spacing[0], 0.0, float(source_support.shape[1] - 1) * spacing[1]]
             mosaic_rows.append({"group_idx": group, "panels": panels, "extent": extent, "contour": contour})
@@ -476,7 +479,7 @@ def _render_native_stack(config: Mapping[str, Any], output: Path, inputs: dict[s
         filename = f"native_{stack}_group{display_groups[0]}_{display_parameter}.png" if mode == "single" else f"native_{stack}_{mode}_{display_parameter}.png"
         _plot_native_mosaic(output / filename, mosaic_rows, title=f"{config['subject']} {config['condition']} {config['endpoint']} — {stack} native {mode} {display_parameter}")
         inputs[f"native_l100_mask_{parameter}"] = _file_record(mask_path)
-        records.append({"parameter": display_parameter, "file": filename, "stack": stack, "mode": mode, "original_group_idx": display_groups[0] if mode == "single" else None, "original_group_ids": display_groups, "native_reference": provenance, "frozen_l100_source": _file_record(mask_path), "plane_shapes_rc": shapes, "display_support": "source_support AND reprojected_frozen_L100_mask; myocardium is contour-only", "interpolation": {"map": "linear", "mask": "nearest-neighbor"}, "no_auto_crop": True, "physical_aspect_ratio_preserved": True, "colorbars": {"map": "dedicated_axis", "absolute_error": "dedicated_axis", "range_ms": list(limits), "colormap": "same_parameter_map_lut"}, "error_display": {"quantity": "absolute_error_ms", "colormap": "same_parameter_map_lut", "range_ms": list(limits), "no_residual_colorbar": False}})
+        records.append({"parameter": display_parameter, "file": filename, "stack": stack, "mode": mode, "original_group_idx": display_groups[0] if mode == "single" else None, "original_group_ids": display_groups, "native_reference": provenance, "frozen_l100_source": _file_record(mask_path), "plane_shapes_rc": shapes, "display_support": "source_support AND reprojected_frozen_L100_mask; myocardium is contour-only", "interpolation": {"map": "linear", "mask": "nearest-neighbor"}, "no_auto_crop": True, "physical_aspect_ratio_preserved": True, "colorbars": {"shared_parameter": "dedicated_axis", "range_ms": list(limits), "colormap": "same_parameter_map_lut"}, "error_display": {"quantity": "absolute_error_ms", "colormap": "same_parameter_map_lut", "range_ms": list(limits), "no_residual_colorbar": True}})
     return records
 
 
@@ -513,7 +516,7 @@ def render_final_figures(config_path: str | Path, output: str | Path) -> Path:
         inputs = {"config": _file_record(config_path)}
         longitudinal = _render_longitudinal(config, staging, inputs)
         native = _render_native(config, staging, inputs)
-        manifest = {"schema": "phase4r_final_cyj_figures/v1", "subject": "CYJ", "condition": config.get("condition"), "endpoint": config["endpoint"], "methods": list(config["methods"]), "inputs": inputs, "longitudinal_figures": longitudinal, "native_heldout_figures": native, "shared_parameter_lut_ranges_ms": {key: list(value) for key, value in DISPLAY_RANGES_MS.items()}, "error_display_contract": "absolute_error_ms using same parameter map LUT/range; no magma residual scale; native mosaics provide dedicated map and error colorbar axes", "code_git_sha": _git_sha()}
+        manifest = {"schema": "phase4r_final_cyj_figures/v1", "subject": "CYJ", "condition": config.get("condition"), "endpoint": config["endpoint"], "methods": list(config["methods"]), "inputs": inputs, "longitudinal_figures": longitudinal, "native_heldout_figures": native, "shared_parameter_lut_ranges_ms": {key: list(value) for key, value in DISPLAY_RANGES_MS.items()}, "error_display_contract": "absolute_error_ms using same parameter map LUT/range; no magma residual scale; native mosaics provide one shared parameter colorbar", "code_git_sha": _git_sha()}
         write_immutable_json(staging / "figure_manifest.json", manifest)
         staging.rename(output)
     except BaseException:

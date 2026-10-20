@@ -77,7 +77,7 @@ def test_native_preview_mode_selects_single_or_all_authoritative_groups(monkeypa
     assert all(item["mode"] == "all_groups" for item in stacks)
 
 
-def test_native_mosaic_uses_two_distinct_dedicated_colorbar_axes(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_native_mosaic_uses_one_shared_parameter_colorbar_axis(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     import matplotlib.figure
     from paper_experiments.joint_vs_2dfit.phase2_clean import final_cyj_reporting as reporting
 
@@ -92,8 +92,8 @@ def test_native_mosaic_uses_two_distinct_dedicated_colorbar_axes(monkeypatch: py
     values = np.full((3, 4), 1000.0)
     panel = lambda label: {"label": label, "values": values, "support": np.ones_like(values, bool), "cmap": reporting.colorbars().mapping["T1"], "range_ms": (0.0, 2500.0)}
     reporting._plot_native_mosaic(tmp_path / "mosaic.png", [(5, [panel("Native reference"), panel("Fit-first"), panel("|Fit-first − Native|")])], title="test")
-    assert len(calls) == 2
-    assert calls[0] is not None and calls[1] is not None and calls[0] is not calls[1]
+    assert len(calls) == 1
+    assert calls[0] is not None
 
 
 def test_all_groups_native_render_uses_every_heldout_group_and_records_mode(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -117,10 +117,16 @@ def test_all_groups_native_render_uses_every_heldout_group_and_records_mode(monk
     monkeypatch.setattr(reporting, "select_verified_native_cache_groups", lambda root, manifest, stack, groups: requested.append(groups) or selected)
     monkeypatch.setattr(reporting, "reproject_binary_mask_to_native_plane", lambda mask, affine, plane, shape: np.ones(shape, bool))
     monkeypatch.setattr(reporting, "reproject_volume_to_native_plane", lambda values, affine, plane, shape: (np.full(shape, 900.0), np.ones(shape, bool)))
+    rendered: list[object] = []
+    original_plot = reporting._plot_native_mosaic
+    monkeypatch.setattr(reporting, "_plot_native_mosaic", lambda path, rows, *, title: (rendered.append(rows), original_plot(path, rows, title=title))[1])
     config = {"subject": "CYJ", "condition": "L25_fold0", "endpoint": "central", "methods": maps, "l100_masks": {"t1": str(mask), "t2": str(mask)}, "native": {"mode": "all_groups", "stack": "2ch", "sparse_manifest": str(sparse_manifest), "r0_native_maps_root": str(tmp_path / "cache")}}
     records = reporting._render_native(config, tmp_path, {})
     assert requested == [[3, 8]]
     assert all(record["mode"] == "all_groups" and record["original_group_ids"] == [3, 8] for record in records)
+    expected_columns = ["Native reference", "Fit-first", "Q002S640", "Q004S640", "|Fit-first − Native|", "|Q002S640 − Native|", "|Q004S640 − Native|"]
+    assert [panel["label"] for panel in rendered[0][0]["panels"]] == expected_columns
+    assert all(panel["cmap"].name == rendered[0][0]["panels"][0]["cmap"].name and panel["range_ms"] == rendered[0][0]["panels"][0]["range_ms"] for panel in rendered[0][0]["panels"])
     assert all((tmp_path / record["file"]).is_file() for record in records)
 
 
@@ -158,11 +164,11 @@ def test_final_figure_manifest_is_complete_and_immutable(monkeypatch: pytest.Mon
                                   "l100_masks": {"t1": "unused", "t2": "unused"},
                                   "longitudinal": {"axis": 1, "index": 2}, "native": {}}), encoding="utf-8")
     monkeypatch.setattr(reporting, "_render_longitudinal", lambda config, output, inputs: [{"plane": {"axis": 1, "index": 2}, "interpolation": {"map": "linear", "mask": "nearest-neighbor"}, "frozen_l100_source": {"path": "mask", "sha256": "x"}}])
-    monkeypatch.setattr(reporting, "_render_native", lambda config, output, inputs: [{"mode": "all_groups", "original_group_ids": [2, 4], "display_support": "frozen L100", "interpolation": {"map": "linear", "mask": "nearest-neighbor"}, "frozen_l100_source": {"path": "mask", "sha256": "x"}}])
+    monkeypatch.setattr(reporting, "_render_native", lambda config, output, inputs: [{"mode": "all_groups", "original_group_ids": [2, 4], "colorbars": {"shared_parameter": "dedicated_axis"}, "display_support": "frozen L100", "interpolation": {"map": "linear", "mask": "nearest-neighbor"}, "frozen_l100_source": {"path": "mask", "sha256": "x"}}])
     output = reporting.render_final_figures(config, tmp_path / "figures")
     manifest = json.loads((output / "figure_manifest.json").read_text())
     assert {"subject", "condition", "endpoint", "methods", "inputs", "longitudinal_figures", "native_heldout_figures", "shared_parameter_lut_ranges_ms", "error_display_contract", "code_git_sha"}.issubset(manifest)
-    assert manifest["endpoint"] == "psf128" and "same parameter map LUT/range" in manifest["error_display_contract"]
+    assert manifest["endpoint"] == "psf128" and "same parameter map LUT/range" in manifest["error_display_contract"] and "one shared parameter colorbar" in manifest["error_display_contract"]
     assert manifest["native_heldout_figures"][0]["mode"] == "all_groups"
     with pytest.raises(FileExistsError):
         reporting.render_final_figures(config, output)
