@@ -130,6 +130,35 @@ def test_all_groups_native_render_uses_every_heldout_group_and_records_mode(monk
     assert all((tmp_path / record["file"]).is_file() for record in records)
 
 
+def test_native_mosaic_reads_proposed_direct_native_bundle_without_volume_reprojection(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from paper_experiments.joint_vs_2dfit.phase2_clean import final_cyj_reporting as reporting
+
+    sparse_manifest = tmp_path / "sparse.json"
+    sparse_manifest.write_text(json.dumps({"condition": "L100", "stacks": {"2ch": {}}}), encoding="utf-8")
+    mask = _nifti(tmp_path / "mask.nii.gz", np.ones((2, 3, 2)), np.eye(4))
+    bundle = tmp_path / "q004_bundle"
+    (bundle / "planes" / "2ch").mkdir(parents=True)
+    (bundle / "manifest.json").write_text(json.dumps({"schema": "direct_native_prediction_bundle/v1", "endpoint": "central"}), encoding="utf-8")
+    np.savez_compressed(bundle / "planes" / "2ch" / "group003.npz", t1_ms=np.full((2, 3), 800.0), t2_ms=np.full((2, 3), 70.0), global_query_index=np.arange(6).reshape(2, 3))
+    fit = {parameter: str(_nifti(tmp_path / "fit" / f"{parameter}.nii.gz", np.ones((2, 3, 2)), np.eye(4))) for parameter in ("t1", "t2")}
+    cache_files = [tmp_path / name for name in ("native_maps.npz", "geometry.npz", "native_manifest.json")]
+    for path in cache_files:
+        path.write_bytes(b"cache")
+    selected = {"group_idx": np.array([3]), "source_support": np.ones((1, 2, 3), bool), "affine_lps_rc": np.repeat(np.eye(4)[None], 1, axis=0), "pixel_spacing_rc_mm": np.ones((1, 2)), "t1_ms": np.full((1, 2, 3), 1000.0), "t2_ms": np.full((1, 2, 3), 80.0), "provenance": dict(zip(("native_maps_path", "geometry_path", "manifest_path"), map(str, cache_files)))}
+    monkeypatch.setattr(reporting, "_heldout_ids", lambda sparse, stack: [3])
+    monkeypatch.setattr(reporting, "select_verified_native_cache_groups", lambda *args: selected)
+    monkeypatch.setattr(reporting, "reproject_binary_mask_to_native_plane", lambda *args: np.ones((2, 3), bool))
+    calls: list[str] = []
+    monkeypatch.setattr(reporting, "reproject_volume_to_native_plane", lambda *args: (calls.append("fit") or np.full((2, 3), 900.0), np.ones((2, 3), bool)))
+    rendered: list[object] = []
+    monkeypatch.setattr(reporting, "_plot_native_mosaic", lambda path, rows, *, title: rendered.append(rows))
+    config = {"subject": "CYJ", "condition": "L100_fold0", "endpoint": "central", "methods": {"Fit-first": fit, "Q004S640": {"native_bundle": str(bundle)}}, "l100_masks": {"t1": str(mask), "t2": str(mask)}, "native": {"mode": "all_groups", "stack": "2ch", "sparse_manifest": str(sparse_manifest), "r0_native_maps_root": str(tmp_path)}}
+    reporting._render_native(config, tmp_path, {})
+    q004 = next(panel for panel in rendered[0][0]["panels"] if panel["label"] == "Q004S640")
+    assert np.all(q004["values"] == 800.0)
+    assert calls == ["fit", "fit"]
+
+
 def _nifti(path: Path, values: np.ndarray, affine: np.ndarray) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     nib.save(nib.Nifti1Image(values.astype(np.float32), affine), path)

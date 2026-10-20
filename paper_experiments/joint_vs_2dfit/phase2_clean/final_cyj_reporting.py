@@ -703,7 +703,19 @@ def _render_native_stack(config: Mapping[str, Any], output: Path, inputs: dict[s
         mask_path = _load_mask_spec(config, parameter)
         mask_image = _image(mask_path)
         cmap, limits = colorbars().mapping[display_parameter], DISPLAY_RANGES_MS[display_parameter]
-        method_images = {method: _image(config["methods"][method][parameter]) for method in methods}
+        method_sources: dict[str, tuple[str, Any]] = {}
+        for method in methods:
+            configured = config["methods"][method]
+            if "native_bundle" in configured:
+                root = Path(configured["native_bundle"])
+                manifest_path = root / "manifest.json"
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                if manifest.get("schema") != "direct_native_prediction_bundle/v1" or manifest.get("endpoint") != config["endpoint"]:
+                    raise ValueError(f"{method}: direct-native bundle endpoint/schema mismatch")
+                method_sources[method] = ("direct_native_bundle", root)
+                inputs.setdefault(f"{method}_direct_native_bundle_manifest", _file_record(manifest_path))
+            else:
+                method_sources[method] = ("volume", _image(configured[parameter]))
         mosaic_rows: list[dict[str, Any]] = []
         shapes: dict[str, list[int]] = {}
         for group in display_groups:
@@ -715,8 +727,20 @@ def _render_native_stack(config: Mapping[str, Any], output: Path, inputs: dict[s
             reference = np.asarray(selected[f"{parameter}_ms"][index], float)
             panels = [{"label": "Native reference", "values": reference, "support": support & np.isfinite(reference), "cmap": cmap, "range_ms": limits}]
             method_panels: list[tuple[str, np.ndarray, np.ndarray]] = []
-            for method, image in method_images.items():
-                values, valid = reproject_volume_to_native_plane(image.get_fdata(), image.affine, affine, source_support.shape)
+            for method, (kind, source) in method_sources.items():
+                if kind == "direct_native_bundle":
+                    plane_path = source / "planes" / stack / f"group{group:03d}.npz"
+                    with np.load(plane_path, allow_pickle=False) as bundle:
+                        field = f"{parameter}_ms"
+                        if field not in bundle.files:
+                            raise ValueError(f"{plane_path}: missing {field}")
+                        values = np.asarray(bundle[field], float)
+                    if values.shape != source_support.shape:
+                        raise ValueError(f"{plane_path}: native plane shape does not match current reference")
+                    valid = np.isfinite(values)
+                else:
+                    image = source
+                    values, valid = reproject_volume_to_native_plane(image.get_fdata(), image.affine, affine, source_support.shape)
                 available = support & valid & np.isfinite(reference) & np.isfinite(values)
                 method_panels.append((method, values, available))
             panels.extend({"label": method, "values": values, "support": available, "cmap": cmap, "range_ms": limits} for method, values, available in method_panels)
@@ -755,8 +779,8 @@ def render_final_figures(config_path: str | Path, output: str | Path) -> Path:
     for method, maps in config["methods"].items():
         if method not in METHODS and method != "Fit-first":
             raise ValueError(f"unsupported method label: {method}")
-        if set(maps) != set(PARAMETERS):
-            raise ValueError(f"{method} must provide exactly t1 and t2 maps")
+        if set(maps) not in (set(PARAMETERS), {"native_bundle"}, set(PARAMETERS) | {"native_bundle"}):
+            raise ValueError(f"{method} must provide t1/t2 maps, native_bundle, or both")
     if "native" not in config or "longitudinal" not in config or "l100_masks" not in config:
         raise ValueError("figure config requires longitudinal, native, and frozen L100-mask inputs")
     output.parent.mkdir(parents=True, exist_ok=True)

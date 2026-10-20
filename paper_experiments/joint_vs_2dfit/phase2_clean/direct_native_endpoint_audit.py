@@ -60,6 +60,18 @@ def _binary_world_sample(mask: np.ndarray, affine: np.ndarray, world_xyz: np.nda
     return np.asarray(inside, bool) & np.isfinite(values) & (values > .5)
 
 
+def train_world_to_physical_ras(space: Any, world_train: np.ndarray, torch_module: Any) -> np.ndarray:
+    """Convert the historical direct-INR training coordinates to physical RAS-mm."""
+    train = torch_module.as_tensor(world_train, dtype=torch_module.float32)
+    return space.train_ras_to_physical(train).detach().cpu().numpy()
+
+
+def sample_exported_volume_at_train_world(volume: np.ndarray, affine_ras_mm: np.ndarray, world_train: np.ndarray, space: Any, torch_module: Any, *, order: int = 1) -> tuple[np.ndarray, np.ndarray]:
+    """Sample a physical-RAS NIfTI at native points represented in training space."""
+    physical_ras = train_world_to_physical_ras(space, world_train, torch_module)
+    return _world_sample(volume, affine_ras_mm, _world_homogeneous(physical_ras), order=order)
+
+
 def _model_prediction(model: Any, world_xyz: np.ndarray, parameter_key: str, torch_module: Any) -> np.ndarray:
     device = next(model.parameters()).device
     world = torch_module.as_tensor(world_xyz.reshape(-1, 3), dtype=torch_module.float32, device=device)
@@ -142,15 +154,15 @@ def run_direct_native_endpoint_audit(*, checkpoint: str | Path, prepared_root: s
                     for parameter, field in PARAMETERS.items():
                         reference = np.asarray(cached[field][cache_index], float)
                         direct = _model_prediction(model, world, field, torch)
-                        volume, volume_valid = _world_sample(central[parameter].get_fdata(), central[parameter].affine, _world_homogeneous(world), order=1)
-                        l100_native = _binary_world_sample(l100[parameter].get_fdata() > .5, l100[parameter].affine, world)
+                        volume, volume_valid = sample_exported_volume_at_train_world(central[parameter].get_fdata(), central[parameter].affine, world, space, torch, order=1)
+                        l100_native = _binary_world_sample(l100[parameter].get_fdata() > .5, l100[parameter].affine, train_world_to_physical_ras(space, world, torch))
                         support = exact_shared_support(reference, source_support, l100_native, direct, volume, np.ones(shape, bool), volume_valid)
                         target = staging / "planes" / parameter / stack / f"group{local_group:03d}.npz"; target.parent.mkdir(parents=True, exist_ok=True)
-                        np.savez_compressed(target, reference=reference, direct_native=direct, central_volume=volume, source_support=source_support, l100_native=l100_native, shared_support=support, world_ras_mm=world)
+                        np.savez_compressed(target, reference=reference, direct_native=direct, central_volume=volume, source_support=source_support, l100_native=l100_native, shared_support=support, world_train_ras=world)
                         figure = staging / "figures" / parameter / stack / f"group{local_group:03d}.png"; figure.parent.mkdir(parents=True, exist_ok=True); _plot(figure, reference, direct, volume, support, parameter)
                         plane_records.append({"parameter": parameter, "stack": stack, "group_idx": local_group, "global_pose_group_idx": group_offset + local_group, "output": str(target.relative_to(staging)), "figure": str(figure.relative_to(staging)), "shared_support_voxels": int(support.sum()), "direct_native_vs_reference": _metrics(reference, direct, support) if support.any() else None, "central_volume_vs_reference": _metrics(reference, volume, support) if support.any() else None, "direct_native_vs_central_volume": _metrics(direct, volume, support) if support.any() else None})
             group_offset += len(group_ids)
-        write_immutable_json(staging / "manifest.json", {"schema": "q004_direct_native_endpoint_audit/v1", "checkpoint": _record(checkpoint), "prepared_observations": {_stack: _record(path) for _stack, path in zip(STACKS, prepared_paths)}, "central_volumes": {name: _record(path) for name, path in (("t1", Path(central_t1)), ("t2", Path(central_t2)))}, "frozen_l100_masks": {name: _record(path) for name, path in (("t1", Path(l100_t1)), ("t2", Path(l100_t2)))}, "coordinate_contract": "same per-native-pixel world grid: historical local grid -> space.local_to_train -> canonical checkpoint final learned rigid pose; direct=model.inr(world), central=linear NIfTI sampling at same world", "direct_native_is_not_training": True, "central_volume_is_not_reconstruction": True, "no_training": True, "no_reconstruction": True, "no_formal_export_modified": True, "planes": plane_records})
+        write_immutable_json(staging / "manifest.json", {"schema": "q004_direct_native_endpoint_audit/v2", "checkpoint": _record(checkpoint), "prepared_observations": {_stack: _record(path) for _stack, path in zip(STACKS, prepared_paths)}, "central_volumes": {name: _record(path) for name, path in (("t1", Path(central_t1)), ("t2", Path(central_t2)))}, "frozen_l100_masks": {name: _record(path) for name, path in (("t1", Path(l100_t1)), ("t2", Path(l100_t2)))}, "coordinate_contract": "historical native local grid -> space.local_to_train -> final learned pose gives training-space INR coordinates; direct=model.inr(training_world), while NIfTI/mask sampling first applies space.train_ras_to_physical(training_world) then samples physical-RAS NIfTI", "direct_native_is_not_training": True, "central_volume_is_not_reconstruction": True, "no_training": True, "no_reconstruction": True, "no_formal_export_modified": True, "planes": plane_records})
         staging.rename(output)
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True); raise
