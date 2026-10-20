@@ -273,7 +273,7 @@ def test_scmr_longitudinal_uses_sax_source_for_two_centreline_rows(monkeypatch: 
         "t1_ms": np.full((3, 4, 6), 1000.0), "t2_ms": np.full((3, 4, 6), 80.0),
         "provenance": dict(zip(("native_maps_path", "geometry_path", "manifest_path"), map(str, cache_files))),
     }
-    sax["affine_lps_rc"][1, 2, 3] = 1.0; sax["affine_lps_rc"][2, 2, 3] = 2.0
+    sax["affine_lps_rc"][1, 2, 3] = 8.0; sax["affine_lps_rc"][2, 2, 3] = 16.0
     monkeypatch.setattr(reporting, "_load_all_verified_native_cache_groups", lambda *args: sax)
     methods = {method: {parameter: str(_nifti(tmp_path / method / f"{parameter}.nii.gz", np.full((4, 6, 3), value), affine)) for parameter in ("t1", "t2")} for method, value in (("Fit-first", 1100), ("Q002S640", 1000), ("Q004S640", 900))}
     captured: list[list[dict[str, object]]] = []
@@ -288,7 +288,11 @@ def test_scmr_longitudinal_uses_sax_source_for_two_centreline_rows(monkeypatch: 
         ["Original SAX-stack longitudinal reformatting", "Fit-first", "Q002S640", "Q004S640"],
     ]
     assert all(record["layout"] == {"rows": 2, "columns": 5, "column_labels": list(reporting.scmr_longitudinal_panel_labels())} for record in records)
-    assert all(record["sampling"] == {"source": "nearest-neighbor", "reconstruction": "linear", "same_world_plane_for_source_reformat_and_all_reconstructions": True} for record in records)
+    assert all(record["sampling"]["source"] == "nearest-neighbor on source-stack grid" for record in records)
+    assert all(record["sampling"]["reconstruction"] == "linear on shared approximately-1-mm physical plane" for record in records)
+    assert all(record["sampling"]["reconstruction_support"] == "in_volume AND finite only" for record in records)
+    assert all(record["sampling"]["same_physical_plane_for_source_reformat_and_all_reconstructions"] is True for record in records)
+    assert all(record["cuts"][0]["reconstruction_plane"]["actual_spacing_mm"][1] <= 1.0 for record in records)
     assert {(tmp_path / record["file"]).name for record in records} == {"longitudinal_sax_centerline_T1.png", "longitudinal_sax_centerline_T2.png"}
     assert all((tmp_path / record["file"]).is_file() for record in records)
 

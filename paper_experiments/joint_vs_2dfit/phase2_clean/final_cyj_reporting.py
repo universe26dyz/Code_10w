@@ -555,6 +555,32 @@ def _sax_cut_plane(stack_shape: tuple[int, int, int], affine: np.ndarray, *, cut
     return {"world": world, "extent_mm": [0.0, (indices.shape[1] - 1) * spacing[0], 0.0, (indices.shape[2] - 1) * spacing[1]], "shape": list(indices.shape[1:]), "cut": cut, "index": int(index), "in_plane_axes": list(in_plane_axes)}
 
 
+def _dense_physical_plane(source_plane: Mapping[str, Any], *, spacing_mm: float = 1.0) -> dict[str, Any]:
+    """Resample one physical SAX cut at approximately 1-mm in-plane spacing.
+
+    The source stack and every reconstruction retain their own raster, but all
+    reconstruction samples are taken on this one common physical plane.
+    """
+    if spacing_mm <= 0:
+        raise ValueError("dense physical plane spacing must be positive")
+    source_world = np.asarray(source_plane["world"], float)
+    origin = source_world[:3, 0, 0]
+    first_vector = source_world[:3, -1, 0] - origin
+    second_vector = source_world[:3, 0, -1] - origin
+    first_length, second_length = float(np.linalg.norm(first_vector)), float(np.linalg.norm(second_vector))
+    if first_length <= 0 or second_length <= 0:
+        raise ValueError("SAX centre-line plane must span two non-zero physical axes")
+    first_count, second_count = int(np.ceil(first_length / spacing_mm)) + 1, int(np.ceil(second_length / spacing_mm)) + 1
+    first_positions = np.linspace(0.0, first_length, first_count)
+    second_positions = np.linspace(0.0, second_length, second_count)
+    first_unit, second_unit = first_vector / first_length, second_vector / second_length
+    first, second = np.meshgrid(first_positions, second_positions, indexing="ij")
+    world = np.empty((4, first_count, second_count), float)
+    world[:3] = origin[:, None, None] + first_unit[:, None, None] * first + second_unit[:, None, None] * second
+    world[3] = 1.0
+    return {"world": world, "extent_mm": [0.0, first_length, 0.0, second_length], "shape": [first_count, second_count], "requested_spacing_mm": float(spacing_mm), "actual_spacing_mm": [first_length / (first_count - 1), second_length / (second_count - 1)], "same_physical_plane_as_source": True}
+
+
 def _plot_scmr_longitudinal(path: Path, rows: list[dict[str, Any]], *, title: str, limits: tuple[float, float], cmap: Any) -> None:
     """Two physical SAX centre-line cuts with one parameter colorbar."""
     import matplotlib.pyplot as plt
@@ -623,19 +649,20 @@ def _render_scmr_style_longitudinal(config: Mapping[str, Any], output: Path, inp
         cut_records: list[dict[str, Any]] = []
         for cut, index in sax_centerline_cuts(source_shape):
             plane = _sax_cut_plane(stack_shape, source_affine, cut=cut, index=index)
+            dense_plane = _dense_physical_plane(plane, spacing_mm=float(section.get("reconstruction_spacing_mm", 1.0)))
             native_values, native_valid = _world_sample(source_stack, source_affine, plane["world"], order=0)
             native_support, native_support_valid = _world_sample(support_stack.astype(np.uint8), source_affine, plane["world"], order=0)
             longitudinal = [{"label": scmr_longitudinal_panel_labels()[1], "values": native_values, "support": native_valid & native_support_valid & (native_support > .5) & np.isfinite(native_values)}]
             for method, image in method_images.items():
-                values, valid = _world_sample(image.get_fdata(), image.affine, plane["world"], order=1)
-                longitudinal.append({"label": method, "values": values, "support": valid & native_support_valid & (native_support > .5) & np.isfinite(values)})
+                values, valid = _world_sample(image.get_fdata(), image.affine, dense_plane["world"], order=1)
+                longitudinal.append({"label": method, "values": values, "support": valid & np.isfinite(values)})
             line_coordinate = float(index * source_spacing[0 if cut == "center_row" else 1])
             rows.append({"cut": cut, "source": {"values": np.asarray(sax[f"{parameter}_ms"][reference_index], float), "support": np.asarray(sax["source_support"][reference_index], bool), "extent_mm": source_extent}, "source_line_coordinate_mm": line_coordinate, "longitudinal": longitudinal, "extent_mm": plane["extent_mm"]})
-            cut_records.append({"cut": cut, "source_line_index": index, "source_line_coordinate_mm": line_coordinate, "source_plane_group_idx": reference_group, "line_origin_world_ras_mm": [float(value) for value in plane["world"][:3, 0, 0]], "plane": {key: value for key, value in plane.items() if key != "world"}})
+            cut_records.append({"cut": cut, "source_line_index": index, "source_line_coordinate_mm": line_coordinate, "source_plane_group_idx": reference_group, "line_origin_world_ras_mm": [float(value) for value in plane["world"][:3, 0, 0]], "source_plane": {key: value for key, value in plane.items() if key != "world"}, "reconstruction_plane": {key: value for key, value in dense_plane.items() if key != "world"}})
         cmap, limits = colorbars().mapping[display_parameter], DISPLAY_RANGES_MS[display_parameter]
         filename = f"longitudinal_sax_centerline_{display_parameter}.png"
         _plot_scmr_longitudinal(output / filename, rows, title=f"{config['subject']} {config['condition']} {config['endpoint']} — SAX centre-line longitudinal {display_parameter}", limits=limits, cmap=cmap)
-        records.append({"parameter": display_parameter, "file": filename, "layout": {"rows": 2, "columns": 5, "column_labels": list(scmr_longitudinal_panel_labels())}, "sax_reference_group_idx": reference_group, "sax_reference_group_selection": selection_rule, "cuts": cut_records, "sampling": {"source": "nearest-neighbor", "reconstruction": "linear", "same_world_plane_for_source_reformat_and_all_reconstructions": True}, "no_auto_crop": True, "physical_aspect_ratio_preserved": True, "colorbars": {"shared_parameter": "dedicated_axis", "range_ms": list(limits), "colormap": "same_parameter_map_lut"}, "native_source": sax["provenance"]})
+        records.append({"parameter": display_parameter, "file": filename, "layout": {"rows": 2, "columns": 5, "column_labels": list(scmr_longitudinal_panel_labels())}, "sax_reference_group_idx": reference_group, "sax_reference_group_selection": selection_rule, "cuts": cut_records, "sampling": {"source": "nearest-neighbor on source-stack grid", "reconstruction": "linear on shared approximately-1-mm physical plane", "same_physical_plane_for_source_reformat_and_all_reconstructions": True, "reconstruction_support": "in_volume AND finite only", "optional_reconstruction_display_roi": bool(section.get("reconstruction_display_roi", False))}, "no_auto_crop": True, "physical_aspect_ratio_preserved": True, "colorbars": {"shared_parameter": "dedicated_axis", "range_ms": list(limits), "colormap": "same_parameter_map_lut"}, "native_source": sax["provenance"]})
     for key in ("native_maps_path", "geometry_path", "manifest_path"):
         inputs[f"scmr_sax_{key}"] = _file_record(sax["provenance"][key])
     return records
