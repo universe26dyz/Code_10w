@@ -201,3 +201,113 @@ def test_final_reporting_server_wrapper_exposes_aggregate_and_figures() -> None:
     command = (scripts / "finalize_cyj_reporting.sh").read_text(encoding="utf-8")
     assert "aggregate" in command and "figures" in command
     assert "phase2_clean.final_cyj_reporting" in command and "--method-root" in command and "--config" in command
+
+
+def test_scmr_compatibility_wrapper_is_auxiliary_and_explicit() -> None:
+    scripts = Path(__file__).resolve().parents[3] / "paper_experiments" / "joint_vs_2dfit" / "phase2_clean" / "server_commands"
+    command = (scripts / "run_scmr_compatibility_eval.sh").read_text(encoding="utf-8")
+    assert "scmr_compatibility_eval" in command
+    assert "COMPATIBILITY_CONFIG_JSON" in command and "NEW_COMPATIBILITY_OUTPUT_ROOT" in command
+    assert "final_cyj_reporting" not in command
+
+
+def test_all_source_groups_marks_sparse_heldout_and_observed_groups() -> None:
+    from paper_experiments.joint_vs_2dfit.phase2_clean import final_cyj_reporting as reporting
+
+    sparse = {"condition": "L50", "stacks": {"sax": {"heldout_original_group_ids": [3, 7]}}}
+    mode, groups = reporting.native_preview_groups(
+        {"mode": "all_source_groups", "stack": "sax"}, sparse, source_groups=[1, 3, 5, 7],
+    )
+    assert (mode, groups) == ("all_source_groups", [1, 3, 5, 7])
+    assert reporting.native_group_statuses(groups, sparse, "sax") == {
+        1: "observed", 3: "held-out", 5: "observed", 7: "held-out",
+    }
+    assert reporting.native_group_label(3, "held-out") == "group 03 [held-out]"
+    assert reporting.native_group_statuses([1, 3], {"condition": "L100"}, "sax") == {1: "source", 3: "source"}
+
+
+def test_sax_centerline_selection_is_deterministic_and_has_row_and_column_cuts() -> None:
+    from paper_experiments.joint_vs_2dfit.phase2_clean import final_cyj_reporting as reporting
+
+    selected, rule = reporting.select_sax_reference_group([9, 2, 7, 5], {})
+    assert (selected, rule) == (5, "sorted_source_group_lower_median")
+    assert reporting.select_sax_reference_group([2, 5, 7], {"sax_reference_group_idx": 7}) == (7, "configured_sax_reference_group_idx")
+    assert reporting.sax_centerline_cuts((6, 8)) == (("center_row", 2), ("center_column", 3))
+    assert reporting.scmr_longitudinal_panel_labels() == (
+        "SAX source + centerline overlay", "Original SAX-stack longitudinal reformatting", "Fit-first", "Q002S640", "Q004S640",
+    )
+
+
+def test_scmr_compatibility_outputs_are_separate_from_primary_summary(tmp_path: Path) -> None:
+    from paper_experiments.joint_vs_2dfit.phase2_clean.scmr_compatibility_eval import run_scmr_compatibility_analysis
+
+    affine = np.eye(4)
+    reference = _nifti(tmp_path / "reference.nii.gz", np.array([[[1000.0]], [[1200.0]]]), affine)
+    fit_first = _nifti(tmp_path / "fit_first.nii.gz", np.array([[[1100.0]], [[1100.0]]]), affine)
+    legacy_mask = _nifti(tmp_path / "legacy_mask.nii.gz", np.ones((2, 1, 1)), affine)
+    config = {
+        "subject": "CYJ", "condition": "L100_fold0", "endpoint": "psf128",
+        "reference_maps": {"t1": str(reference), "t2": str(reference)},
+        "method_maps": {"Fit-first": {"t1": str(fit_first), "t2": str(fit_first)}},
+        "legacy_masks": {"t1": str(legacy_mask), "t2": str(legacy_mask)},
+    }
+    config_path = tmp_path / "compatibility_config.json"; config_path.write_text(json.dumps(config), encoding="utf-8")
+    output = run_scmr_compatibility_analysis(config_path, tmp_path / "scmr_compatibility")
+    manifest = json.loads((output / "compatibility_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["schema"] == "phase4r_scmr_compatibility/v1"
+    assert "primary_formal_results_unmodified" in manifest["scope"]
+    assert (output / "compatibility_metrics.json").is_file()
+    assert not (output / "summary.json").exists()
+
+
+def test_scmr_longitudinal_uses_sax_source_for_two_centreline_rows(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from paper_experiments.joint_vs_2dfit.phase2_clean import final_cyj_reporting as reporting
+
+    affine = np.eye(4)
+    cache_files = [tmp_path / name for name in ("native_maps.npz", "geometry.npz", "native_manifest.json")]
+    for path in cache_files:
+        path.write_bytes(b"cache")
+    sax = {
+        "group_idx": np.array([2, 5, 8]), "source_support": np.ones((3, 4, 6), bool),
+        "affine_lps_rc": np.repeat(np.eye(4)[None], 3, axis=0), "pixel_spacing_rc_mm": np.ones((3, 2)), "slice_thickness_mm": np.ones(3),
+        "t1_ms": np.full((3, 4, 6), 1000.0), "t2_ms": np.full((3, 4, 6), 80.0),
+        "provenance": dict(zip(("native_maps_path", "geometry_path", "manifest_path"), map(str, cache_files))),
+    }
+    sax["affine_lps_rc"][1, 2, 3] = 1.0; sax["affine_lps_rc"][2, 2, 3] = 2.0
+    monkeypatch.setattr(reporting, "_load_all_verified_native_cache_groups", lambda *args: sax)
+    methods = {method: {parameter: str(_nifti(tmp_path / method / f"{parameter}.nii.gz", np.full((4, 6, 3), value), affine)) for parameter in ("t1", "t2")} for method, value in (("Fit-first", 1100), ("Q002S640", 1000), ("Q004S640", 900))}
+    captured: list[list[dict[str, object]]] = []
+    original_plot = reporting._plot_scmr_longitudinal
+    monkeypatch.setattr(reporting, "_plot_scmr_longitudinal", lambda path, rows, **kwargs: (captured.append(rows), original_plot(path, rows, **kwargs))[1])
+    config = {"subject": "CYJ", "condition": "L100_fold0", "endpoint": "psf128", "methods": methods,
+              "native": {"r0_native_maps_root": str(tmp_path), "sparse_manifest": str(tmp_path / "sparse.json")}, "scmr_longitudinal": {}}
+    records = reporting._render_scmr_style_longitudinal(config, tmp_path, {})
+    assert len(captured) == 2 and all(len(rows) == 2 for rows in captured)
+    assert [[panel["label"] for panel in row["longitudinal"]] for row in captured[0]] == [
+        ["Original SAX-stack longitudinal reformatting", "Fit-first", "Q002S640", "Q004S640"],
+        ["Original SAX-stack longitudinal reformatting", "Fit-first", "Q002S640", "Q004S640"],
+    ]
+    assert all(record["layout"] == {"rows": 2, "columns": 5, "column_labels": list(reporting.scmr_longitudinal_panel_labels())} for record in records)
+    assert all(record["sampling"] == {"source": "nearest-neighbor", "reconstruction": "linear", "same_world_plane_for_source_reformat_and_all_reconstructions": True} for record in records)
+    assert {(tmp_path / record["file"]).name for record in records} == {"longitudinal_sax_centerline_T1.png", "longitudinal_sax_centerline_T2.png"}
+    assert all((tmp_path / record["file"]).is_file() for record in records)
+
+
+def test_all_source_native_render_records_displayed_statuses(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from paper_experiments.joint_vs_2dfit.phase2_clean import final_cyj_reporting as reporting
+
+    sparse_manifest = tmp_path / "sparse.json"; sparse_manifest.write_text(json.dumps({"condition": "L50", "stacks": {"sax": {"heldout_original_group_ids": [2]}}}), encoding="utf-8")
+    mask = _nifti(tmp_path / "mask.nii.gz", np.ones((2, 3, 2)), np.eye(4))
+    maps = {method: {parameter: str(_nifti(tmp_path / method / f"{parameter}.nii.gz", np.ones((2, 3, 2)), np.eye(4))) for parameter in ("t1", "t2")} for method in ("Fit-first", "Q002S640", "Q004S640")}
+    cache_files = [tmp_path / name for name in ("native_maps.npz", "geometry.npz", "native_manifest.json")]
+    for path in cache_files:
+        path.write_bytes(b"cache")
+    selected = {"group_idx": np.array([1, 2, 3]), "source_support": np.ones((3, 2, 3), bool), "affine_lps_rc": np.repeat(np.eye(4)[None], 3, axis=0), "pixel_spacing_rc_mm": np.ones((3, 2)), "t1_ms": np.full((3, 2, 3), 1000.0), "t2_ms": np.full((3, 2, 3), 80.0), "provenance": dict(zip(("native_maps_path", "geometry_path", "manifest_path"), map(str, cache_files)))}
+    monkeypatch.setattr(reporting, "_load_all_verified_native_cache_groups", lambda *args: selected)
+    monkeypatch.setattr(reporting, "_heldout_ids", lambda sparse, stack: [2])
+    monkeypatch.setattr(reporting, "reproject_binary_mask_to_native_plane", lambda *args: np.ones((2, 3), bool))
+    monkeypatch.setattr(reporting, "reproject_volume_to_native_plane", lambda values, affine, plane, shape: (np.full(shape, 900.0), np.ones(shape, bool)))
+    config = {"subject": "CYJ", "condition": "L50_fold0", "endpoint": "central", "methods": maps, "l100_masks": {"t1": str(mask), "t2": str(mask)}, "native": {"mode": "all_source_groups", "stack": "sax", "sparse_manifest": str(sparse_manifest), "r0_native_maps_root": str(tmp_path)}}
+    records = reporting._render_native(config, tmp_path, {})
+    assert all(record["original_group_ids"] == [1, 2, 3] for record in records)
+    assert all(record["displayed_groups"] == [{"group_idx": 1, "status": "observed", "label": "group 01 [observed]"}, {"group_idx": 2, "status": "held-out", "label": "group 02 [held-out]"}, {"group_idx": 3, "status": "observed", "label": "group 03 [observed]"}] for record in records)

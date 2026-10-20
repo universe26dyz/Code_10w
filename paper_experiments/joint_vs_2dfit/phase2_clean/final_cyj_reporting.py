@@ -16,7 +16,7 @@ import numpy as np
 from .contracts import sha256, write_immutable_json
 from .evaluation import _world_sample, reproject_volume_to_native_plane
 from .l100_mask_paired_eval import reproject_binary_mask_to_native_plane
-from .fit_first import select_verified_native_cache_groups
+from .fit_first import NATIVE_FIT_METHOD, _complete_source_group, _dictionary_contract, select_verified_native_cache_groups
 from .heldout import _heldout_ids
 from .visualization import DISPLAY_RANGES_MS, colorbars
 
@@ -300,18 +300,20 @@ def _plot_panels(path: Path, panels: list[dict[str, Any]], *, extent: list[float
     plt.close(figure)
 
 
-def _native_mosaic_row(row: Any) -> tuple[int, list[dict[str, Any]], list[float], np.ndarray | None]:
+def _native_mosaic_row(row: Any) -> tuple[int, str, list[dict[str, Any]], list[float], np.ndarray | None]:
     if isinstance(row, Mapping):
         group, panels = int(row["group_idx"]), list(row["panels"])
         extent, contour = row.get("extent"), row.get("contour")
+        label = str(row.get("group_label", f"group {group}"))
     else:
         group, panels, *extra = row
         group, panels = int(group), list(panels)
         extent, contour = (extra + [None, None])[:2]
+        label = f"group {group}"
     values = np.asarray(panels[0]["values"])
     if extent is None:
         extent = [0.0, float(values.shape[0] - 1), 0.0, float(values.shape[1] - 1)]
-    return group, panels, list(extent), None if contour is None else np.asarray(contour, bool)
+    return group, label, panels, list(extent), None if contour is None else np.asarray(contour, bool)
 
 
 def _plot_native_mosaic(path: Path, rows: list[Any], *, title: str) -> None:
@@ -321,13 +323,13 @@ def _plot_native_mosaic(path: Path, rows: list[Any], *, title: str) -> None:
     if not rows:
         raise ValueError("native mosaic requires at least one group")
     normalized = [_native_mosaic_row(row) for row in rows]
-    panel_count = len(normalized[0][1])
-    if not panel_count or any(len(panels) != panel_count for _, panels, _, _ in normalized):
+    panel_count = len(normalized[0][2])
+    if not panel_count or any(len(panels) != panel_count for _, _, panels, _, _ in normalized):
         raise ValueError("native mosaic rows must have an identical non-empty panel layout")
     figure = plt.figure(figsize=(2.5 * panel_count + .65, max(3.2, 2.55 * len(normalized) + .5)))
     grid = figure.add_gridspec(len(normalized), panel_count + 1, width_ratios=[1.0] * panel_count + [.06], wspace=.12, hspace=.12)
     map_handle = None
-    for row_index, (group, panels, extent, contour) in enumerate(normalized):
+    for row_index, (_, group_label, panels, extent, contour) in enumerate(normalized):
         for column, panel in enumerate(panels):
             axis = figure.add_subplot(grid[row_index, column])
             shown = np.ma.masked_invalid(np.where(panel["support"], panel["values"], np.nan))
@@ -337,7 +339,7 @@ def _plot_native_mosaic(path: Path, rows: list[Any], *, title: str) -> None:
             if row_index == 0:
                 axis.set_title(panel["label"], fontsize=8)
             if column == 0:
-                axis.set_ylabel(f"group {group}", fontsize=8)
+                axis.set_ylabel(group_label, fontsize=8)
             axis.set_xticks([]); axis.set_yticks([])
             if not panel["label"].startswith("|"):
                 map_handle = image
@@ -351,21 +353,60 @@ def _plot_native_mosaic(path: Path, rows: list[Any], *, title: str) -> None:
     plt.close(figure)
 
 
-def native_preview_groups(native: Mapping[str, Any], sparse: Mapping[str, Any]) -> tuple[str, list[int]]:
+def native_preview_groups(native: Mapping[str, Any], sparse: Mapping[str, Any], *, source_groups: list[int] | None = None) -> tuple[str, list[int]]:
     """Resolve display groups while retaining the sparse manifest as authority."""
     mode = str(native.get("mode", "single"))
     stack = str(native["stack"])
     authoritative = _heldout_ids(dict(sparse), stack)
     if mode == "all_groups":
         return mode, authoritative
+    if mode == "all_source_groups":
+        if source_groups is None:
+            raise ValueError("native all_source_groups mode requires cached source group IDs")
+        return mode, sorted({int(group) for group in source_groups})
     if mode != "single":
-        raise ValueError("native.mode must be 'single' or 'all_groups'")
+        raise ValueError("native.mode must be 'single', 'all_groups', or 'all_source_groups'")
     if "original_group_idx" not in native:
         raise ValueError("native single mode requires original_group_idx")
     group = int(native["original_group_idx"])
     if group not in authoritative:
         raise ValueError(f"requested native group {group} is unavailable for {stack}")
     return mode, [group]
+
+
+def native_group_statuses(groups: list[int], sparse: Mapping[str, Any], stack: str) -> dict[int, str]:
+    """Label source groups without changing sparse membership or numerical support."""
+    if sparse.get("condition") == "L100":
+        return {int(group): "source" for group in groups}
+    heldout = set(_heldout_ids(dict(sparse), stack))
+    return {int(group): "held-out" if int(group) in heldout else "observed" for group in groups}
+
+
+def native_group_label(group: int, status: str) -> str:
+    return f"group {int(group):02d} [{status}]"
+
+
+def select_sax_reference_group(groups: list[int], section: Mapping[str, Any]) -> tuple[int, str]:
+    """Choose a reproducible source slice for SCMR-style centre-line previews."""
+    ordered = sorted({int(group) for group in groups})
+    if not ordered:
+        raise ValueError("SCMR-style longitudinal preview requires SAX source groups")
+    if "sax_reference_group_idx" in section:
+        chosen = int(section["sax_reference_group_idx"])
+        if chosen not in ordered:
+            raise ValueError("configured sax_reference_group_idx is not a SAX source group")
+        return chosen, "configured_sax_reference_group_idx"
+    return ordered[(len(ordered) - 1) // 2], "sorted_source_group_lower_median"
+
+
+def sax_centerline_cuts(shape_rc: tuple[int, int]) -> tuple[tuple[str, int], tuple[str, int]]:
+    if len(shape_rc) != 2 or min(shape_rc) <= 0:
+        raise ValueError("invalid SAX source-plane shape")
+    return (("center_row", (int(shape_rc[0]) - 1) // 2), ("center_column", (int(shape_rc[1]) - 1) // 2))
+
+
+def scmr_longitudinal_panel_labels() -> tuple[str, str, str, str, str]:
+    return ("SAX source + centerline overlay", "Original SAX-stack longitudinal reformatting", "Fit-first", "Q002S640", "Q004S640")
 
 
 def native_preview_stack_configs(native: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -393,6 +434,65 @@ def native_preview_stack_configs(native: Mapping[str, Any]) -> list[dict[str, An
 def _file_record(path: str | Path) -> dict[str, str]:
     item = Path(path)
     return {"path": str(item.resolve()), "sha256": sha256(item)}
+
+
+def _load_all_verified_native_cache_groups(native_root: str | Path, sparse_manifest: str | Path, stack: str) -> dict[str, Any]:
+    """Read every cached source group after the existing sparse provenance check passes.
+
+    This is report-only: it does not alter the held-out subset used by the
+    numerical evaluator or by reconstruction.
+    """
+    root, manifest_path = Path(native_root), Path(sparse_manifest)
+    sparse = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if sparse.get("status") != "ELIGIBLE":
+        raise ValueError("all-source native reporting requires an ELIGIBLE sparse manifest")
+    sparse_stack = sparse.get("stacks", {}).get(stack)
+    if not isinstance(sparse_stack, Mapping):
+        raise ValueError(f"{stack}: sparse manifest stack is missing")
+    cache_root = root / stack
+    maps_path, geometry_path, cache_manifest_path = cache_root / "native_maps.npz", cache_root / "geometry.npz", cache_root / "manifest.json"
+    cache_manifest = json.loads(cache_manifest_path.read_text(encoding="utf-8"))
+    if cache_manifest.get("method") != NATIVE_FIT_METHOD or cache_manifest.get("dictionary_contract") != _dictionary_contract():
+        raise ValueError(f"{stack}: native cache does not satisfy the frozen dictionary contract")
+    if cache_manifest.get("native_maps_sha256") != sha256(maps_path) or cache_manifest.get("geometry_sha256") != sha256(geometry_path):
+        raise ValueError(f"{stack}: native cache SHA256 mismatch")
+    sparse_source = sparse_stack.get("source_observation", {})
+    if cache_manifest.get("source_observations", {}).get("sha256") != sparse_source.get("sha256"):
+        raise ValueError(f"{stack}: sparse and cached source observation identities differ")
+    source = Path(str(cache_manifest["source_observations"]["path"]))
+    if not source.is_file() or sha256(source) != cache_manifest["source_observations"]["sha256"]:
+        raise ValueError(f"{stack}: cached source observations are unavailable or changed")
+    with np.load(maps_path, allow_pickle=False) as maps, np.load(geometry_path, allow_pickle=False) as geometry, np.load(source, allow_pickle=False) as observations:
+        if any(name not in maps.files for name in ("t1_ms", "t2_ms", "b1", "group_idx")) or any(name not in geometry.files for name in ("affine_lps_rc", "pixel_spacing_rc_mm", "slice_thickness_mm")):
+            raise ValueError(f"{stack}: native cache is incomplete")
+        groups = [int(group) for group in maps["group_idx"]]
+        if len(groups) != len(set(groups)):
+            raise ValueError(f"{stack}: native cache group IDs are not unique")
+        if any(array.shape[0] != len(groups) for array in (maps["t1_ms"], maps["t2_ms"], maps["b1"], geometry["affine_lps_rc"], geometry["pixel_spacing_rc_mm"], geometry["slice_thickness_mm"])):
+            raise ValueError(f"{stack}: native cache group dimensions disagree")
+        order = np.argsort(groups)
+        groups = [groups[index] for index in order]
+        support = []
+        for group in groups:
+            rows = np.flatnonzero(observations["group_idx"] == group)
+            if not len(rows):
+                raise ValueError(f"{stack}: cached group {group} is missing from source observations")
+            _complete_source_group(observations, group, source)
+            support.append(np.all(observations["masks"][rows].astype(bool), axis=0))
+        result = {name: np.asarray(maps[name])[order].copy() for name in ("t1_ms", "t2_ms", "b1")}
+        result.update({name: np.asarray(geometry[name])[order].copy() for name in ("affine_lps_rc", "pixel_spacing_rc_mm", "slice_thickness_mm")})
+    result["group_idx"] = np.asarray(groups, dtype=int)
+    result["source_support"] = np.asarray(support, dtype=bool)
+    result["provenance"] = {
+        "native_reference_source": "R0_native_cache_all_source_groups_report_only",
+        "native_reference_cache_root": str(root.resolve()),
+        "native_maps_path": str(maps_path.resolve()), "native_maps_sha256": sha256(maps_path),
+        "geometry_path": str(geometry_path.resolve()), "geometry_sha256": sha256(geometry_path),
+        "manifest_path": str(cache_manifest_path.resolve()), "manifest_sha256": sha256(cache_manifest_path),
+        "source_observations": _file_record(source), "selected_original_group_ids": groups,
+        "report_only_all_source_groups": True,
+    }
+    return result
 
 
 def _render_longitudinal(config: Mapping[str, Any], output: Path, inputs: dict[str, Any]) -> list[dict[str, Any]]:
@@ -424,12 +524,133 @@ def _render_longitudinal(config: Mapping[str, Any], output: Path, inputs: dict[s
     return records
 
 
+def _sax_stack_affine_ras(sax: Mapping[str, Any]) -> np.ndarray:
+    affines = np.diag([-1.0, -1.0, 1.0, 1.0]) @ np.asarray(sax["affine_lps_rc"], float)
+    result = np.asarray(affines[0], float).copy()
+    if len(affines) > 1:
+        result[:3, 2] = np.median(np.diff(affines[:, :3, 3], axis=0), axis=0)
+    else:
+        normal = np.cross(result[:3, 0], result[:3, 1]); normal /= np.linalg.norm(normal)
+        result[:3, 2] = normal * float(np.asarray(sax["slice_thickness_mm"], float)[0])
+    if not np.any(result[:3, 2]):
+        raise ValueError("SAX source groups do not define a through-plane direction")
+    return result
+
+
+def _sax_cut_plane(stack_shape: tuple[int, int, int], affine: np.ndarray, *, cut: str, index: int) -> dict[str, Any]:
+    rows, columns, groups = stack_shape
+    if cut == "center_row":
+        first, second = np.indices((columns, groups), dtype=float)
+        indices = np.stack((np.full_like(first, index), first, second, np.ones_like(first)))
+        in_plane_axes = (1, 2)
+    elif cut == "center_column":
+        first, second = np.indices((rows, groups), dtype=float)
+        indices = np.stack((first, np.full_like(first, index), second, np.ones_like(first)))
+        in_plane_axes = (0, 2)
+    else:
+        raise ValueError(f"unsupported SAX centre-line cut: {cut}")
+    world = np.asarray(affine, float) @ indices.reshape(4, -1)
+    world = world.reshape(indices.shape)
+    spacing = [float(np.linalg.norm(np.asarray(affine, float)[:3, axis])) for axis in in_plane_axes]
+    return {"world": world, "extent_mm": [0.0, (indices.shape[1] - 1) * spacing[0], 0.0, (indices.shape[2] - 1) * spacing[1]], "shape": list(indices.shape[1:]), "cut": cut, "index": int(index), "in_plane_axes": list(in_plane_axes)}
+
+
+def _plot_scmr_longitudinal(path: Path, rows: list[dict[str, Any]], *, title: str, limits: tuple[float, float], cmap: Any) -> None:
+    """Two physical SAX centre-line cuts with one parameter colorbar."""
+    import matplotlib.pyplot as plt
+
+    labels = scmr_longitudinal_panel_labels()
+    figure = plt.figure(figsize=(15.2, 6.1))
+    grid = figure.add_gridspec(2, 6, width_ratios=[1.0] * 5 + [.06], wspace=.12, hspace=.20)
+    handle = None
+    for row_index, row in enumerate(rows):
+        source = row["source"]
+        source_axis = figure.add_subplot(grid[row_index, 0])
+        shown = np.ma.masked_invalid(np.where(source["support"], source["values"], np.nan))
+        handle = source_axis.imshow(shown.T, origin="lower", extent=source["extent_mm"], cmap=cmap, vmin=limits[0], vmax=limits[1], interpolation="none", aspect="equal")
+        if row["cut"] == "center_row":
+            source_axis.axvline(row["source_line_coordinate_mm"], color="cyan", linewidth=1.2)
+        else:
+            source_axis.axhline(row["source_line_coordinate_mm"], color="cyan", linewidth=1.2)
+        source_axis.set_ylabel(row["cut"].replace("_", " "), fontsize=8)
+        source_axis.set_title(labels[0], fontsize=8)
+        source_axis.set_xticks([]); source_axis.set_yticks([])
+        for column, panel in enumerate(row["longitudinal"], start=1):
+            axis = figure.add_subplot(grid[row_index, column])
+            shown = np.ma.masked_invalid(np.where(panel["support"], panel["values"], np.nan))
+            handle = axis.imshow(shown.T, origin="lower", extent=row["extent_mm"], cmap=cmap, vmin=limits[0], vmax=limits[1], interpolation="none", aspect="equal")
+            if row_index == 0:
+                axis.set_title(labels[column], fontsize=8)
+            axis.set_xticks([]); axis.set_yticks([])
+    colorbar_axis = figure.add_subplot(grid[:, -1])
+    figure.colorbar(handle, cax=colorbar_axis, label="ms; shared parameter map scale")
+    figure.suptitle(title, fontsize=10)
+    figure.subplots_adjust(top=.91, bottom=.04, left=.03, right=.98)
+    figure.savefig(path, dpi=220, bbox_inches="tight")
+    plt.close(figure)
+
+
+def _render_scmr_style_longitudinal(config: Mapping[str, Any], output: Path, inputs: dict[str, Any]) -> list[dict[str, Any]]:
+    """Optional report-only SAX source centre-line preview; primary figures stay unchanged."""
+    section = config.get("scmr_longitudinal")
+    if section is None:
+        return []
+    if not isinstance(section, Mapping):
+        raise ValueError("scmr_longitudinal must be a mapping")
+    native = config.get("native", {})
+    native_root = section.get("r0_native_maps_root", native.get("r0_native_maps_root"))
+    sparse_manifest = section.get("sparse_manifest", native.get("sparse_manifest"))
+    if not native_root or not sparse_manifest:
+        raise ValueError("scmr_longitudinal requires r0_native_maps_root and sparse_manifest")
+    sax = _load_all_verified_native_cache_groups(native_root, sparse_manifest, "sax")
+    groups = [int(group) for group in sax["group_idx"]]
+    reference_group, selection_rule = select_sax_reference_group(groups, section)
+    reference_index = groups.index(reference_group)
+    source_affine = _sax_stack_affine_ras(sax)
+    source_shape = tuple(int(value) for value in np.asarray(sax["source_support"]).shape[1:])
+    stack_shape = (source_shape[0], source_shape[1], len(groups))
+    source_spacing = np.asarray(sax["pixel_spacing_rc_mm"][reference_index], float)
+    source_extent = [0.0, (source_shape[0] - 1) * float(source_spacing[0]), 0.0, (source_shape[1] - 1) * float(source_spacing[1])]
+    methods = tuple(scmr_longitudinal_panel_labels()[2:])
+    if any(method not in config["methods"] for method in methods):
+        raise ValueError("scmr_longitudinal requires Fit-first, Q002S640, and Q004S640 map inputs")
+    records: list[dict[str, Any]] = []
+    for parameter, display_parameter in PARAMETERS.items():
+        source_stack = np.moveaxis(np.asarray(sax[f"{parameter}_ms"], float), 0, -1)
+        support_stack = np.moveaxis(np.asarray(sax["source_support"], bool), 0, -1)
+        method_images = {method: _image(config["methods"][method][parameter]) for method in methods}
+        rows: list[dict[str, Any]] = []
+        cut_records: list[dict[str, Any]] = []
+        for cut, index in sax_centerline_cuts(source_shape):
+            plane = _sax_cut_plane(stack_shape, source_affine, cut=cut, index=index)
+            native_values, native_valid = _world_sample(source_stack, source_affine, plane["world"], order=0)
+            native_support, native_support_valid = _world_sample(support_stack.astype(np.uint8), source_affine, plane["world"], order=0)
+            longitudinal = [{"label": scmr_longitudinal_panel_labels()[1], "values": native_values, "support": native_valid & native_support_valid & (native_support > .5) & np.isfinite(native_values)}]
+            for method, image in method_images.items():
+                values, valid = _world_sample(image.get_fdata(), image.affine, plane["world"], order=1)
+                longitudinal.append({"label": method, "values": values, "support": valid & native_support_valid & (native_support > .5) & np.isfinite(values)})
+            line_coordinate = float(index * source_spacing[0 if cut == "center_row" else 1])
+            rows.append({"cut": cut, "source": {"values": np.asarray(sax[f"{parameter}_ms"][reference_index], float), "support": np.asarray(sax["source_support"][reference_index], bool), "extent_mm": source_extent}, "source_line_coordinate_mm": line_coordinate, "longitudinal": longitudinal, "extent_mm": plane["extent_mm"]})
+            cut_records.append({"cut": cut, "source_line_index": index, "source_line_coordinate_mm": line_coordinate, "source_plane_group_idx": reference_group, "line_origin_world_ras_mm": [float(value) for value in plane["world"][:3, 0, 0]], "plane": {key: value for key, value in plane.items() if key != "world"}})
+        cmap, limits = colorbars().mapping[display_parameter], DISPLAY_RANGES_MS[display_parameter]
+        filename = f"longitudinal_sax_centerline_{display_parameter}.png"
+        _plot_scmr_longitudinal(output / filename, rows, title=f"{config['subject']} {config['condition']} {config['endpoint']} — SAX centre-line longitudinal {display_parameter}", limits=limits, cmap=cmap)
+        records.append({"parameter": display_parameter, "file": filename, "layout": {"rows": 2, "columns": 5, "column_labels": list(scmr_longitudinal_panel_labels())}, "sax_reference_group_idx": reference_group, "sax_reference_group_selection": selection_rule, "cuts": cut_records, "sampling": {"source": "nearest-neighbor", "reconstruction": "linear", "same_world_plane_for_source_reformat_and_all_reconstructions": True}, "no_auto_crop": True, "physical_aspect_ratio_preserved": True, "colorbars": {"shared_parameter": "dedicated_axis", "range_ms": list(limits), "colormap": "same_parameter_map_lut"}, "native_source": sax["provenance"]})
+    for key in ("native_maps_path", "geometry_path", "manifest_path"):
+        inputs[f"scmr_sax_{key}"] = _file_record(sax["provenance"][key])
+    return records
+
+
 def _render_native_stack(config: Mapping[str, Any], output: Path, inputs: dict[str, Any], native: Mapping[str, Any]) -> list[dict[str, Any]]:
     sparse_manifest = Path(native["sparse_manifest"])
     sparse = json.loads(sparse_manifest.read_text(encoding="utf-8"))
     stack = str(native["stack"])
-    mode, display_groups = native_preview_groups(native, sparse)
-    selected = select_verified_native_cache_groups(native["r0_native_maps_root"], sparse_manifest, stack, _heldout_ids(sparse, stack))
+    if str(native.get("mode", "single")) == "all_source_groups":
+        selected = _load_all_verified_native_cache_groups(native["r0_native_maps_root"], sparse_manifest, stack)
+        mode, display_groups = native_preview_groups(native, sparse, source_groups=[int(group) for group in selected["group_idx"]])
+    else:
+        mode, display_groups = native_preview_groups(native, sparse)
+        selected = select_verified_native_cache_groups(native["r0_native_maps_root"], sparse_manifest, stack, _heldout_ids(sparse, stack))
     selected_indices = {int(group): index for index, group in enumerate(np.asarray(selected["group_idx"], int))}
     if any(group not in selected_indices for group in display_groups):
         raise ValueError(f"requested native groups are unavailable for {stack}")
@@ -449,6 +670,7 @@ def _render_native_stack(config: Mapping[str, Any], output: Path, inputs: dict[s
         inputs.setdefault(f"native_cache_{key}", record)
         inputs[f"native_cache_{stack}_{key}"] = record
     records: list[dict[str, Any]] = []
+    group_statuses = native_group_statuses(display_groups, sparse, stack)
     methods = native_mosaic_methods(config["methods"])
     for parameter, display_parameter in PARAMETERS.items():
         mask_path = _load_mask_spec(config, parameter)
@@ -474,12 +696,12 @@ def _render_native_stack(config: Mapping[str, Any], output: Path, inputs: dict[s
             panels.extend({"label": f"|{method} − Native|", "values": np.abs(values - reference), "support": available, "cmap": cmap, "range_ms": limits} for method, values, available in method_panels)
             spacing = np.asarray(selected["pixel_spacing_rc_mm"][index], float)
             extent = [0.0, float(source_support.shape[0] - 1) * spacing[0], 0.0, float(source_support.shape[1] - 1) * spacing[1]]
-            mosaic_rows.append({"group_idx": group, "panels": panels, "extent": extent, "contour": contour})
+            mosaic_rows.append({"group_idx": group, "group_label": native_group_label(group, group_statuses[group]), "panels": panels, "extent": extent, "contour": contour})
             shapes[str(group)] = list(source_support.shape)
         filename = f"native_{stack}_group{display_groups[0]}_{display_parameter}.png" if mode == "single" else f"native_{stack}_{mode}_{display_parameter}.png"
         _plot_native_mosaic(output / filename, mosaic_rows, title=f"{config['subject']} {config['condition']} {config['endpoint']} — {stack} native {mode} {display_parameter}")
         inputs[f"native_l100_mask_{parameter}"] = _file_record(mask_path)
-        records.append({"parameter": display_parameter, "file": filename, "stack": stack, "mode": mode, "original_group_idx": display_groups[0] if mode == "single" else None, "original_group_ids": display_groups, "native_reference": provenance, "frozen_l100_source": _file_record(mask_path), "plane_shapes_rc": shapes, "display_support": "source_support AND reprojected_frozen_L100_mask; myocardium is contour-only", "interpolation": {"map": "linear", "mask": "nearest-neighbor"}, "no_auto_crop": True, "physical_aspect_ratio_preserved": True, "colorbars": {"shared_parameter": "dedicated_axis", "range_ms": list(limits), "colormap": "same_parameter_map_lut"}, "error_display": {"quantity": "absolute_error_ms", "colormap": "same_parameter_map_lut", "range_ms": list(limits), "no_residual_colorbar": True}})
+        records.append({"parameter": display_parameter, "file": filename, "stack": stack, "mode": mode, "original_group_idx": display_groups[0] if mode == "single" else None, "original_group_ids": display_groups, "displayed_groups": [{"group_idx": group, "status": group_statuses[group], "label": native_group_label(group, group_statuses[group])} for group in display_groups], "native_reference": provenance, "frozen_l100_source": _file_record(mask_path), "plane_shapes_rc": shapes, "display_support": "source_support AND reprojected_frozen_L100_mask; myocardium is contour-only", "interpolation": {"map": "linear", "mask": "nearest-neighbor"}, "no_auto_crop": True, "physical_aspect_ratio_preserved": True, "colorbars": {"shared_parameter": "dedicated_axis", "range_ms": list(limits), "colormap": "same_parameter_map_lut"}, "error_display": {"quantity": "absolute_error_ms", "colormap": "same_parameter_map_lut", "range_ms": list(limits), "no_residual_colorbar": True}})
     return records
 
 
@@ -515,8 +737,9 @@ def render_final_figures(config_path: str | Path, output: str | Path) -> Path:
     try:
         inputs = {"config": _file_record(config_path)}
         longitudinal = _render_longitudinal(config, staging, inputs)
+        scmr_longitudinal = _render_scmr_style_longitudinal(config, staging, inputs)
         native = _render_native(config, staging, inputs)
-        manifest = {"schema": "phase4r_final_cyj_figures/v1", "subject": "CYJ", "condition": config.get("condition"), "endpoint": config["endpoint"], "methods": list(config["methods"]), "inputs": inputs, "longitudinal_figures": longitudinal, "native_heldout_figures": native, "shared_parameter_lut_ranges_ms": {key: list(value) for key, value in DISPLAY_RANGES_MS.items()}, "error_display_contract": "absolute_error_ms using same parameter map LUT/range; no magma residual scale; native mosaics provide one shared parameter colorbar", "code_git_sha": _git_sha()}
+        manifest = {"schema": "phase4r_final_cyj_figures/v1", "subject": "CYJ", "condition": config.get("condition"), "endpoint": config["endpoint"], "methods": list(config["methods"]), "inputs": inputs, "longitudinal_figures": longitudinal, "scmr_style_longitudinal_figures": scmr_longitudinal, "native_heldout_figures": native, "shared_parameter_lut_ranges_ms": {key: list(value) for key, value in DISPLAY_RANGES_MS.items()}, "error_display_contract": "absolute_error_ms using same parameter map LUT/range; no magma residual scale; native mosaics provide one shared parameter colorbar", "code_git_sha": _git_sha()}
         write_immutable_json(staging / "figure_manifest.json", manifest)
         staging.rename(output)
     except BaseException:
