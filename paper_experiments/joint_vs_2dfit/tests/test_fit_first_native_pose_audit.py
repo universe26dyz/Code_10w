@@ -12,7 +12,7 @@ from paper_experiments.joint_vs_2dfit.phase2_clean.fit_first_native_bundles impo
 from paper_experiments.joint_vs_2dfit.phase2_clean.fit_first_native_pose_audit import audit_fit_first_native_poses
 
 
-def _write_case(root: Path, r0: Path, *, final_translation: float = 2.0, negative_det: bool = False) -> None:
+def _write_case(root: Path, r0: Path, *, final_translation: float = 2.0, initial_round_trip_error_mm: float = 0.0, negative_det: bool = False) -> None:
     groups = {"sax": [5], "2ch": [2], "4ch": [8]}
     ras = np.eye(4, dtype=float)
     if negative_det:
@@ -31,7 +31,8 @@ def _write_case(root: Path, r0: Path, *, final_translation: float = 2.0, negativ
         for parameter, raw, scale in (("t1", t1, 2500), ("t2", t2, 200)):
             values = np.where(np.isfinite(raw), raw / scale, 0.0)[0]
             (inputs / parameter).mkdir(exist_ok=True)
-            nib.save(nib.Nifti1Image(values[:, :, None], ras), inputs / parameter / "stack.nii.gz")
+            initial_affine = ras.copy(); initial_affine[0, 3] += initial_round_trip_error_mm
+            nib.save(nib.Nifti1Image(values[:, :, None], initial_affine), inputs / parameter / "stack.nii.gz")
     for parameter in ("t1", "t2"):
         nesvor = root / "nesvor" / parameter; (nesvor / "slices").mkdir(parents=True)
         (nesvor / "result.json").write_text(json.dumps({"registration": "stack", "no_transformation_optimization": False}), encoding="utf-8")
@@ -62,6 +63,27 @@ def test_audit_separates_representation_flip_from_true_final_motion(tmp_path: Pa
     assert record["initial_vs_final"]["center_displacement_mm"] == pytest.approx(2.0)
     assert record["t1_final_vs_t2_final"]["center_displacement_mm"] == pytest.approx(.25)
     assert record["raw_affine_diagnostic"]["raw_affine_axis_convention_difference_not_motion"]
+    assert manifest["schema"] == "fit_first_native_pose_audit/v3"
+    assert manifest["reconstruction_input_geometry_gate"]["geometry_equivalence_tolerance_mm"] == pytest.approx(1e-3)
+
+
+@pytest.mark.parametrize("round_trip_error_mm", [1.5e-4, 9e-4])
+def test_geometry_gate_accepts_sub_micrometre_and_within_tolerance_round_trip_error(tmp_path: Path, round_trip_error_mm: float) -> None:
+    baseline, r0 = tmp_path / "baseline", tmp_path / "r0"
+    _write_case(baseline, r0, initial_round_trip_error_mm=round_trip_error_mm)
+    output = audit_fit_first_native_poses(baseline_root=baseline, r0_native_maps_root=r0, output=tmp_path / "audit")
+    manifest = json.loads((output / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["reconstruction_input_geometry_gate"]["status"] == "RECONSTRUCTION_INPUT_GEOMETRY_VALID"
+    assert manifest["parameters"]["t1"]["groups"][0]["r0_vs_initial"]["max_world_error_mm"] == pytest.approx(round_trip_error_mm, abs=1e-7)
+
+
+def test_geometry_gate_rejects_real_input_geometry_mismatch(tmp_path: Path) -> None:
+    baseline, r0 = tmp_path / "baseline", tmp_path / "r0"
+    _write_case(baseline, r0, initial_round_trip_error_mm=.01)
+    output = audit_fit_first_native_poses(baseline_root=baseline, r0_native_maps_root=r0, output=tmp_path / "audit")
+    manifest = json.loads((output / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["reconstruction_input_geometry_gate"]["status"] == "RECONSTRUCTION_INPUT_GEOMETRY_MISMATCH"
+    assert manifest["reconstruction_input_geometry_gate"]["failures"]
 
 
 def test_bundle_uses_volume_not_output_slice_and_refuses_invalid_gate(tmp_path: Path) -> None:
@@ -73,6 +95,11 @@ def test_bundle_uses_volume_not_output_slice_and_refuses_invalid_gate(tmp_path: 
         assert np.allclose(plane["prediction_ms"], [[102, 102, 102], [103, 103, 103]])
         assert plane["valid"].all()
     audit = json.loads((audit_root / "manifest.json").read_text(encoding="utf-8"))
+    audit["schema"] = "fit_first_native_pose_audit/v2"
+    (audit_root / "manifest.json").write_text(json.dumps(audit), encoding="utf-8")
+    with pytest.raises(ValueError, match="v3"):
+        build_fit_first_native_prediction_bundle(audit_root=audit_root, baseline_root=baseline, r0_native_maps_root=r0, output=tmp_path / "old_schema")
+    audit["schema"] = "fit_first_native_pose_audit/v3"
     audit["reconstruction_input_geometry_gate"]["status"] = "RECONSTRUCTION_INPUT_GEOMETRY_MISMATCH"
     (audit_root / "manifest.json").write_text(json.dumps(audit), encoding="utf-8")
     with pytest.raises(ValueError, match="RECONSTRUCTION_INPUT_GEOMETRY_MISMATCH"):

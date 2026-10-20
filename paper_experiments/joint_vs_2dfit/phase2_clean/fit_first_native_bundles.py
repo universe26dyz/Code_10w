@@ -38,8 +38,8 @@ def build_fit_first_native_prediction_bundle(*, audit_root: str | Path, baseline
     audit_root, baseline_root, r0_root, output = (Path(value) for value in (audit_root, baseline_root, r0_native_maps_root, output))
     audit_path = audit_root / "manifest.json"
     audit = json.loads(audit_path.read_text(encoding="utf-8"))
-    if audit.get("schema") != "fit_first_native_pose_audit/v2":
-        raise ValueError("audit_root must contain fit_first_native_pose_audit/v2")
+    if audit.get("schema") != "fit_first_native_pose_audit/v3":
+        raise ValueError("audit_root must contain fit_first_native_pose_audit/v3")
     if audit.get("reconstruction_input_geometry_gate", {}).get("status") != "RECONSTRUCTION_INPUT_GEOMETRY_VALID":
         raise ValueError("RECONSTRUCTION_INPUT_GEOMETRY_MISMATCH: refusing final-pose bundle")
     if output.exists():

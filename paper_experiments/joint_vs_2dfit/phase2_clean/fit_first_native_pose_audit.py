@@ -26,7 +26,8 @@ from .fit_first_native_geometry import (
 STACKS = ("sax", "2ch", "4ch")
 PARAMETERS = ("t1", "t2")
 _SCALE = {"t1": 2500.0, "t2": 200.0}
-_TOL_MM, _TOL_VALUE = 1e-4, 1e-5
+_GEOMETRY_EQUIVALENCE_TOL_MM = 1e-3
+_VALUE_CORRESPONDENCE_TOL = 1e-5
 
 
 def _record(path: Path) -> dict[str, str]:
@@ -156,7 +157,8 @@ def audit_fit_first_native_poses(*, baseline_root: str | Path, r0_native_maps_ro
                 center = ((shape[0] - 1) // 2, (shape[1] - 1) // 2)
                 center_error = float(np.linalg.norm(initial_world[center] - r0_world[center]))
                 spacing_error = float(max(abs(initial.resolution_x - expected_spacing[0]), abs(initial.resolution_y - expected_spacing[1])))
-                passed = geometry_error <= _TOL_MM and spacing_error <= _TOL_MM and initial_value_error <= _TOL_VALUE and final_value_error <= _TOL_VALUE
+                passed = (geometry_error <= _GEOMETRY_EQUIVALENCE_TOL_MM and spacing_error <= _GEOMETRY_EQUIVALENCE_TOL_MM
+                          and initial_value_error <= _VALUE_CORRESPONDENCE_TOL and final_value_error <= _VALUE_CORRESPONDENCE_TOL)
                 if not passed:
                     gate_failures.append(f"{parameter}/{stack}/group{group:03d}")
                 final_affine = np.asarray(nib.load(str(final_path)).affine, float)
@@ -164,8 +166,8 @@ def audit_fit_first_native_poses(*, baseline_root: str | Path, r0_native_maps_ro
                 groups.append({
                     "stack": stack, "original_group_idx": group, "output_slice_index": output_index,
                     "authoritative_final_geometry": "nesvor_output_slices_final_optimized_affine", "final_output_slice": _record(final_path), "final_affine_ras_mm": final_affine.tolist(),
-                    "r0_vs_initial": {"shape_rc": list(shape), "expected_spacing_rc_mm": expected_spacing, "initial_spacing_rc_mm": [float(initial.resolution_x), float(initial.resolution_y)], "max_world_error_mm": geometry_error, "corner_max_error_mm": corner_error, "center_error_mm": center_error, "max_normalized_value_error": initial_value_error, "status": "PASS_REPRESENTATION_EQUIVALENT" if geometry_error <= _TOL_MM and spacing_error <= _TOL_MM and initial_value_error <= _TOL_VALUE else "RECONSTRUCTION_INPUT_GEOMETRY_MISMATCH"},
-                    "initial_vs_final": pose_delta(initial, final), "output_slice_value_validation": {"max_normalized_value_error": final_value_error, "status": "PASS" if final_value_error <= _TOL_VALUE else "FAIL"}, "reindex_flip": descriptor,
+                    "r0_vs_initial": {"shape_rc": list(shape), "expected_spacing_rc_mm": expected_spacing, "initial_spacing_rc_mm": [float(initial.resolution_x), float(initial.resolution_y)], "max_world_error_mm": geometry_error, "corner_max_error_mm": corner_error, "center_error_mm": center_error, "spacing_error_mm": spacing_error, "max_normalized_value_error": initial_value_error, "status": "PASS_REPRESENTATION_EQUIVALENT" if geometry_error <= _GEOMETRY_EQUIVALENCE_TOL_MM and spacing_error <= _GEOMETRY_EQUIVALENCE_TOL_MM and initial_value_error <= _VALUE_CORRESPONDENCE_TOL else "RECONSTRUCTION_INPUT_GEOMETRY_MISMATCH"},
+                    "initial_vs_final": pose_delta(initial, final), "output_slice_value_validation": {"max_normalized_value_error": final_value_error, "value_tolerance": _VALUE_CORRESPONDENCE_TOL, "status": "PASS" if final_value_error <= _VALUE_CORRESPONDENCE_TOL else "FAIL"}, "reindex_flip": descriptor,
                     "raw_affine_diagnostic": {"r0_vs_final_mathematically_equivalent": raw_equivalent, "raw_affine_axis_convention_difference_not_motion": not raw_equivalent},
                 })
             parameters[parameter] = {"result": _record(result_path), "model": _record(model_path), "model_pose_role": "model.pt is checkpoint provenance only; final per-group pose is the corresponding --output-slices transformation", "groups": groups}
@@ -175,8 +177,8 @@ def audit_fit_first_native_poses(*, baseline_root: str | Path, r0_native_maps_ro
             t1["t1_final_vs_t2_final"] = delta; t2["t1_final_vs_t2_final"] = delta
         status = "RECONSTRUCTION_INPUT_GEOMETRY_VALID" if not gate_failures else "RECONSTRUCTION_INPUT_GEOMETRY_MISMATCH"
         write_immutable_json(staging / "manifest.json", {
-            "schema": "fit_first_native_pose_audit/v2", "baseline_root": str(baseline_root.resolve()), "r0_native_maps_root": str(r0_root.resolve()), "input_group_order": "sax -> 2ch -> 4ch; immutable exported group_idx order",
-            "reconstruction_input_geometry_gate": {"status": status, "failures": gate_failures, "pass_action": "final-pose endpoint bundle is permitted; no retraining required", "fail_action": "fail closed: do not build formal endpoint and do not change reconstruction/training"},
+            "schema": "fit_first_native_pose_audit/v3", "baseline_root": str(baseline_root.resolve()), "r0_native_maps_root": str(r0_root.resolve()), "input_group_order": "sax -> 2ch -> 4ch; immutable exported group_idx order",
+            "reconstruction_input_geometry_gate": {"status": status, "geometry_equivalence_tolerance_mm": _GEOMETRY_EQUIVALENCE_TOL_MM, "value_correspondence_tolerance": _VALUE_CORRESPONDENCE_TOL, "failures": gate_failures, "pass_action": "final-pose endpoint bundle is permitted; no retraining required", "fail_action": "fail closed: do not build formal endpoint and do not change reconstruction/training"},
             "fit_first_endpoint_policy": "only final NeSVoR output-slice pose may define Fit-first native prediction; original R0 affine is reference geometry only", "scmr_comparison": "historical registered_ms/synthetic_ms uses parameter-specific registered slice geometry; this endpoint has the same final-pose semantics", "parameters": parameters, "no_training": True, "no_reconstruction": True, "no_metrics_modified": True,
         })
         staging.rename(output)

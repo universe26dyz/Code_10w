@@ -29,10 +29,15 @@ registered final geometry.
 
 > 配准与 pose 优化会影响重建本身；若在最终评估端点改用 R0 affine，便会造成重建 pose 与评估 plane 不一致。
 
-Before a Fit-first final-pose bundle can be built, audit v2 must pass
+Before a Fit-first final-pose bundle can be built, audit v3 must pass
 `RECONSTRUCTION_INPUT_GEOMETRY_VALID`: R0 geometry and exact NeSVoR
 `load_stack`/`affine2transformation` initial geometry agree after recorded
-reindexing, spacing, corner/centre and normalized-value checks. A raw affine
-difference is only an axis-convention diagnostic, not evidence of motion. A
-real mismatch records `RECONSTRUCTION_INPUT_GEOMETRY_MISMATCH`, fails closed,
-and does not alter reconstruction, training, or formal metrics.
+reindexing, spacing, corner/centre and normalized-value checks. The physical
+equivalence threshold is `1e-3 mm`, solely for the R0-to-initial exact NeSVoR
+representation/reindex round trip; it accommodates NIfTI/float32 round-trip
+error and does not relax strict value correspondence. It is never used to ask
+whether `initial_vs_final` learned pose is zero: that motion remains computed
+directly from NeSVoR internal rigid transforms. A raw affine difference is
+only an axis-convention diagnostic, not evidence of motion. A real mismatch
+records `RECONSTRUCTION_INPUT_GEOMETRY_MISMATCH`, fails closed, and does not
+alter reconstruction, training, or formal metrics.
