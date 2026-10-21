@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import inspect
 from pathlib import Path
 
 import numpy as np
@@ -64,11 +65,17 @@ def test_builds_immutable_complete_current_native_artifact_and_validates_source(
         assert set(("source_support", "phase4r_l100", "base_native_support", "primary_native_mask", "reference")).issubset(plane.files)
         assert np.array_equal(plane["base_native_support"], plane["source_support"] & plane["phase4r_l100"])
     loaded, _ = masks.load_validated_current_native_mask_plane(output, parameter="t1", stack="sax", original_group_idx=0, shape_rc=(3, 3), source_support=_cache("sax")["source_support"][0])
+    assert set(loaded) == {"source_support", "phase4r_l100", "base_native_support", "primary_native_mask", "reference"}
+    assert loaded["reference"].dtype == np.dtype(float)
     assert loaded["primary_native_mask"].shape == (3, 3)
     with pytest.raises(ValueError, match="source_support"):
         masks.load_validated_current_native_mask_plane(output, parameter="t1", stack="sax", original_group_idx=0, shape_rc=(3, 3), source_support=np.ones((3, 3), bool))
     with pytest.raises(FileExistsError):
         masks.build_current_native_central_component_mask(r0_native_maps_root=tmp_path / "r0", sparse_manifest=sparse, l100_native_support_root=l100, output=output)
+
+
+def test_loader_uses_python38_compatible_dictionary_assembly() -> None:
+    assert "} | {" not in inspect.getsource(masks.load_validated_current_native_mask_plane)
 
 
 def test_l100_shape_mismatch_fails_closed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

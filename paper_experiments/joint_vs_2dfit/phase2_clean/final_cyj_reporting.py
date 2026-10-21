@@ -420,9 +420,13 @@ def native_preview_stack_configs(native: Mapping[str, Any]) -> list[dict[str, An
     result: list[dict[str, Any]] = []
     for entry in entries:
         if isinstance(entry, str):
-            result.append(base | {"stack": entry})
+            item = dict(base)
+            item["stack"] = entry
+            result.append(item)
         elif isinstance(entry, Mapping):
-            result.append(base | dict(entry))
+            item = dict(base)
+            item.update(entry)
+            result.append(item)
         else:
             raise ValueError("native.stacks entries must be stack names or mappings")
     stacks = [str(item.get("stack", "")) for item in result]

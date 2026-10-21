@@ -105,7 +105,9 @@ def load_validated_current_native_mask_plane(mask_root: str | Path, *, parameter
         raise ValueError(f"{target}: source_support does not match the selected R0 plane")
     if not np.array_equal(np.asarray(values["base_native_support"], bool), artifact_source & l100):
         raise ValueError(f"{target}: base_native_support is not source_support AND phase4r_l100")
-    return {name: np.asarray(value, bool) for name, value in values.items() if name != "reference"} | {"reference": np.asarray(values["reference"], float)}, {"mask_manifest": _record(manifest_path), "mask_plane": _record(target), "primary_mask": "primary_native_mask", "selection_rule": manifest.get("selection_rule")}
+    loaded = {name: np.asarray(value, bool) for name, value in values.items() if name != "reference"}
+    loaded["reference"] = np.asarray(values["reference"], float)
+    return loaded, {"mask_manifest": _record(manifest_path), "mask_plane": _record(target), "primary_mask": "primary_native_mask", "selection_rule": manifest.get("selection_rule")}
 
 
 def build_current_native_central_component_mask(*, r0_native_maps_root: str | Path, sparse_manifest: str | Path, l100_native_support_root: str | Path, output: str | Path, minimum_ratio: float = .25) -> Path:

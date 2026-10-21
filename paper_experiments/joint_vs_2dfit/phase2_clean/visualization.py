@@ -268,7 +268,9 @@ def render_native_plane_comparison(
     figure.suptitle(title, fontsize=10)
     written = _write_figure(figure, target)
     plt.close(figure)
-    (target.parent / "metadata.json").write_text(json.dumps(dict(metadata) | {"outputs": written, "formal_colorbar_count": 1, "myocardium_contour_overlay": myocardium_contour is not None}, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    metadata_record = dict(metadata)
+    metadata_record.update({"outputs": written, "formal_colorbar_count": 1, "myocardium_contour_overlay": myocardium_contour is not None})
+    (target.parent / "metadata.json").write_text(json.dumps(metadata_record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return written
 
 
@@ -311,7 +313,10 @@ def render_through_plane_continuity(
     written = _write_figure(figure, target)
     plt.close(figure)
     geometry = {key: sampled[key] for key in ("cut_column", "interpolation", "world_plane_origin_mm", "world_plane_basis_vectors", "grid_spacing_mm", "physical_extent_mm", "grid_shape")}
-    (target.parent / "through_plane_metadata.json").write_text(json.dumps(dict(metadata) | geometry | {"reference_group": int(reference_group), "outputs": written}, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    metadata_record = dict(metadata)
+    metadata_record.update(geometry)
+    metadata_record.update({"reference_group": int(reference_group), "outputs": written})
+    (target.parent / "through_plane_metadata.json").write_text(json.dumps(metadata_record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return written
 
 
@@ -356,7 +361,9 @@ def render_all_slice_montage(
     figure.suptitle(title, fontsize=10)
     written = _write_figure(figure, target)
     plt.close(figure)
-    (target.parent / "all_slice_metadata.json").write_text(json.dumps(dict(metadata) | {"purpose": "non-primary all-slice QC", "row_annotations": annotations, "outputs": written}, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    metadata_record = dict(metadata)
+    metadata_record.update({"purpose": "non-primary all-slice QC", "row_annotations": annotations, "outputs": written})
+    (target.parent / "all_slice_metadata.json").write_text(json.dumps(metadata_record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return written
 
 
@@ -505,12 +512,14 @@ def render_r0(
         panels, crop = prepare_native_comparison_panels(chosen["reference"], chosen["proposed"], chosen["fit_first"], chosen["display_support"])
         metadata = {"subject": subject, "mode": "R0", "endpoint_semantics": "SAX native-myocardium agreement/consistency; not true 3-D accuracy", "quantitative_support_definition": "SAX_myocardium AND finite(reference) AND both reprojection-valid AND finite(proposed, fit-first)", "display_support_definition": "finite non-zero native foreground AND both reprojection-valid AND finite(proposed, fit-first)", "selected_group": selected_group, "crop_bounds_rc": crop, "interpolation": "linear world-coordinate reprojection", "display_ranges_ms": {parameter: list(DISPLAY_RANGES_MS[parameter])}, "colorbars": colorbars().metadata, "source_git_sha": _git_sha()}
         outputs[parameter] = render_native_plane_comparison(parameter, panels, root / parameter / f"{parameter}_native_plane_comparison.png", title=f"{subject} R0 SAX — {parameter}", metadata=metadata, myocardium_contour=crop_myocardium_contour(chosen["myocardium_mask"], crop))
+        through_plane_metadata = dict(metadata)
+        through_plane_metadata["purpose"] = "through-plane continuity QC; not native-plane quantitative accuracy"
         outputs[parameter]["through_plane"] = render_through_plane_continuity(
             parameter, image.get_fdata(), image.affine,
             proposed_images[parameter].get_fdata(), proposed_images[parameter].affine,
             fit_images[parameter].get_fdata(), fit_images[parameter].affine,
             root / parameter / f"{parameter}_through_plane_continuity.png", reference_group=selected_group,
-            metadata=metadata | {"purpose": "through-plane continuity QC; not native-plane quantitative accuracy"},
+            metadata=through_plane_metadata,
         )
         records[parameter] = [{"group_index": item["group_index"], "common_support_voxels": item["common_support_voxels"]} for item in planes]
         if all_slices:
