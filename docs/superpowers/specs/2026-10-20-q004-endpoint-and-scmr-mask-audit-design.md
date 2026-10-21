@@ -32,32 +32,20 @@ sampled directly from its 3-D volume onto a separate dense 1-mm plane using
 linear interpolation and only `in_volume AND finite` support.  No native-stack
 support masks reconstructed panels by default.
 
-## SCMR-style mask generation
+## Current-native mask generation
 
-`scmr_central_component_mask.py` exposes two independent functions:
+`current_native_central_component_mask.py` builds the formal primary support
+from `source_support AND phase4r_l100`, both already on the current native
+lattice. It then applies the SCMR-style 8-connected central/largest-component
+selection rule only. Historical training, synthetic, fitting-valid, registered,
+and learned-pose geometry are not inputs.
 
-- `build_legacy_strict_common(...)`: reproduce the legacy per-plane strict
-  intersection: training mask AND synthetic support AND fitting-valid mask AND
-  finite original/registered/synthetic maps.
-- `select_scmr_central_component(...)`: 8-connected 2-D components; select the
-  image-centre component when its area is at least 25% of the largest component,
-  otherwise select the largest.  It performs no morphology, hole filling,
-  interpolation, or border removal.
-
-The production SCMR-style path uses all six explicit inputs to build the strict
-common support before selecting the component.  An independent
-`phase4r_l100_central_component` control applies the same selection rule to an
-explicit current L100 mask alone, so the selection rule can be tested without
-legacy-input dependencies.  Both masks are generated on current native-plane
-geometry; no legacy bitmap is reused.
-
-`mask_sensitivity_audit.py` will compare named supplied supports
-`scmr_style_central_component` and `phase4r_l100`, including intersection and
-asymmetric differences, while holding reference and prediction fixed.
+`mask_sensitivity_audit.py` compares `primary_native_mask` and
+`phase4r_l100` while holding reference and prediction fixed.
 
 ## Verification
 
 Tests cover direct-versus-volume source separation, identical support,
-determinism, immutable output, dense 1-mm reconstruction sampling, legacy
-strict-mask logic, central-component selection, L100 control, and support
-sensitivity.  Run targeted pytest, compileall, and `git diff --check` locally.
+determinism, immutable output, dense 1-mm reconstruction sampling,
+current-native component selection, L100 support, and support sensitivity. Run
+targeted pytest, compileall, and `git diff --check` locally.

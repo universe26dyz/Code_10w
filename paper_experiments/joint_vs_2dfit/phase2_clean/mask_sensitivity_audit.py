@@ -1,4 +1,4 @@
-"""Read-only quantitative sensitivity audit for SCMR and Phase4R supports."""
+"""Read-only quantitative sensitivity audit for current-native supports."""
 from __future__ import annotations
 
 import argparse
@@ -14,7 +14,7 @@ from .contracts import sha256, write_immutable_json
 from .evaluation import _metrics
 
 
-MASKS = ("scmr_style_central_component", "phase4r_l100", "phase4r_l100_central_component")
+MASKS = ("primary_native_mask", "phase4r_l100")
 REQUIRED_ARRAYS = ("reference", "prediction", *MASKS)
 
 
@@ -22,9 +22,9 @@ def _metric_or_none(reference: np.ndarray, prediction: np.ndarray, support: np.n
     return _metrics(reference, prediction, support) if np.any(support) else None
 
 
-def compare_mask_sensitivity(reference: np.ndarray, prediction: np.ndarray, scmr_style_central_component: np.ndarray, phase4r_l100: np.ndarray, phase4r_l100_central_component: np.ndarray, source_support: np.ndarray | None = None) -> dict[str, Any]:
-    """Hold values fixed while exposing construction and selection-rule effects."""
-    supplied = {"reference": reference, "prediction": prediction, "scmr_style_central_component": scmr_style_central_component, "phase4r_l100": phase4r_l100, "phase4r_l100_central_component": phase4r_l100_central_component}
+def compare_mask_sensitivity(reference: np.ndarray, prediction: np.ndarray, primary_native_mask: np.ndarray, phase4r_l100: np.ndarray, source_support: np.ndarray | None = None) -> dict[str, Any]:
+    """Hold values fixed while exposing current-native selection effects."""
+    supplied = {"reference": reference, "prediction": prediction, "primary_native_mask": primary_native_mask, "phase4r_l100": phase4r_l100}
     if source_support is not None: supplied["source_support"] = source_support
     if len({np.asarray(value).shape for value in supplied.values()}) != 1:
         raise ValueError("reference, prediction, and support arrays must share one shape")
@@ -36,7 +36,7 @@ def compare_mask_sensitivity(reference: np.ndarray, prediction: np.ndarray, scmr
     for name, mask in masks.items():
         support = base & mask
         result[name] = {"support_voxel_count_before_finite_gate": int(mask.sum()), "support_voxel_count": int(support.sum()), "coverage_fraction_of_shared_base": float(support.sum() / base.sum()) if base.any() else 0.0, "metrics": _metric_or_none(reference, prediction, support)}
-    for first, second in ((MASKS[0], MASKS[1]), (MASKS[2], MASKS[1])):
+    for first, second in ((MASKS[0], MASKS[1]),):
         prefix = f"{first}_vs_{second}"
         for suffix, raw in (("intersection", masks[first] & masks[second]), ("first_only", masks[first] & ~masks[second]), ("second_only", masks[second] & ~masks[first])):
             support = base & raw
@@ -80,7 +80,7 @@ def run_mask_sensitivity_audit(input_root: str | Path, output: str | Path) -> Pa
             if source is not None: base &= source
             masks = {name: np.asarray(values[name], bool) for name in MASKS}
             domains = {name: base & mask for name, mask in masks.items()}
-            for first, second in ((MASKS[0], MASKS[1]), (MASKS[2], MASKS[1])):
+            for first, second in ((MASKS[0], MASKS[1]),):
                 prefix = f"{first}_vs_{second}"
                 domains.update({f"{prefix}_intersection": base & masks[first] & masks[second], f"{prefix}_first_only": base & masks[first] & ~masks[second], f"{prefix}_second_only": base & masks[second] & ~masks[first]})
             pooled.append({"reference": np.asarray(values["reference"], float), "prediction": np.asarray(values["prediction"], float), **domains})
@@ -92,9 +92,9 @@ def run_mask_sensitivity_audit(input_root: str | Path, output: str | Path) -> Pa
             rows.append({"scope": "subject_voxel_pooled", "domain": domain, "support_voxel_count": support_voxels, **({} if metrics is None else metrics)})
         with (staging / "summary.csv").open("w", newline="") as handle:
             writer = csv.DictWriter(handle, fieldnames=sorted({key for row in rows for key in row})); writer.writeheader(); writer.writerows(rows)
-        write_immutable_json(staging / "per_plane_metrics.json", {"schema": "q004_mask_sensitivity_per_plane/v2", "planes": per_plane})
+        write_immutable_json(staging / "per_plane_metrics.json", {"schema": "phase4r_current_native_mask_sensitivity_per_plane/v1", "planes": per_plane})
         write_immutable_json(staging / "aggregate_metrics.json", aggregate)
-        write_immutable_json(staging / "manifest.json", {"schema": "q004_mask_sensitivity_audit/v2", "input_root": str(input_root.resolve()), "inputs": [{"path": str(path.resolve()), "sha256": sha256(path)} for path in files], "required_arrays": list(REQUIRED_ARRAYS), "optional_array": "source_support", "support_equations": {"shared_base": "finite(reference) AND finite(prediction) AND optional source_support", "scmr_style_central_component": "shared_base AND supplied scmr_style_central_component", "phase4r_l100": "shared_base AND supplied phase4r_l100", "phase4r_l100_central_component": "shared_base AND supplied phase4r_l100_central_component"}, "control_interpretation": "phase4r_l100_central_component isolates central-component selection from six-input SCMR strict-common construction", "no_training": True, "no_reconstruction": True, "no_export": True, "no_reprojection": True})
+        write_immutable_json(staging / "manifest.json", {"schema": "phase4r_current_native_mask_sensitivity_audit/v1", "input_root": str(input_root.resolve()), "inputs": [{"path": str(path.resolve()), "sha256": sha256(path)} for path in files], "required_arrays": list(REQUIRED_ARRAYS), "optional_array": "source_support", "support_equations": {"shared_base": "finite(reference) AND finite(prediction) AND optional source_support", "primary_native_mask": "shared_base AND supplied primary_native_mask", "phase4r_l100": "shared_base AND supplied phase4r_l100"}, "control_interpretation": "phase4r_l100 reports the frozen sampling domain beside the current-native primary component", "no_training": True, "no_reconstruction": True, "no_export": True, "no_reprojection": True})
         staging.rename(output)
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True); raise

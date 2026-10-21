@@ -13,11 +13,11 @@ import numpy as np
 from .contracts import sha256, write_immutable_json
 from .evaluation import _metrics
 from .final_cyj_reporting import PARAMETERS, _load_all_verified_native_cache_groups
-from .mask_sensitivity_audit import MASKS
-from .scmr_central_component_mask import load_validated_scmr_mask_plane
+from .current_native_central_component_mask import load_validated_current_native_mask_plane
 
-PRIMARY_MASK = "scmr_style_central_component"
-COMMON_SUPPORT_EQUATION = "source_support AND scmr_style_central_component AND finite(reference) AND proposed_valid AND fit_first_valid AND finite(proposed, fit_first)"
+PRIMARY_MASK = "primary_native_mask"
+MASKS = (PRIMARY_MASK, "phase4r_l100")
+COMMON_SUPPORT_EQUATION = "primary_native_mask AND finite(reference) AND proposed_valid AND fit_first_valid AND finite(proposed, fit_first)"
 
 
 def _record(path: Path) -> dict[str, str]:
@@ -51,7 +51,7 @@ def build_final_pose_native_metrics(*, direct_bundle_root: str | Path, fit_first
                 for parameter in PARAMETERS:
                     fit_path = fit_root / "planes" / parameter / stack / f"group{group:03d}.npz"
                     reference, source = np.asarray(cache[stack][f"{parameter}_ms"][index], float), np.asarray(cache[stack]["source_support"][index], bool)
-                    masks, mask_provenance = load_validated_scmr_mask_plane(mask_root, parameter=parameter, stack=stack, original_group_idx=group, shape_rc=tuple(reference.shape), source_support=source)
+                    masks, mask_provenance = load_validated_current_native_mask_plane(mask_root, parameter=parameter, stack=stack, original_group_idx=group, shape_rc=tuple(reference.shape), source_support=source)
                     with np.load(fit_path, allow_pickle=False) as fit:
                         proposed, fit_first = np.asarray(direct[f"{parameter}_ms"], float), np.asarray(fit["prediction_ms"], float)
                         proposed_valid, fit_valid = np.isfinite(proposed), np.asarray(fit["valid"], bool) & np.isfinite(fit_first)
@@ -59,9 +59,9 @@ def build_final_pose_native_metrics(*, direct_bundle_root: str | Path, fit_first
                             raise ValueError(f"{parameter}/{stack}/group{group:03d}: native plane geometry mismatch")
                         record: dict[str, Any] = {"parameter": parameter, "stack": stack, "original_group_idx": group, "masks": {}}
                         for name in MASKS:
-                            support = source & np.asarray(masks[name], bool) & np.isfinite(reference) & proposed_valid & fit_valid
+                            support = np.asarray(masks[name], bool) & np.isfinite(reference) & proposed_valid & fit_valid
                             metrics = None if not support.any() else {"proposed": _metrics(reference, proposed, support), "fit_first": _metrics(reference, fit_first, support)}
-                            record["masks"][name] = {"common_support_voxels": int(support.sum()), "support_equation": COMMON_SUPPORT_EQUATION if name == PRIMARY_MASK else f"source_support AND {name} AND finite(reference) AND proposed_valid AND fit_first_valid AND finite(proposed, fit_first)", "metrics": metrics}
+                            record["masks"][name] = {"common_support_voxels": int(support.sum()), "support_equation": COMMON_SUPPORT_EQUATION if name == PRIMARY_MASK else f"{name} AND finite(reference) AND proposed_valid AND fit_first_valid AND finite(proposed, fit_first)", "metrics": metrics}
                             if support.any():
                                 for label, values in (("reference", reference), ("proposed", proposed), ("fit_first", fit_first)):
                                     aggregate[parameter][name][label].append(values[support])
@@ -77,8 +77,8 @@ def build_final_pose_native_metrics(*, direct_bundle_root: str | Path, fit_first
                 ref = np.concatenate(values["reference"]); support = np.ones(ref.size, bool)
                 aggregate_output[parameter][name] = {"common_support_voxels": int(ref.size), "proposed": _metrics(ref, np.concatenate(values["proposed"]), support), "fit_first": _metrics(ref, np.concatenate(values["fit_first"]), support)}
         primary_aggregate = {parameter: aggregate_output[parameter][PRIMARY_MASK] for parameter in PARAMETERS}
-        (staging / "aggregate_metrics.json").write_text(json.dumps({"schema": "final_pose_native_common_support_metrics/v2", "primary_mask": PRIMARY_MASK, "primary_support_equation": COMMON_SUPPORT_EQUATION, "primary_aggregate": primary_aggregate, "regions": aggregate_output}, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        write_immutable_json(staging / "manifest.json", {"schema": "final_pose_native_bundle_metrics/v2", "direct_bundle": _record(direct_root / "manifest.json"), "fit_first_bundle": _record(fit_root / "manifest.json"), "mask_manifest": _record(mask_root / "manifest.json"), "primary_mask": PRIMARY_MASK, "primary_support_equation": COMMON_SUPPORT_EQUATION, "sensitivity_masks": [name for name in MASKS if name != PRIMARY_MASK], "metric_contract": "original R0 reference plus final direct INR and final Fit-first bundle on a single common source/mask/valid support", "per_plane_records": rows, "aggregate_metrics": _record(staging / "aggregate_metrics.json"), "no_existing_metrics_overwritten": True})
+        (staging / "aggregate_metrics.json").write_text(json.dumps({"schema": "final_pose_native_common_support_metrics/v3", "primary_mask": PRIMARY_MASK, "primary_support_equation": COMMON_SUPPORT_EQUATION, "primary_aggregate": primary_aggregate, "regions": aggregate_output}, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        write_immutable_json(staging / "manifest.json", {"schema": "final_pose_native_bundle_metrics/v3", "direct_bundle": _record(direct_root / "manifest.json"), "fit_first_bundle": _record(fit_root / "manifest.json"), "mask_manifest": _record(mask_root / "manifest.json"), "primary_mask": PRIMARY_MASK, "primary_support_equation": COMMON_SUPPORT_EQUATION, "sensitivity_masks": [name for name in MASKS if name != PRIMARY_MASK], "metric_contract": "current-native primary mask plus final direct INR and final Fit-first bundle on one paired valid support", "per_plane_records": rows, "aggregate_metrics": _record(staging / "aggregate_metrics.json"), "no_existing_metrics_overwritten": True})
         staging.rename(output)
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True)

@@ -16,7 +16,7 @@ from .mask_sensitivity_audit import MASKS, run_mask_sensitivity_audit
 
 
 def build_direct_native_metrics(*, bundle_root: str | Path, r0_native_maps_root: str | Path, sparse_manifest: str | Path, mask_root: str | Path, output: str | Path) -> Path:
-    """Evaluate a bundle only on explicitly supplied Phase4R/SCMR native masks."""
+    """Evaluate a bundle only on explicitly supplied current-native masks."""
     bundle_root, mask_root, output = Path(bundle_root), Path(mask_root), Path(output)
     manifest_path = bundle_root / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))

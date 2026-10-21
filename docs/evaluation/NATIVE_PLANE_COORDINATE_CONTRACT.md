@@ -45,15 +45,9 @@ alter reconstruction, training, or formal metrics.
 ## Final native support and longitudinal endpoint
 
 Final native figures and paired native metrics use immutable
-`scmr_style_central_component` support (with source, valid/in-volume and
-finite gates); `phase4r_l100` and `phase4r_l100_central_component` are
-sensitivity/control domains only. Longitudinal reconstruction panels remain
+`primary_native_mask` support. It is formed from current
+`source_support AND phase4r_l100`, followed by the SCMR-style 8-connected
+central/largest-component *selection rule* only; no historical SCMR
+reconstruction support or pose enters the formal ROI. Longitudinal reconstruction panels remain
 samples from each method's 3-D volume on one dense physical plane, with
 `in_volume AND finite` support, rather than any native-slice/bundle stacking.
-
-The formal SCMR primary support is published by the
-[`SCMR six-input producer`](SCMR_SIX_INPUT_PRODUCER.md): explicit historical
-six inputs are proved to be on the current native lattice using only an exact
-discrete reindex before the existing central-component consumer applies its
-unchanged rule. The Phase4R L100 central component is only a control and may
-not substitute for those six historical inputs.

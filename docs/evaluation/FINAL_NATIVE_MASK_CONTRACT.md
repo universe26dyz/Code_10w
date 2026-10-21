@@ -1,19 +1,34 @@
 # Final native support contract
 
-The final native-plane paper endpoint uses one immutable primary support:
+The final native-plane paper endpoint reads only an immutable
+`phase4r_current_native_central_component_mask/v1` artifact. Its base and
+primary supports are:
 
-`source_support AND scmr_style_central_component AND endpoint-valid/in-volume AND finite(reference) AND finite(prediction)`.
+`base_native_support = source_support AND phase4r_l100`
 
-For Proposed versus Fit-first metrics, the common support additionally requires
-both methods' valid finite predictions. `scmr_style_central_component` is read
-only from a `scmr_central_component_mask/v2` artifact and retains the historical
-six-input strict-common construction before 8-connected central/largest
-component selection. It is never reconstructed from displayed images or model
-predictions.
+`primary_native_mask = 8-connected central/largest component(base_native_support)`.
 
-`phase4r_l100` and `phase4r_l100_central_component` remain sensitivity/control
-domains. The latter is not historical SCMR support; it only isolates the
-component-selection effect from the six-input construction.
+The selection rule is SCMR-style only: select the image-centre component when
+its area is at least 25% of the largest component; otherwise select the
+largest. No morphology, interpolation, resize, historical geometry, or other
+reconstruction support participates. Historical SCMR reconstruction masks are
+not formal inputs.
+
+Paired Proposed versus Fit-first metrics use:
+
+`primary_native_mask AND finite(reference) AND proposed_endpoint_valid AND fit_first_endpoint_valid AND finite(proposed_prediction) AND finite(fit_first_prediction)`.
+
+Native reference panels use `primary_native_mask AND finite(reference)`; each
+method/error panel additionally requires that method's endpoint-valid and
+finite prediction.
+
+Build the immutable formal artifact from current inputs only:
+
+```bash
+paper_experiments/joint_vs_2dfit/phase2_clean/server_commands/build_current_native_central_component_masks.sh \
+  R0_NATIVE_MAPS_ROOT L100_SPARSE_MANIFEST Q004_FROZEN_NATIVE_AUDIT \
+  NEW_NATIVE_MASK_ROOT PYTHON
+```
 
 Longitudinal figures are a separate endpoint: source SAX is an acquisition
 reference, while Fit-first/Q002/Q004 panels sample each reconstructed 3-D
