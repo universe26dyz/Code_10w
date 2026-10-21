@@ -1,4 +1,4 @@
-"""Read-only final CYJ matched summaries and fixed-domain paper figures."""
+"""Read-only final matched summaries and fixed-domain paper figures."""
 from __future__ import annotations
 
 import argparse
@@ -46,7 +46,7 @@ def _case(condition: str) -> tuple[str, int]:
     return level, fold_int
 
 
-def _metric_records(root: str | Path, method: str, side: str) -> list[dict[str, Any]]:
+def _metric_records(root: str | Path, method: str, side: str, *, subject: str) -> list[dict[str, Any]]:
     root = Path(root)
     if method not in METHODS:
         raise ValueError(f"unsupported Proposed method: {method}")
@@ -59,8 +59,8 @@ def _metric_records(root: str | Path, method: str, side: str) -> list[dict[str, 
         if not metrics_path.is_file():
             continue
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        if manifest.get("subject") != "CYJ":
-            raise ValueError(f"final CYJ summary rejects non-CYJ result: {manifest_path}")
+        if manifest.get("subject") != subject:
+            raise ValueError(f"final subject summary rejects a mismatched result: {manifest_path}")
         endpoint, condition = manifest.get("endpoint"), manifest.get("condition")
         if endpoint not in ENDPOINTS or not isinstance(condition, str):
             raise ValueError(f"missing endpoint/condition in {manifest_path}")
@@ -159,21 +159,21 @@ def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         writer = csv.DictWriter(handle, fieldnames=fields); writer.writeheader(); writer.writerows(rows)
 
 
-def _paper_table(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], str]:
+def _paper_table(rows: list[dict[str, Any]], *, subject: str) -> tuple[list[dict[str, Any]], str]:
     output: list[dict[str, Any]] = []
     for row in rows:
         for metric in ("rmse", "mae"):
             value, sd = row[f"{metric}_mean"], row[f"{metric}_sample_sd"]
             output.append({"method": row["method"], "endpoint": row["endpoint"], "sparsity": row["level"], "parameter": row["parameter"], "metric": metric.upper(), "value": f"{value:.4g}" if sd is None else f"{value:.4g} ± {sd:.3g}"})
-    header = "# CYJ final matched table\n\nAll values use frozen `primary_native_mask`; L100 is a single value and L50/L25 use observed-fold mean ± sample SD.\n\n"
+    header = f"# {subject} final matched table\n\nAll values use frozen `primary_native_mask`; L100 is a single value and L50/L25 use observed-fold mean ± sample SD.\n\n"
     lines = [header, "| Method | Endpoint | Sparsity | Parameter | Metric | Value |", "|---|---|---|---|---|---:|"]
     lines.extend(f"| {row['method']} | {row['endpoint']} | {row['sparsity']} | {row['parameter']} | {row['metric']} | {row['value']} |" for row in output)
     return output, "\n".join(lines) + "\n"
 
 
-def _summary_markdown(rows: list[dict[str, Any]], robustness: list[dict[str, Any]]) -> str:
+def _summary_markdown(rows: list[dict[str, Any]], robustness: list[dict[str, Any]], *, subject: str) -> str:
     lines = [
-        "# CYJ final matched summary", "",
+        f"# {subject} final matched summary", "",
         "All values use the frozen current-native `primary_native_mask`. L100 is a single value; L50/L25 are observed-fold mean ± sample SD. Missing folds are not imputed.", "",
         "| Method | Endpoint | Level | Parameter | RMSE | MAE | Bias | ΔRMSE vs Fit-first | ΔMAE vs Fit-first | RMSE wins | MAE wins | Status |",
         "|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---|",
@@ -199,32 +199,39 @@ def _summary_markdown(rows: list[dict[str, Any]], robustness: list[dict[str, Any
     return "\n".join(lines) + "\n"
 
 
-def aggregate_final_cyj(method_roots: Mapping[str, str | Path], output: str | Path, *, fit_first_source_method: str) -> Path:
-    """Aggregate explicitly supplied formal comparison roots without fabricating methods or folds."""
+def aggregate_final_subject(subject: str, method_roots: Mapping[str, str | Path], output: str | Path, *, fit_first_source_method: str) -> Path:
+    """Aggregate one explicit subject without fabricating methods or folds."""
+    if not isinstance(subject, str) or not subject:
+        raise ValueError("subject must be a non-empty explicit identity")
     if fit_first_source_method not in method_roots:
         raise ValueError("fit_first_source_method must be one explicitly supplied Proposed method root")
     output = Path(output)
     if output.exists():
         raise FileExistsError(f"refusing overwrite: {output}")
-    proposed_rows = [row for method, root in sorted(method_roots.items()) for row in _metric_records(root, method, "proposed")]
-    fit_rows_list = _metric_records(method_roots[fit_first_source_method], fit_first_source_method, "fit_first")
+    proposed_rows = [row for method, root in sorted(method_roots.items()) for row in _metric_records(root, method, "proposed", subject=subject)]
+    fit_rows_list = _metric_records(method_roots[fit_first_source_method], fit_first_source_method, "fit_first", subject=subject)
     fit_index = {(row["endpoint"], row["condition"], row["parameter"]): row for row in fit_rows_list}
     all_rows = proposed_rows + fit_rows_list
     summaries = _summaries(all_rows, fit_index)
     robustness = _robustness(summaries)
-    paper_rows, paper_markdown = _paper_table(summaries)
+    paper_rows, paper_markdown = _paper_table(summaries, subject=subject)
     output.parent.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(prefix=f".{output.name}.staging-", dir=output.parent))
     try:
         _write_csv(staging / "summary.csv", all_rows + [{"row_type": "level_summary", **row} for row in summaries] + [{"row_type": "robustness", **row} for row in robustness])
         _write_csv(staging / "paper_table.csv", paper_rows)
         (staging / "paper_table.md").write_text(paper_markdown, encoding="utf-8")
-        (staging / "summary.md").write_text(_summary_markdown(summaries, robustness), encoding="utf-8")
-        write_immutable_json(staging / "summary.json", {"schema": "phase4r_final_cyj_summary/v2", "subject": "CYJ", "primary_region": "primary_native_mask", "fit_first_source_method": fit_first_source_method, "method_roots": {key: str(Path(value).resolve()) for key, value in method_roots.items()}, "fold_rows": all_rows, "level_summaries": summaries, "sparsity_robustness": robustness})
+        (staging / "summary.md").write_text(_summary_markdown(summaries, robustness, subject=subject), encoding="utf-8")
+        write_immutable_json(staging / "summary.json", {"schema": "phase4r_final_subject_summary/v3", "subject": subject, "primary_region": "primary_native_mask", "fit_first_source_method": fit_first_source_method, "method_roots": {key: str(Path(value).resolve()) for key, value in method_roots.items()}, "fold_rows": all_rows, "level_summaries": summaries, "sparsity_robustness": robustness})
         staging.rename(output)
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True); raise
     return output
+
+
+def aggregate_final_cyj(method_roots: Mapping[str, str | Path], output: str | Path, *, fit_first_source_method: str) -> Path:
+    """Compatibility wrapper for existing CYJ command lines and outputs."""
+    return aggregate_final_subject("CYJ", method_roots, output, fit_first_source_method=fit_first_source_method)
 
 
 def meaningful_longitudinal_index(mask: np.ndarray, *, axis: int, index: int | str | None = None) -> tuple[int, str]:
@@ -794,15 +801,15 @@ def _render_native(config: Mapping[str, Any], output: Path, inputs: dict[str, An
 
 
 def render_final_figures(config_path: str | Path, output: str | Path) -> Path:
-    """Create immutable, read-only CYJ figures from explicit formal artifact paths."""
+    """Create immutable, read-only subject figures from explicit formal artifact paths."""
     config_path, output = Path(config_path), Path(output)
     if output.exists():
         raise FileExistsError(f"refusing overwrite: {output}")
     config = json.loads(config_path.read_text(encoding="utf-8"))
-    if config.get("subject") != "CYJ" or config.get("endpoint") not in ENDPOINTS:
-        raise ValueError("final figures are CYJ-only and require an explicit matched endpoint")
+    if not isinstance(config.get("subject"), str) or not config["subject"] or config.get("endpoint") not in ENDPOINTS:
+        raise ValueError("final figures require an explicit subject and matched endpoint")
     if not isinstance(config.get("condition"), str):
-        raise ValueError("final figures require an explicit CYJ condition/fold")
+        raise ValueError("final figures require an explicit condition/fold")
     _case(config["condition"])
     if not isinstance(config.get("methods"), Mapping) or not config["methods"]:
         raise ValueError("at least one explicit method map set is required")
@@ -827,7 +834,7 @@ def render_final_figures(config_path: str | Path, output: str | Path) -> Path:
         longitudinal = _render_longitudinal(config, staging, inputs)
         scmr_longitudinal = _render_scmr_style_longitudinal(config, staging, inputs)
         native = _render_native(config, staging, inputs)
-        manifest = {"schema": "phase4r_final_cyj_figures/v1", "subject": "CYJ", "condition": config.get("condition"), "endpoint": config["endpoint"], "methods": list(config["methods"]), "inputs": inputs, "longitudinal_figures": longitudinal, "scmr_style_longitudinal_figures": scmr_longitudinal, "native_heldout_figures": native, "shared_parameter_lut_ranges_ms": {key: list(value) for key, value in DISPLAY_RANGES_MS.items()}, "error_display_contract": "absolute_error_ms using same parameter map LUT/range; no magma residual scale; native mosaics provide one shared parameter colorbar", "code_git_sha": _git_sha()}
+        manifest = {"schema": "phase4r_final_subject_figures/v2", "subject": config["subject"], "condition": config.get("condition"), "endpoint": config["endpoint"], "methods": list(config["methods"]), "inputs": inputs, "longitudinal_figures": longitudinal, "scmr_style_longitudinal_figures": scmr_longitudinal, "native_heldout_figures": native, "shared_parameter_lut_ranges_ms": {key: list(value) for key, value in DISPLAY_RANGES_MS.items()}, "error_display_contract": "absolute_error_ms using same parameter map LUT/range; no magma residual scale; native mosaics provide one shared parameter colorbar", "code_git_sha": _git_sha()}
         write_immutable_json(staging / "figure_manifest.json", manifest)
         staging.rename(output)
     except BaseException:
@@ -841,7 +848,7 @@ def main() -> None:
     commands = parser.add_subparsers(dest="command", required=True)
     aggregate = commands.add_parser("aggregate")
     aggregate.add_argument("--method-root", action="append", required=True, metavar="METHOD=ROOT")
-    aggregate.add_argument("--fit-first-source-method", required=True); aggregate.add_argument("--output", required=True)
+    aggregate.add_argument("--subject", default="CYJ"); aggregate.add_argument("--fit-first-source-method", required=True); aggregate.add_argument("--output", required=True)
     figures = commands.add_parser("figures")
     figures.add_argument("--config", required=True); figures.add_argument("--output", required=True)
     args = parser.parse_args()
@@ -856,7 +863,7 @@ def main() -> None:
             if method in roots:
                 raise ValueError(f"duplicate --method-root method: {method}")
             roots[method] = root
-        print(aggregate_final_cyj(roots, args.output, fit_first_source_method=args.fit_first_source_method))
+        print(aggregate_final_subject(args.subject, roots, args.output, fit_first_source_method=args.fit_first_source_method))
 
 
 if __name__ == "__main__":

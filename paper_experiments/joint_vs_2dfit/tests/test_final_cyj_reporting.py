@@ -28,10 +28,10 @@ def _metrics(value: float) -> dict[str, object]:
     return {"rmse": value, "mae": value / 2, "bias": -value / 10, "voxel_count": 10, "coverage_fraction": 1.0}
 
 
-def _result(root: Path, *, condition: str, endpoint: str, proposed: float, fit_first: float) -> None:
+def _result(root: Path, *, condition: str, endpoint: str, proposed: float, fit_first: float, subject: str = "CYJ") -> None:
     target = root / condition / endpoint; target.mkdir(parents=True)
     regions = {parameter: {"all_lax": {"l100_full": {"proposed": _metrics(proposed), "fit_first": _metrics(fit_first)}}} for parameter in ("t1", "t2")}
-    (target / "manifest.json").write_text(json.dumps({"subject": "CYJ", "condition": condition, "endpoint": endpoint}), encoding="utf-8")
+    (target / "manifest.json").write_text(json.dumps({"subject": subject, "condition": condition, "endpoint": endpoint}), encoding="utf-8")
     (target / "aggregate_metrics.json").write_text(json.dumps({"regions": regions}), encoding="utf-8")
 
 
@@ -57,6 +57,15 @@ def test_final_summary_uses_sample_sd_keeps_methods_endpoints_and_missing_folds_
     assert "Q002S640" in (output / "summary.md").read_text(encoding="utf-8")
     with pytest.raises(FileExistsError):
         aggregate_final_cyj({"Q002S640": q002}, output, fit_first_source_method="Q002S640")
+
+
+def test_subject_summary_accepts_one_explicit_non_cyj_subject(tmp_path: Path) -> None:
+    from paper_experiments.joint_vs_2dfit.phase2_clean.final_cyj_reporting import aggregate_final_subject
+
+    root = tmp_path / "q004"
+    _result(root, condition="L100_fold0", endpoint="central", proposed=1.0, fit_first=2.0, subject="DYL_2")
+    output = aggregate_final_subject("DYL_2", {"Q004S640": root}, tmp_path / "summary", fit_first_source_method="Q004S640")
+    assert json.loads((output / "summary.json").read_text())["subject"] == "DYL_2"
 
 
 def test_longitudinal_plane_has_one_world_extent_and_final_error_uses_map_lut_range() -> None:

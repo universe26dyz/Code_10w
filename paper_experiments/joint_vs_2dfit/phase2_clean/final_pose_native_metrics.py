@@ -36,8 +36,11 @@ def build_final_pose_native_metrics(*, direct_bundle_root: str | Path, fit_first
         raise ValueError("Fit-first bundle schema mismatch")
     if direct_manifest.get("endpoint") != fit_manifest.get("endpoint"):
         raise ValueError("endpoint mismatch: direct and Fit-first final-pose bundles must match")
-    if sparse_payload.get("subject") not in (None, "CYJ") or sparse_payload.get("condition") not in (None, "L100_fold0", "L100"):
-        raise ValueError("final-pose metrics are L100/CYJ only")
+    subject = sparse_payload.get("subject")
+    if subject is not None and (not isinstance(subject, str) or not subject):
+        raise ValueError("final-pose metrics require a named subject when subject is declared")
+    if sparse_payload.get("condition") not in (None, "L100_fold0", "L100"):
+        raise ValueError("final-pose metrics are L100 only")
     if output.exists():
         raise FileExistsError(f"refusing overwrite: {output}")
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -83,7 +86,7 @@ def build_final_pose_native_metrics(*, direct_bundle_root: str | Path, fit_first
                 aggregate_output[parameter][name] = {"common_support_voxels": int(ref.size), "proposed": _metrics(ref, np.concatenate(values["proposed"]), support), "fit_first": _metrics(ref, np.concatenate(values["fit_first"]), support)}
         primary_aggregate = {parameter: aggregate_output[parameter][PRIMARY_MASK] for parameter in PARAMETERS}
         (staging / "aggregate_metrics.json").write_text(json.dumps({"schema": "final_pose_native_common_support_metrics/v3", "primary_mask": PRIMARY_MASK, "primary_support_equation": COMMON_SUPPORT_EQUATION, "primary_aggregate": primary_aggregate, "regions": aggregate_output}, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        write_immutable_json(staging / "manifest.json", {"schema": "final_pose_native_bundle_metrics/v4", "subject": "CYJ", "condition": "L100_fold0", "endpoint": direct_manifest["endpoint"], "direct_bundle": _record(direct_root / "manifest.json"), "fit_first_bundle": _record(fit_root / "manifest.json"), "mask_manifest": _record(mask_root / "manifest.json"), "primary_mask": PRIMARY_MASK, "primary_support_equation": COMMON_SUPPORT_EQUATION, "sensitivity_masks": [name for name in MASKS if name != PRIMARY_MASK], "metric_contract": "current-native primary mask plus final direct INR and final Fit-first bundle on one paired valid support", "per_plane_records": rows, "aggregate_metrics": _record(staging / "aggregate_metrics.json"), "no_existing_metrics_overwritten": True})
+        write_immutable_json(staging / "manifest.json", {"schema": "final_pose_native_bundle_metrics/v4", "subject": subject, "condition": "L100_fold0", "endpoint": direct_manifest["endpoint"], "direct_bundle": _record(direct_root / "manifest.json"), "fit_first_bundle": _record(fit_root / "manifest.json"), "mask_manifest": _record(mask_root / "manifest.json"), "primary_mask": PRIMARY_MASK, "primary_support_equation": COMMON_SUPPORT_EQUATION, "sensitivity_masks": [name for name in MASKS if name != PRIMARY_MASK], "metric_contract": "current-native primary mask plus final direct INR and final Fit-first bundle on one paired valid support", "per_plane_records": rows, "aggregate_metrics": _record(staging / "aggregate_metrics.json"), "no_existing_metrics_overwritten": True})
         staging.rename(output)
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True)

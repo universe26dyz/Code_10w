@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Multi-subject formal native metric row",
+  "type": "object",
+  "required": ["schema", "subject", "formal_case", "condition", "phase", "endpoint", "parameter", "method", "metric", "paired_support", "provenance"],
+  "properties": {
+    "schema": {"const": "multi_subject_native_metrics/v1"},
+    "subject": {"type": "string", "minLength": 1},
+    "formal_case": {"type": "string", "pattern": "^L(100|50|25)_fold[0-3]$"},
+    "condition": {"enum": ["L100", "L50", "L25"]},
+    "phase": {"type": "integer", "minimum": 0, "maximum": 3},
+    "endpoint": {"enum": ["central", "psf128"]},
+    "parameter": {"enum": ["t1", "t2"]},
+    "method": {"type": "string", "minLength": 1},
+    "metric": {
+      "type": "object",
+      "required": ["rmse_ms", "mae_ms", "bias_ms"],
+      "properties": {
+        "rmse_ms": {"type": "number"},
+        "mae_ms": {"type": "number"},
+        "bias_ms": {"type": "number"}
+      },
+      "additionalProperties": false
+    },
+    "paired_support": {
+      "type": "object",
+      "required": ["status", "voxel_count"],
+      "properties": {"status": {"enum": ["VERIFIED", "PAIRED_SUPPORT_MISMATCH"]}, "voxel_count": {"type": "integer", "minimum": 0}},
+      "additionalProperties": false
+    },
+    "provenance": {
+      "type": "object",
+      "required": ["metric_manifest_sha256", "mask_manifest_sha256"],
+      "properties": {"metric_manifest_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "mask_manifest_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}},
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

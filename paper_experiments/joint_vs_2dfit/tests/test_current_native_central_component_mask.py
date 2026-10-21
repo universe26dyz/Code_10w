@@ -74,6 +74,30 @@ def test_builds_immutable_complete_current_native_artifact_and_validates_source(
         masks.build_current_native_central_component_mask(r0_native_maps_root=tmp_path / "r0", sparse_manifest=sparse, l100_native_support_root=l100, output=output)
 
 
+def test_current_native_mask_uses_the_manifest_subject_and_observed_group_count(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    counts = {"sax": 1, "2ch": 2, "4ch": 1}
+
+    def cache(stack: str) -> dict[str, object]:
+        count = counts[stack]
+        return {"group_idx": np.arange(count), "t1_ms": np.full((count, 3, 3), 1000.0, np.float32), "t2_ms": np.full((count, 3, 3), 50.0, np.float32), "source_support": np.ones((count, 3, 3), bool), "provenance": {"stack": stack, "r0": "frozen"}}
+
+    monkeypatch.setattr(masks, "_load_all_verified_native_cache_groups", lambda _root, _sparse, stack: cache(stack))
+    root = tmp_path / "l100"; planes = []
+    for parameter in ("t1", "t2"):
+        for stack, count in counts.items():
+            for group in range(count):
+                relative = Path("planes") / parameter / stack / f"group{group:03d}.npz"
+                target = root / relative; target.parent.mkdir(parents=True, exist_ok=True)
+                np.savez_compressed(target, l100_native=np.ones((3, 3), bool))
+                planes.append({"parameter": parameter, "stack": stack, "group_idx": group, "output": str(relative)})
+    (root / "manifest.json").write_text(json.dumps({"schema": "q004_direct_native_endpoint_audit/v2", "planes": planes}))
+    sparse = tmp_path / "sparse.json"; sparse.write_text(json.dumps({"subject": "DYL_2", "condition": "L100"}))
+    output = masks.build_current_native_central_component_mask(r0_native_maps_root=tmp_path / "r0", sparse_manifest=sparse, l100_native_support_root=root, output=tmp_path / "masks")
+    manifest = json.loads((output / "manifest.json").read_text())
+    assert manifest["subject"] == "DYL_2"
+    assert len(manifest["planes"]) == 2 * sum(counts.values())
+
+
 def test_loader_uses_python38_compatible_dictionary_assembly() -> None:
     assert "} | {" not in inspect.getsource(masks.load_validated_current_native_mask_plane)
 

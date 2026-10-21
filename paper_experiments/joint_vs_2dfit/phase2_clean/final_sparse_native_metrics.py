@@ -34,11 +34,11 @@ def sparse_manifest_case(sparse: dict[str, Any]) -> str:
     level, phase = sparse.get("condition"), sparse.get("phase")
     valid = {"L50": (0, 1), "L25": (0, 1, 2, 3)}
     if level not in valid or type(phase) is not int or phase not in valid[level]:
-        raise ValueError("sparse formal evaluator supports CYJ L50/L25 phases only")
+        raise ValueError("sparse formal evaluator supports L50/L25 phases only")
     return f"{level}_fold{phase}"
 
 
-def validate_sparse_endpoint_roots(proposed_root: str | Path, fit_first_root: str | Path, condition: str) -> tuple[dict[str, Path], dict[str, Any]]:
+def validate_sparse_endpoint_roots(proposed_root: str | Path, fit_first_root: str | Path, condition: str, *, subject: str = "CYJ") -> tuple[dict[str, Path], dict[str, Any]]:
     """Validate matched immutable endpoint exports before any native sampling."""
     proposed_root, fit_first_root = Path(proposed_root), Path(fit_first_root)
     proposed_path, proposed = _manifest(proposed_root); fit_path, fit = _manifest(fit_first_root)
@@ -47,7 +47,7 @@ def validate_sparse_endpoint_roots(proposed_root: str | Path, fit_first_root: st
     if fit.get("schema") != "phase4r_fixed_l100_fit_first_export_bundle/v1":
         raise ValueError("Fit-first formal endpoint schema mismatch")
     for name, payload in (("Proposed", proposed), ("Fit-first", fit)):
-        if payload.get("subject") != "CYJ" or payload.get("condition") != condition:
+        if payload.get("subject") != subject or payload.get("condition") != condition:
             raise ValueError(f"{name} endpoint subject/condition mismatch")
     require_matched_endpoints(str(proposed.get("endpoint")), str(fit.get("endpoint")))
     paths = {
@@ -74,14 +74,15 @@ def build_final_sparse_native_metrics(*, proposed_endpoint_root: str | Path, fit
 
     sparse_manifest, native_mask_root, output = Path(sparse_manifest), Path(native_mask_root), Path(output)
     sparse = json.loads(sparse_manifest.read_text(encoding="utf-8"))
-    if sparse.get("subject") != "CYJ":
-        raise ValueError("sparse formal evaluator supports CYJ L50/L25 folds only")
+    subject = sparse.get("subject")
+    if not isinstance(subject, str) or not subject:
+        raise ValueError("sparse formal evaluator requires a named subject")
     condition = sparse_manifest_case(sparse)
     if sparse.get("status") != "ELIGIBLE":
         raise ValueError("sparse formal evaluator requires an ELIGIBLE manifest")
     if output.exists():
         raise FileExistsError(f"refusing overwrite: {output}")
-    volume_paths, endpoint_provenance = validate_sparse_endpoint_roots(proposed_endpoint_root, fit_first_endpoint_root, condition)
+    volume_paths, endpoint_provenance = validate_sparse_endpoint_roots(proposed_endpoint_root, fit_first_endpoint_root, condition, subject=subject)
     images = {parameter: {name: nib.load(str(path)) for name, path in volumes.items()} for parameter, volumes in volume_paths.items()}
     output.parent.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(prefix=f".{output.name}.staging-", dir=output.parent))
@@ -112,7 +113,7 @@ def build_final_sparse_native_metrics(*, proposed_endpoint_root: str | Path, fit
         regions = {parameter: {stack: _aggregate(values) for stack, values in stacks.items()} for parameter, stacks in aggregate.items()}
         metrics_payload = {"schema": "final_sparse_native_common_support_metrics/v1", "primary_mask": "primary_native_mask", "primary_support_equation": "primary_native_mask AND finite(reference) AND proposed_endpoint_valid AND fit_first_endpoint_valid AND finite(proposed, fit_first)", "regions": regions, "per_plane_records": records, "heldout_only": True, "native_geometry": "original held-out R0 native affine; no_final_pose_lookup"}
         write_immutable_json(staging / "aggregate_metrics.json", metrics_payload)
-        write_immutable_json(staging / "manifest.json", {"schema": "final_sparse_native_bundle_metrics/v1", "subject": "CYJ", "condition": condition, "endpoint": endpoint_provenance["endpoint"], "endpoint_provenance": endpoint_provenance, "sparse_manifest": _record(sparse_manifest), "native_mask_manifest": _record(native_mask_root / "manifest.json"), "aggregate_metrics": _record(staging / "aggregate_metrics.json"), "primary_mask": "primary_native_mask", "heldout_only": True, "no_learned_pose": True, "no_training": True, "no_reconstruction": True})
+        write_immutable_json(staging / "manifest.json", {"schema": "final_sparse_native_bundle_metrics/v1", "subject": subject, "condition": condition, "endpoint": endpoint_provenance["endpoint"], "endpoint_provenance": endpoint_provenance, "sparse_manifest": _record(sparse_manifest), "native_mask_manifest": _record(native_mask_root / "manifest.json"), "aggregate_metrics": _record(staging / "aggregate_metrics.json"), "primary_mask": "primary_native_mask", "heldout_only": True, "no_learned_pose": True, "no_training": True, "no_reconstruction": True})
         staging.rename(output)
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True)

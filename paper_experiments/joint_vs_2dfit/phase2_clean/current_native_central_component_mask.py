@@ -20,7 +20,6 @@ from .contracts import sha256, write_immutable_json
 
 STACKS = ("sax", "2ch", "4ch")
 PARAMETERS = ("t1", "t2")
-EXPECTED_GROUPS = {"sax": 14, "2ch": 15, "4ch": 12}
 REQUIRED_ARRAYS = ("source_support", "phase4r_l100", "base_native_support", "primary_native_mask", "reference")
 
 
@@ -115,12 +114,14 @@ def build_current_native_central_component_mask(*, r0_native_maps_root: str | Pa
     if output.exists():
         raise FileExistsError(f"refusing overwrite: {output}")
     sparse = json.loads(Path(sparse_manifest).read_text(encoding="utf-8"))
-    if sparse.get("subject") != "CYJ" or sparse.get("condition") != "L100":
-        raise ValueError("formal current-native mask is CYJ/L100 only")
+    subject = sparse.get("subject")
+    if not isinstance(subject, str) or not subject or sparse.get("condition") != "L100":
+        raise ValueError("formal current-native mask requires a named L100 sparse manifest")
     l100 = _l100_records(l100_native_support_root)
     current = {stack: _load_all_verified_native_cache_groups(r0_native_maps_root, sparse_manifest, stack) for stack in STACKS}
-    if {stack: len(current[stack]["group_idx"]) for stack in STACKS} != EXPECTED_GROUPS:
-        raise ValueError("CYJ L100 group completeness is not 14/15/12")
+    group_counts = {stack: len(current[stack]["group_idx"]) for stack in STACKS}
+    if any(count == 0 for count in group_counts.values()) or any(len(set(map(int, current[stack]["group_idx"]))) != count for stack, count in group_counts.items()):
+        raise ValueError("L100 native cache has empty or duplicate group identities")
     output.parent.mkdir(parents=True, exist_ok=True); staging = Path(tempfile.mkdtemp(prefix=f".{output.name}.staging-", dir=output.parent))
     try:
         planes: list[dict[str, Any]] = []
@@ -144,9 +145,10 @@ def build_current_native_central_component_mask(*, r0_native_maps_root: str | Pa
                     target = staging / "planes" / parameter / stack / f"group{group:03d}.npz"; target.parent.mkdir(parents=True, exist_ok=True)
                     np.savez_compressed(target, **values, reference=reference)
                     planes.append({"parameter": parameter, "stack": stack, "original_group_idx": group, "shape_rc": list(source.shape), "current_r0_source": current[stack]["provenance"], "l100_source": {"path": str(support_path.resolve()), "sha256": sha256(support_path), "field": support_record["field"], "source_schema": support_record["source_schema"]}, "source_support_voxels": int(source.sum()), "phase4r_l100_voxels": int(frozen.sum()), "base_native_support_voxels": int(values["base_native_support"].sum()), "primary_native_mask_voxels": int(values["primary_native_mask"].sum()), "component_selection": selection, "output": {"path": str(target.relative_to(staging)), "sha256": sha256(target)}, "no_interpolation": True})
-        if len(planes) != 82:
-            raise ValueError(f"expected 82 current-native mask planes, got {len(planes)}")
-        write_immutable_json(staging / "manifest.json", {"schema": "phase4r_current_native_central_component_mask/v1", "subject": "CYJ", "condition": "L100_fold0", "r0_native_root": {"path": str(Path(r0_native_maps_root).resolve()), "provenance": {stack: current[stack]["provenance"] for stack in STACKS}}, "sparse_manifest": _record(sparse_manifest), "frozen_l100_native_support_manifest": _record(Path(l100_native_support_root) / "manifest.json"), "planes": planes, "primary_mask": "primary_native_mask", "base_support_equation": "source_support AND phase4r_l100", "selection_rule": "SCMR-style central/largest 8-connected component", "minimum_ratio": float(minimum_ratio), "no_interpolation": True, "no_resampling": True, "no_training": True, "no_reconstruction": True})
+        expected_planes = len(PARAMETERS) * sum(group_counts.values())
+        if len(planes) != expected_planes:
+            raise ValueError(f"expected {expected_planes} current-native mask planes, got {len(planes)}")
+        write_immutable_json(staging / "manifest.json", {"schema": "phase4r_current_native_central_component_mask/v1", "subject": subject, "condition": "L100_fold0", "r0_native_root": {"path": str(Path(r0_native_maps_root).resolve()), "provenance": {stack: current[stack]["provenance"] for stack in STACKS}}, "sparse_manifest": _record(sparse_manifest), "frozen_l100_native_support_manifest": _record(Path(l100_native_support_root) / "manifest.json"), "observed_group_counts": group_counts, "planes": planes, "primary_mask": "primary_native_mask", "base_support_equation": "source_support AND phase4r_l100", "selection_rule": "SCMR-style central/largest 8-connected component", "minimum_ratio": float(minimum_ratio), "no_interpolation": True, "no_resampling": True, "no_training": True, "no_reconstruction": True})
         staging.rename(output)
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True); raise

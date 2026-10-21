@@ -1,0 +1,26 @@
+{
+  "schema_version": "deployment-v1.1",
+  "purpose": "DYL_2 onboarding manifest; historical subject_stack_manifest.json remains immutable.",
+  "subjects": [
+    {
+      "subject_id": "DYL_2",
+      "stacks": [
+        {
+          "stack": "sax",
+          "local_dicom_dir": "/home/universe/SVR/multimap_postprogramming/subject_dicom/DYL_2/sax",
+          "server_dicom_dir": "/data/dengyz/dataset/mapping_subject_dicom/DYL_2/sax"
+        },
+        {
+          "stack": "2ch",
+          "local_dicom_dir": "/home/universe/SVR/multimap_postprogramming/subject_dicom/DYL_2/2ch",
+          "server_dicom_dir": "/data/dengyz/dataset/mapping_subject_dicom/DYL_2/2ch"
+        },
+        {
+          "stack": "4ch",
+          "local_dicom_dir": "/home/universe/SVR/multimap_postprogramming/subject_dicom/DYL_2/4ch",
+          "server_dicom_dir": "/data/dengyz/dataset/mapping_subject_dicom/DYL_2/4ch"
+        }
+      ]
+    }
+  ]
+}

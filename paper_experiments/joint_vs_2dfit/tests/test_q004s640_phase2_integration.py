@@ -48,6 +48,17 @@ def test_q004_phase2_adapter_selects_the_preexisting_k1_runner_and_r0_reuse(tmp_
     assert "--anchor-batch-size 640" in command
 
 
+def test_q004_phase2_adapter_preserves_an_explicit_non_cyj_subject(tmp_path: Path) -> None:
+    from paper_experiments.joint_vs_2dfit.phase2_clean.q004s640 import build_q004s640_command, select_prepared_root
+
+    r0 = tmp_path / "r0"; r0.mkdir()
+    manifest = tmp_path / "l100.json"
+    manifest.write_text(json.dumps({"subject": "DYL_2", "condition": "L100"}), encoding="utf-8")
+    assert select_prepared_root("DYL_2", "L100_fold0", r0, r0, manifest) == r0
+    command = build_q004s640_command("L100_fold0", r0, subject="DYL_2", decoder="decoder.pt", b6_model="b6.pt", output="new-output")
+    assert "--subject-id DYL_2" in command
+
+
 def test_q004_alias_records_k1_training_separately_from_central_and_psf128_exports(tmp_path: Path) -> None:
     from paper_experiments.joint_vs_2dfit.phase2_clean.cyj_matched_comparison import formalize_q004s640_alias
 
@@ -82,7 +93,8 @@ def test_q004_phase2_server_wrappers_are_immutable_and_restrict_cyj_cases() -> N
     cases = "L100_fold0|L50_fold0|L50_fold1|L25_fold0|L25_fold1|L25_fold2|L25_fold3"
     for text in (run, aliases, evaluate):
         assert cases in text and "L33" not in text and "rm -rf" not in text
-    assert "phase2_clean.q004s640 --condition" in run and "--execute" in run
+    assert "phase2_clean.q004s640 --subject" in run and "--condition" in run and "--execute" in run
+    assert 'SUBJECT=${SUBJECT:-CYJ}' in run and '--subject "$SUBJECT"' in run
     assert "alias-q004s640" in aliases and "--endpoint central" in aliases and "--endpoint psf128" in aliases
     assert "FIT_FIRST_OR_Q002_OR_Q002S640_K256" in evaluate
     assert "--proposed-label Q004S640" in evaluate and "--comparator-label \"$LABEL\"" in evaluate

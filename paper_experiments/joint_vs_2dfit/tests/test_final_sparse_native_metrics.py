@@ -16,12 +16,12 @@ def _volume(path: Path, value: float) -> None:
     nib.save(nib.Nifti1Image(np.full((4, 4, 1), value, np.float32), np.eye(4)), str(path))
 
 
-def _endpoint(root: Path, method: str, endpoint: str) -> Path:
+def _endpoint(root: Path, method: str, endpoint: str, *, subject: str = "CYJ") -> Path:
     root.mkdir(parents=True)
     for parameter, value in (("t1", 900.0), ("t2", 70.0)):
         target = root / (f"{parameter.upper()}_3D.nii.gz" if method == "Proposed" else f"{parameter}/volume_ms.nii.gz")
         _volume(target, value)
-    (root / "manifest.json").write_text(json.dumps({"schema": "phase4r_formal_proposed_export/v1" if method == "Proposed" else "phase4r_fixed_l100_fit_first_export_bundle/v1", "subject": "CYJ", "condition": "L50_fold0", "method": method, "endpoint": endpoint}), encoding="utf-8")
+    (root / "manifest.json").write_text(json.dumps({"schema": "phase4r_formal_proposed_export/v1" if method == "Proposed" else "phase4r_fixed_l100_fit_first_export_bundle/v1", "subject": subject, "condition": "L50_fold0", "method": method, "endpoint": endpoint}), encoding="utf-8")
     return root
 
 
@@ -59,6 +59,15 @@ def test_sparse_evaluator_rejects_endpoint_mismatch(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="endpoint mismatch"):
         sparse.validate_sparse_endpoint_roots(_endpoint(tmp_path / "proposed", "Proposed", "central"), _endpoint(tmp_path / "fit", "Fit-first", "psf128"), "L50_fold0")
+
+
+def test_sparse_endpoint_validation_accepts_the_explicit_dyl2_subject(tmp_path: Path) -> None:
+    from paper_experiments.joint_vs_2dfit.phase2_clean import final_sparse_native_metrics as sparse
+
+    proposed = _endpoint(tmp_path / "proposed", "Proposed", "central", subject="DYL_2")
+    fit = _endpoint(tmp_path / "fit", "Fit-first", "central", subject="DYL_2")
+    _, provenance = sparse.validate_sparse_endpoint_roots(proposed, fit, "L50_fold0", subject="DYL_2")
+    assert provenance["endpoint"] == "central"
 
 
 @pytest.mark.parametrize(("level", "phase", "case"), (("L50", 0, "L50_fold0"), ("L50", 1, "L50_fold1"), ("L25", 0, "L25_fold0"), ("L25", 3, "L25_fold3")))

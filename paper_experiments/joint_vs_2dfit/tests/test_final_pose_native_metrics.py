@@ -34,7 +34,7 @@ def test_final_metrics_freeze_current_native_primary_on_single_common_support(mo
         np.savez_compressed(target / "group003.npz", prediction_ms=np.full((2, 2), value), valid=np.ones((2, 2), bool))
     cache = {"group_idx": np.array([3]), "source_support": np.ones((1, 2, 2), bool), "t1_ms": np.full((1, 2, 2), 1000.0), "t2_ms": np.full((1, 2, 2), 80.0)}
     monkeypatch.setattr(metrics, "_load_all_verified_native_cache_groups", lambda *args: cache)
-    sparse = tmp_path / "sparse.json"; sparse.write_text("{}", encoding="utf-8")
+    sparse = tmp_path / "sparse.json"; sparse.write_text(json.dumps({"subject": "DYL_2", "condition": "L100"}), encoding="utf-8")
     output = metrics.build_final_pose_native_metrics(direct_bundle_root=direct, fit_first_bundle_root=fit, r0_native_maps_root=tmp_path, sparse_manifest=sparse, mask_root=_mask_root(tmp_path), output=tmp_path / "out")
     aggregate = json.loads((output / "aggregate_metrics.json").read_text(encoding="utf-8"))
     manifest = json.loads((output / "manifest.json").read_text(encoding="utf-8"))
@@ -42,6 +42,7 @@ def test_final_metrics_freeze_current_native_primary_on_single_common_support(mo
     assert aggregate["primary_aggregate"]["t1"]["common_support_voxels"] == 4
     assert manifest["primary_support_equation"] == "primary_native_mask AND finite(reference) AND proposed_valid AND fit_first_valid AND finite(proposed, fit_first)"
     assert manifest["sensitivity_masks"] == ["phase4r_l100"]
+    assert manifest["subject"] == "DYL_2"
 
 
 def test_final_metrics_fail_closed_on_legacy_mask_provenance(tmp_path: Path) -> None:
