@@ -201,7 +201,7 @@ def test_native_mosaic_reads_fit_first_final_pose_bundle_without_r0_reprojection
     for parameter, value in (("t1", 777.0), ("t2", 66.0)):
         target = fit / "planes" / parameter / "2ch"; target.mkdir(parents=True)
         np.savez_compressed(target / "group003.npz", prediction_ms=np.full((2, 3), value), valid=np.ones((2, 3), bool))
-    (fit / "manifest.json").write_text(json.dumps({"schema": "fit_first_native_prediction_bundle/v1"}), encoding="utf-8")
+    (fit / "manifest.json").write_text(json.dumps({"schema": "fit_first_native_prediction_bundle/v2", "endpoint": "central"}), encoding="utf-8")
     cache_files = [tmp_path / name for name in ("native_maps.npz", "geometry.npz", "native_manifest.json")]
     for path in cache_files: path.write_bytes(b"cache")
     selected = {"group_idx": np.array([3]), "source_support": np.ones((1, 2, 3), bool), "affine_lps_rc": np.eye(4)[None], "pixel_spacing_rc_mm": np.ones((1, 2)), "t1_ms": np.full((1, 2, 3), 1000.0), "t2_ms": np.full((1, 2, 3), 80.0), "provenance": dict(zip(("native_maps_path", "geometry_path", "manifest_path"), map(str, cache_files)))}

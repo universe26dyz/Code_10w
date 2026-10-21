@@ -72,14 +72,23 @@ def _metric_records(root: str | Path, method: str, side: str) -> list[dict[str, 
         metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
         for parameter, display_parameter in PARAMETERS.items():
             try:
-                values = metrics["regions"][parameter]["all_lax"]["l100_full"][side]
-            except KeyError as error:
-                raise ValueError(f"{metrics_path} lacks all_lax/l100_full/{parameter}/{side}") from error
+                values = metrics["primary_aggregate"][parameter][side]
+            except KeyError:
+                try:
+                    values = metrics["regions"][parameter]["all_lax"]["primary_native_mask"][side]
+                except KeyError:
+                    try:
+                        values = metrics["regions"][parameter]["all_lax"]["l100_full"][side]
+                    except KeyError as error:
+                        try:
+                            values = metrics["regions"][parameter]["all_lax"][side]
+                        except KeyError:
+                            raise ValueError(f"{metrics_path} lacks formal primary metrics for {parameter}/{side}") from error
             rows.append({
                 "method": method if side == "proposed" else "Fit-first", "endpoint": endpoint, "condition": condition,
                 "level": level, "fold": fold, "parameter": display_parameter, "rmse": values["rmse"],
-                "mae": values["mae"], "bias": values["bias"], "voxel_count": values["voxel_count"],
-                "coverage_fraction": values["coverage_fraction"], "source_manifest": str(manifest_path.resolve()),
+                "mae": values["mae"], "bias": values["bias"], "voxel_count": values.get("voxel_count", values.get("support_voxels")),
+                "coverage_fraction": values.get("coverage_fraction"), "source_manifest": str(manifest_path.resolve()),
                 "source_metrics": str(metrics_path.resolve()), "source_method": method,
             })
     if not rows:
@@ -156,7 +165,7 @@ def _paper_table(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], str]
         for metric in ("rmse", "mae"):
             value, sd = row[f"{metric}_mean"], row[f"{metric}_sample_sd"]
             output.append({"method": row["method"], "endpoint": row["endpoint"], "sparsity": row["level"], "parameter": row["parameter"], "metric": metric.upper(), "value": f"{value:.4g}" if sd is None else f"{value:.4g} ± {sd:.3g}"})
-    header = "# CYJ final matched table\n\nAll values are `l100_full`; L100 is a single value and L50/L25 use observed-fold mean ± sample SD.\n\n"
+    header = "# CYJ final matched table\n\nAll values use frozen `primary_native_mask`; L100 is a single value and L50/L25 use observed-fold mean ± sample SD.\n\n"
     lines = [header, "| Method | Endpoint | Sparsity | Parameter | Metric | Value |", "|---|---|---|---|---|---:|"]
     lines.extend(f"| {row['method']} | {row['endpoint']} | {row['sparsity']} | {row['parameter']} | {row['metric']} | {row['value']} |" for row in output)
     return output, "\n".join(lines) + "\n"
@@ -165,7 +174,7 @@ def _paper_table(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], str]
 def _summary_markdown(rows: list[dict[str, Any]], robustness: list[dict[str, Any]]) -> str:
     lines = [
         "# CYJ final matched summary", "",
-        "All values use the frozen `l100_full` support. L100 is a single value; L50/L25 are observed-fold mean ± sample SD. Missing folds are not imputed.", "",
+        "All values use the frozen current-native `primary_native_mask`. L100 is a single value; L50/L25 are observed-fold mean ± sample SD. Missing folds are not imputed.", "",
         "| Method | Endpoint | Level | Parameter | RMSE | MAE | Bias | ΔRMSE vs Fit-first | ΔMAE vs Fit-first | RMSE wins | MAE wins | Status |",
         "|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---|",
     ]
@@ -211,7 +220,7 @@ def aggregate_final_cyj(method_roots: Mapping[str, str | Path], output: str | Pa
         _write_csv(staging / "paper_table.csv", paper_rows)
         (staging / "paper_table.md").write_text(paper_markdown, encoding="utf-8")
         (staging / "summary.md").write_text(_summary_markdown(summaries, robustness), encoding="utf-8")
-        write_immutable_json(staging / "summary.json", {"schema": "phase4r_final_cyj_summary/v1", "subject": "CYJ", "primary_region": "l100_full", "fit_first_source_method": fit_first_source_method, "method_roots": {key: str(Path(value).resolve()) for key, value in method_roots.items()}, "fold_rows": all_rows, "level_summaries": summaries, "sparsity_robustness": robustness})
+        write_immutable_json(staging / "summary.json", {"schema": "phase4r_final_cyj_summary/v2", "subject": "CYJ", "primary_region": "primary_native_mask", "fit_first_source_method": fit_first_source_method, "method_roots": {key: str(Path(value).resolve()) for key, value in method_roots.items()}, "fold_rows": all_rows, "level_summaries": summaries, "sparsity_robustness": robustness})
         staging.rename(output)
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True); raise
@@ -713,7 +722,7 @@ def _render_native_stack(config: Mapping[str, Any], output: Path, inputs: dict[s
                 root = Path(configured["fit_first_native_bundle"])
                 manifest_path = root / "manifest.json"
                 manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-                if manifest.get("schema") != "fit_first_native_prediction_bundle/v1":
+                if manifest.get("schema") != "fit_first_native_prediction_bundle/v2" or manifest.get("endpoint") != config["endpoint"]:
                     raise ValueError(f"{method}: Fit-first final-pose bundle schema mismatch")
                 method_sources[method] = ("fit_first_native_bundle", root)
                 inputs.setdefault(f"{method}_fit_first_native_bundle_manifest", _file_record(manifest_path))
@@ -805,7 +814,7 @@ def render_final_figures(config_path: str | Path, output: str | Path) -> Path:
             raise ValueError(f"{method} contains unsupported map/bundle keys")
         if not (set(PARAMETERS).issubset(maps) or "native_bundle" in maps or "fit_first_native_bundle" in maps):
             raise ValueError(f"{method} must provide t1/t2 maps or a native bundle")
-        if method == "Fit-first" and "fit_first_native_bundle" not in maps:
+        if method == "Fit-first" and config["condition"] == "L100_fold0" and "fit_first_native_bundle" not in maps:
             raise ValueError("formal Fit-first figures require fit_first_native_bundle; R0 volume reprojection is not a formal endpoint")
     if "native" not in config or "longitudinal" not in config or "l100_masks" not in config:
         raise ValueError("figure config requires longitudinal, native, and frozen L100-mask inputs")

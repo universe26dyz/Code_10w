@@ -8,7 +8,7 @@ REPO=${REPO:-/data/dengyz/code/Code_10w}
 PY=${PHASE4R_PYTHON:-/home/dengyz/miniconda3/envs/cr_dreme/bin/python}
 NESVOR=${NESVOR_EXECUTABLE:-/home/dengyz/miniconda3/envs/nesvor/bin/nesvor}
 DEVICE=${PHASE4R_EXPORT_DEVICE:-0}
-SUBJECT=${SUBJECT:-CYJ}; CONDITION=${CONDITION:-L25_fold0}
+SUBJECT=${SUBJECT:-CYJ}; CONDITION=${CONDITION:-L100_fold0}
 test -d "$L100" && test -d "$SPARSE" && test -f "$MANIFEST" && test -d "$R0_NATIVE" && test -d "$PROPOSED" && test -x "$NESVOR"
 test ! -e "$FIT_OUTPUT" || { echo "refusing overwrite: $FIT_OUTPUT" >&2; exit 1; }
 test ! -e "$PROPOSED_OUTPUT" || { echo "refusing overwrite: $PROPOSED_OUTPUT" >&2; exit 1; }

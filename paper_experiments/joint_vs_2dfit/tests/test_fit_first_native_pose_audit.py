@@ -90,7 +90,12 @@ def test_bundle_uses_volume_not_output_slice_and_refuses_invalid_gate(tmp_path: 
     baseline, r0 = tmp_path / "baseline", tmp_path / "r0"
     _write_case(baseline, r0)
     audit_root = audit_fit_first_native_poses(baseline_root=baseline, r0_native_maps_root=r0, output=tmp_path / "audit")
-    bundle = build_fit_first_native_prediction_bundle(audit_root=audit_root, baseline_root=baseline, r0_native_maps_root=r0, output=tmp_path / "bundle")
+    endpoint = tmp_path / "endpoint"
+    for parameter in ("t1", "t2"):
+        target = endpoint / parameter; target.mkdir(parents=True)
+        (target / "volume_ms.nii.gz").write_bytes((baseline / "nesvor" / parameter / "volume_ms.nii.gz").read_bytes())
+    (endpoint / "manifest.json").write_text(json.dumps({"schema": "phase4r_fixed_l100_fit_first_export_bundle/v1", "endpoint": "central"}), encoding="utf-8")
+    bundle = build_fit_first_native_prediction_bundle(audit_root=audit_root, baseline_root=baseline, r0_native_maps_root=r0, endpoint="central", endpoint_source_root=endpoint, output=tmp_path / "bundle")
     with np.load(bundle / "planes" / "t1" / "sax" / "group005.npz") as plane:
         assert np.allclose(plane["prediction_ms"], [[102, 102, 102], [103, 103, 103]])
         assert plane["valid"].all()
@@ -98,9 +103,9 @@ def test_bundle_uses_volume_not_output_slice_and_refuses_invalid_gate(tmp_path: 
     audit["schema"] = "fit_first_native_pose_audit/v2"
     (audit_root / "manifest.json").write_text(json.dumps(audit), encoding="utf-8")
     with pytest.raises(ValueError, match="v3"):
-        build_fit_first_native_prediction_bundle(audit_root=audit_root, baseline_root=baseline, r0_native_maps_root=r0, output=tmp_path / "old_schema")
+        build_fit_first_native_prediction_bundle(audit_root=audit_root, baseline_root=baseline, r0_native_maps_root=r0, endpoint="central", endpoint_source_root=endpoint, output=tmp_path / "old_schema")
     audit["schema"] = "fit_first_native_pose_audit/v3"
     audit["reconstruction_input_geometry_gate"]["status"] = "RECONSTRUCTION_INPUT_GEOMETRY_MISMATCH"
     (audit_root / "manifest.json").write_text(json.dumps(audit), encoding="utf-8")
     with pytest.raises(ValueError, match="RECONSTRUCTION_INPUT_GEOMETRY_MISMATCH"):
-        build_fit_first_native_prediction_bundle(audit_root=audit_root, baseline_root=baseline, r0_native_maps_root=r0, output=tmp_path / "rejected")
+        build_fit_first_native_prediction_bundle(audit_root=audit_root, baseline_root=baseline, r0_native_maps_root=r0, endpoint="central", endpoint_source_root=endpoint, output=tmp_path / "rejected")
