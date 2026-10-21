@@ -50,7 +50,7 @@ def exact_grid_relation(source_affine: np.ndarray, source_shape: tuple[int, int]
     linear, offset = matrix[:2, :2], matrix[:2, 3]
     rounded_linear, rounded_offset = np.rint(linear), np.rint(offset)
     if (not np.allclose(linear, rounded_linear, atol=1e-8, rtol=0) or not np.allclose(offset, rounded_offset, atol=1e-6, rtol=0)
-            or not np.allclose(matrix[2, :2], 0, atol=1e-8, rtol=0) or not np.isclose(matrix[2, 3], round(matrix[2, 3]), atol=1e-6, rtol=0)):
+            or not np.allclose(matrix[2, :2], 0, atol=1e-8, rtol=0) or not np.isclose(matrix[2, 3], 0, atol=1e-6, rtol=0)):
         raise ValueError("SCMR_SIX_INPUT_GEOMETRY_NOT_EXACTLY_REINDEXABLE: non-integer/through-plane relation")
     permutation = np.asarray(rounded_linear, int)
     if not (np.all(np.sum(np.abs(permutation), axis=0) == 1) and np.all(np.sum(np.abs(permutation), axis=1) == 1)):
@@ -61,12 +61,12 @@ def exact_grid_relation(source_affine: np.ndarray, source_shape: tuple[int, int]
             or np.unique(source_indices.T, axis=0).shape[0] != rows.size):
         raise ValueError("SCMR_SIX_INPUT_GEOMETRY_NOT_EXACTLY_REINDEXABLE: target lattice is not one-to-one in source bounds")
     target_vox = np.vstack((rows.ravel(), cols.ravel(), np.zeros(rows.size), np.ones(rows.size)))
-    source_vox = np.vstack((source_indices, np.full(rows.size, int(round(matrix[2, 3]))), np.ones(rows.size)))
+    source_vox = np.vstack((source_indices, np.zeros(rows.size), np.ones(rows.size)))
     error = float(np.max(np.linalg.norm((np.asarray(target_affine) @ target_vox)[:3] - (np.asarray(source_affine) @ source_vox)[:3], axis=0)))
     if error > tolerance_mm:
         raise ValueError("SCMR_SIX_INPUT_GEOMETRY_NOT_EXACTLY_REINDEXABLE: physical-coordinate mismatch")
     relation = "IDENTICAL_GRID" if np.array_equal(permutation, np.eye(2, dtype=int)) and np.array_equal(rounded_offset, (0, 0)) and tuple(source_shape) == tuple(target_shape) else "EXACT_REORIENTABLE_GRID"
-    return {"relation_type": relation, "permutation": permutation.tolist(), "flips": [bool(permutation[row, np.nonzero(permutation[row])[0][0]] < 0) for row in range(2)], "integer_offset": np.asarray(rounded_offset, int).tolist(), "source_z_index": int(round(matrix[2, 3])), "max_physical_coordinate_error_mm": error, "no_interpolation": True, "source_indices": source_indices}
+    return {"relation_type": relation, "permutation": permutation.tolist(), "flips": [bool(permutation[row, np.nonzero(permutation[row])[0][0]] < 0) for row in range(2)], "integer_offset": np.asarray(rounded_offset, int).tolist(), "source_z_index": 0, "max_physical_coordinate_error_mm": error, "no_interpolation": True, "source_indices": source_indices}
 
 
 def apply_exact_relation(values: np.ndarray, relation: Mapping[str, Any], target_shape: tuple[int, int]) -> np.ndarray:

@@ -12,6 +12,12 @@ are never substituted for them.
 
 An explicit `scmr_historical_group_mapping/v1` is mandatory. It maps historical
 `native_slice_id` to current `original_group_idx`; file ordering is not identity.
+It is produced by `scmr_historical_group_mapping.py` from the historical
+`original_ms` geometry and the current R0-native geometry. Every candidate
+requires the same exact physical-lattice proof used for the six inputs. The
+producer accepts only one current group per historical record, then requires
+the T1 and T2 correspondences to agree for every stack; it never compares
+centres, uses slice order, interpolates, or assumes equal IDs.
 The frozen current L100 support is separately supplied as
 `phase4r_l100_native_support/v1`, one explicit plane per parameter/stack/group.
 The existing immutable `q004_direct_native_endpoint_audit/v2` is also an
@@ -48,12 +54,20 @@ Example server invocations (substitute only completed immutable artifact
 paths):
 
 ```bash
+paper_experiments/joint_vs_2dfit/phase2_clean/server_commands/build_scmr_historical_group_mapping.sh \
+  discover COMMON_MASK_MANIFEST R0_NATIVE_ROOT L100_SPARSE_MANIFEST \
+  /home/dengyz/miniconda3/envs/nesvor/bin/python
+
+paper_experiments/joint_vs_2dfit/phase2_clean/server_commands/build_scmr_historical_group_mapping.sh \
+  build COMMON_MASK_MANIFEST R0_NATIVE_ROOT L100_SPARSE_MANIFEST \
+  /home/dengyz/miniconda3/envs/nesvor/bin/python NEW_GROUP_MAPPING_ROOT
+
 paper_experiments/joint_vs_2dfit/phase2_clean/server_commands/build_scmr_six_input_bundle.sh \
-  discover COMMON_MASK_MANIFEST GROUP_MAPPING_V1 R0_NATIVE_ROOT L100_SPARSE_MANIFEST \
+  discover COMMON_MASK_MANIFEST NEW_GROUP_MAPPING_ROOT/manifest.json R0_NATIVE_ROOT L100_SPARSE_MANIFEST \
   Q004_FROZEN_NATIVE_AUDIT /home/dengyz/miniconda3/envs/nesvor/bin/python
 
 paper_experiments/joint_vs_2dfit/phase2_clean/server_commands/build_scmr_six_input_bundle.sh \
-  build COMMON_MASK_MANIFEST GROUP_MAPPING_V1 R0_NATIVE_ROOT L100_SPARSE_MANIFEST \
+  build COMMON_MASK_MANIFEST NEW_GROUP_MAPPING_ROOT/manifest.json R0_NATIVE_ROOT L100_SPARSE_MANIFEST \
   Q004_FROZEN_NATIVE_AUDIT /home/dengyz/miniconda3/envs/nesvor/bin/python \
   NEW_SCMR_SIX_INPUT_NATIVE_BUNDLE
 ```

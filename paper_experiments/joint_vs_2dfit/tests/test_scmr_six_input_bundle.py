@@ -44,10 +44,11 @@ def test_exact_grid_proof_accepts_affine_proved_integer_translation() -> None:
     np.diag([2., 1., 1., 1.]),
     np.array([[1, .1, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]], float),
     np.array([[0.6, -0.8, 0, 0], [0.8, 0.6, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]], float),
+    np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 1], [0, 0, 0, 1]], float),
 ])
 def test_exact_grid_proof_rejects_fractional_scale_shear_and_arbitrary_rotation(relation: np.ndarray) -> None:
     with pytest.raises(ValueError, match="SCMR_SIX_INPUT_GEOMETRY_NOT_EXACTLY_REINDEXABLE"):
-        exact_grid_relation(np.eye(4), (3, 3), _target_from_relation(relation), (3, 3))
+        exact_grid_relation(np.eye(4), (3, 3), relation, (3, 3))
 
 
 def _write_nifti(path: Path, values: np.ndarray, affine: np.ndarray) -> str:
