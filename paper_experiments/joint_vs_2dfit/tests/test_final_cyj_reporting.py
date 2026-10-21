@@ -68,6 +68,24 @@ def test_subject_summary_accepts_one_explicit_non_cyj_subject(tmp_path: Path) ->
     assert json.loads((output / "summary.json").read_text())["subject"] == "DYL_2"
 
 
+def test_subject_summary_keeps_stratified_regions_as_separate_metric_family(tmp_path: Path) -> None:
+    from paper_experiments.joint_vs_2dfit.phase2_clean.final_cyj_reporting import aggregate_final_subject
+
+    root = tmp_path / "q004"; target = root / "L100_fold0" / "central"; target.mkdir(parents=True)
+    (target / "manifest.json").write_text(json.dumps({"subject": "DYL_2", "condition": "L100_fold0", "endpoint": "central"}), encoding="utf-8")
+    regions = {parameter: {region: {"status": "COMPLETE", "proposed": _metrics(1.0), "fit_first": _metrics(2.0)} for region in ("sax_observed", "lax_observed", "all_source")} for parameter in ("t1", "t2")}
+    (target / "aggregate_metrics.json").write_text(json.dumps({"schema": "final_stratified_native_common_support_metrics/v1", "regions": regions}), encoding="utf-8")
+    output = aggregate_final_subject("DYL_2", {"Q004S640": root}, tmp_path / "summary", fit_first_source_method="Q004S640")
+    payload = json.loads((output / "summary.json").read_text(encoding="utf-8"))
+    rows = [row for row in payload["level_summaries"] if row["method"] == "Q004S640" and row["parameter"] == "T1"]
+    assert payload["schema"] == "phase4r_final_subject_summary/v4"
+    assert {(row["metric_family"], row["region"]) for row in rows} == {
+        ("STRATIFIED_ORIGINAL_NATIVE", "sax_observed"),
+        ("STRATIFIED_ORIGINAL_NATIVE", "lax_observed"),
+        ("STRATIFIED_ORIGINAL_NATIVE", "all_source"),
+    }
+
+
 def test_longitudinal_plane_has_one_world_extent_and_final_error_uses_map_lut_range() -> None:
     from paper_experiments.joint_vs_2dfit.phase2_clean.final_cyj_reporting import final_panel_specifications, longitudinal_plane, meaningful_longitudinal_index
 
@@ -82,6 +100,39 @@ def test_longitudinal_plane_has_one_world_extent_and_final_error_uses_map_lut_ra
     sparse_support = np.zeros((5, 4, 3), bool); sparse_support[1] = True; sparse_support[3] = True
     assert meaningful_longitudinal_index(sparse_support, axis=0) == (1, "support_median")
     assert meaningful_longitudinal_index(sparse_support, axis=0, index=3) == (3, "configured_index")
+
+
+def test_longitudinal_uses_the_joint_valid_support_for_every_comparison_method(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from paper_experiments.joint_vs_2dfit.phase2_clean import final_cyj_reporting as reporting
+
+    class Image:
+        affine = np.eye(4)
+        def __init__(self, values: np.ndarray) -> None:
+            self.values = values
+        def get_fdata(self) -> np.ndarray:
+            return self.values
+
+    paths = {name: tmp_path / f"{name}.nii.gz" for name in ("mask", "fit", "q002", "q004")}
+    for path in paths.values(): path.write_bytes(b"fixture")
+    arrays = {
+        str(paths["mask"]): np.ones((2, 2)),
+        str(paths["fit"]): np.array([[1.0, 1.0], [1.0, np.nan]]),
+        str(paths["q002"]): np.array([[1.0, np.nan], [1.0, 1.0]]),
+        str(paths["q004"]): np.array([[1.0, 1.0], [np.nan, 1.0]]),
+    }
+    monkeypatch.setattr(reporting, "_load_mask_spec", lambda _config, _parameter: paths["mask"])
+    monkeypatch.setattr(reporting, "_image", lambda path: Image(arrays[str(path)]))
+    monkeypatch.setattr(reporting, "_world_sample", lambda values, _affine, _world, order: (np.asarray(values), np.ones(np.asarray(values).shape, bool)))
+    monkeypatch.setattr(reporting, "meaningful_longitudinal_index", lambda *_args, **_kwargs: (0, "fixture"))
+    monkeypatch.setattr(reporting, "longitudinal_plane", lambda *_args, **_kwargs: {"world": np.zeros((4, 2, 2)), "extent_mm": [0.0, 1.0, 0.0, 1.0], "axis": 0, "index": 0, "in_plane_axes": [1, 2], "shape": [2, 2]})
+    captured: list[list[dict[str, object]]] = []
+    monkeypatch.setattr(reporting, "_plot_panels", lambda _path, panels, **_kwargs: captured.append(panels))
+    config = {"subject": "DYL_2", "condition": "L50_fold0", "endpoint": "central", "l100_masks": {"t1": str(paths["mask"]), "t2": str(paths["mask"])}, "longitudinal": {"axis": 0}, "methods": {"Fit-first": {"t1": str(paths["fit"]), "t2": str(paths["fit"])}, "Q002S640": {"t1": str(paths["q002"]), "t2": str(paths["q002"])}, "Q004S640": {"t1": str(paths["q004"]), "t2": str(paths["q004"])}}}
+    records = reporting._render_longitudinal(config, tmp_path, {})
+    expected = np.array([[True, False], [False, False]])
+    assert all(np.array_equal(panel["support"], expected) for panel in captured[0])
+    assert records[0]["all_methods_share_identical_support"] is True
+    assert records[0]["common_support_voxels"] == 1
 
 
 def test_native_preview_mode_selects_single_or_all_authoritative_groups(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -292,7 +343,9 @@ def test_final_reporting_server_wrapper_exposes_aggregate_and_figures() -> None:
     scripts = Path(__file__).resolve().parents[3] / "paper_experiments" / "joint_vs_2dfit" / "phase2_clean" / "server_commands"
     command = (scripts / "finalize_cyj_reporting.sh").read_text(encoding="utf-8")
     assert "aggregate" in command and "figures" in command
-    assert "phase2_clean.final_cyj_reporting" in command and "--method-root" in command and "--config" in command
+    assert "phase2_clean.final_cyj_reporting" in command and "--method-root" in command and "--config" in command and "--subject" in command
+    subject_wrapper = (scripts / "finalize_subject_reporting.sh").read_text(encoding="utf-8")
+    assert "finalize_cyj_reporting.sh" in subject_wrapper and "SUBJECT=$1" in subject_wrapper
 
 
 def test_scmr_compatibility_wrapper_is_auxiliary_and_explicit() -> None:
@@ -312,10 +365,10 @@ def test_all_source_groups_marks_sparse_heldout_and_observed_groups() -> None:
     )
     assert (mode, groups) == ("all_source_groups", [1, 3, 5, 7])
     assert reporting.native_group_statuses(groups, sparse, "sax") == {
-        1: "observed", 3: "held-out", 5: "observed", 7: "held-out",
+        1: "observed", 3: "observed", 5: "observed", 7: "observed",
     }
     assert reporting.native_group_label(3, "held-out") == "group 03 [held-out]"
-    assert reporting.native_group_statuses([1, 3], {"condition": "L100"}, "sax") == {1: "source", 3: "source"}
+    assert reporting.native_group_statuses([1, 3], {"condition": "L100"}, "sax") == {1: "observed", 3: "observed"}
 
 
 def test_sax_centerline_selection_is_deterministic_and_has_row_and_column_cuts() -> None:
@@ -368,6 +421,12 @@ def test_scmr_longitudinal_uses_sax_source_for_two_centreline_rows(monkeypatch: 
     sax["affine_lps_rc"][1, 2, 3] = 8.0; sax["affine_lps_rc"][2, 2, 3] = 16.0
     monkeypatch.setattr(reporting, "_load_all_verified_native_cache_groups", lambda *args: sax)
     methods = {method: {parameter: str(_nifti(tmp_path / method / f"{parameter}.nii.gz", np.full((4, 6, 3), value), affine)) for parameter in ("t1", "t2")} for method, value in (("Fit-first", 1100), ("Q002S640", 1000), ("Q004S640", 900))}
+    def sampled(values: np.ndarray, _affine: np.ndarray, world: np.ndarray, order: int) -> tuple[np.ndarray, np.ndarray]:
+        result = np.full(world.shape[1:], float(np.nanmean(values)))
+        if order == 1 and np.isclose(np.nanmean(values), 900.0):
+            result.flat[-1] = np.nan
+        return result, np.ones(result.shape, bool)
+    monkeypatch.setattr(reporting, "_world_sample", sampled)
     captured: list[list[dict[str, object]]] = []
     original_plot = reporting._plot_scmr_longitudinal
     monkeypatch.setattr(reporting, "_plot_scmr_longitudinal", lambda path, rows, **kwargs: (captured.append(rows), original_plot(path, rows, **kwargs))[1])
@@ -382,8 +441,10 @@ def test_scmr_longitudinal_uses_sax_source_for_two_centreline_rows(monkeypatch: 
     assert all(record["layout"] == {"rows": 2, "columns": 5, "column_labels": list(reporting.scmr_longitudinal_panel_labels())} for record in records)
     assert all(record["sampling"]["source"] == "nearest-neighbor on source-stack grid" for record in records)
     assert all(record["sampling"]["reconstruction"] == "linear on shared approximately-1-mm physical plane" for record in records)
-    assert all(record["sampling"]["reconstruction_support"] == "in_volume AND finite only" for record in records)
+    assert all(record["sampling"]["reconstruction_support"] == "source comparison domain AND in_volume(all configured comparison methods) AND finite(all configured comparison methods)" for record in records)
     assert all(record["sampling"]["same_physical_plane_for_source_reformat_and_all_reconstructions"] is True for record in records)
+    assert all(cut["common_support_voxels"] < np.prod(cut["reconstruction_plane"]["shape"]) for record in records for cut in record["cuts"])
+    assert all(np.array_equal(panel["support"], row["longitudinal"][0]["support"]) for captured_rows in captured for row in captured_rows for panel in row["longitudinal"])
     assert all(record["cuts"][0]["reconstruction_plane"]["actual_spacing_mm"][1] <= 1.0 for record in records)
     assert {(tmp_path / record["file"]).name for record in records} == {"longitudinal_sax_centerline_T1.png", "longitudinal_sax_centerline_T2.png"}
     assert all((tmp_path / record["file"]).is_file() for record in records)
@@ -406,4 +467,4 @@ def test_all_source_native_render_records_displayed_statuses(monkeypatch: pytest
     config = {"subject": "CYJ", "condition": "L50_fold0", "endpoint": "central", "methods": maps, "l100_masks": {"t1": str(mask), "t2": str(mask)}, "native_mask_root": str(native_masks), "native": {"mode": "all_source_groups", "stack": "sax", "sparse_manifest": str(sparse_manifest), "r0_native_maps_root": str(tmp_path)}}
     records = reporting._render_native(config, tmp_path, {})
     assert all(record["original_group_ids"] == [1, 2, 3] for record in records)
-    assert all(record["displayed_groups"] == [{"group_idx": 1, "status": "observed", "label": "group 01 [observed]"}, {"group_idx": 2, "status": "held-out", "label": "group 02 [held-out]"}, {"group_idx": 3, "status": "observed", "label": "group 03 [observed]"}] for record in records)
+    assert all(record["displayed_groups"] == [{"group_idx": 1, "status": "observed", "label": "group 01 [observed]"}, {"group_idx": 2, "status": "observed", "label": "group 02 [observed]"}, {"group_idx": 3, "status": "observed", "label": "group 03 [observed]"}] for record in records)

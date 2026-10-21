@@ -53,7 +53,7 @@ def _metric_records(root: str | Path, method: str, side: str, *, subject: str) -
     if not root.is_dir():
         raise FileNotFoundError(root)
     rows: list[dict[str, Any]] = []
-    seen: set[tuple[str, str]] = set()
+    seen: set[tuple[str, str, str]] = set()
     for manifest_path in sorted(root.rglob("manifest.json")):
         metrics_path = manifest_path.with_name("aggregate_metrics.json")
         if not metrics_path.is_file():
@@ -64,33 +64,43 @@ def _metric_records(root: str | Path, method: str, side: str, *, subject: str) -
         endpoint, condition = manifest.get("endpoint"), manifest.get("condition")
         if endpoint not in ENDPOINTS or not isinstance(condition, str):
             raise ValueError(f"missing endpoint/condition in {manifest_path}")
-        identity = (endpoint, condition)
+        metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
+        schema = str(metrics.get("schema", "legacy_primary"))
+        identity = (endpoint, condition, schema)
         if identity in seen:
-            raise ValueError(f"duplicate {method} result for {endpoint}/{condition}")
+            raise ValueError(f"duplicate {method} result for {endpoint}/{condition}/{schema}")
         seen.add(identity)
         level, fold = _case(condition)
-        metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
         for parameter, display_parameter in PARAMETERS.items():
-            try:
-                values = metrics["primary_aggregate"][parameter][side]
-            except KeyError:
+            entries: list[tuple[str, str, Mapping[str, Any]]] = []
+            if schema == "final_stratified_native_common_support_metrics/v1":
+                for region, region_values in metrics.get("regions", {}).get(parameter, {}).items():
+                    if region_values.get("status") == "COMPLETE" and side in region_values:
+                        entries.append(("STRATIFIED_ORIGINAL_NATIVE", region, region_values[side]))
+            else:
                 try:
-                    values = metrics["regions"][parameter]["all_lax"]["primary_native_mask"][side]
+                    values = metrics["primary_aggregate"][parameter][side]
                 except KeyError:
                     try:
-                        values = metrics["regions"][parameter]["all_lax"]["l100_full"][side]
+                        values = metrics["regions"][parameter]["all_lax"]["primary_native_mask"][side]
                     except KeyError as error:
                         try:
-                            values = metrics["regions"][parameter]["all_lax"][side]
+                            values = metrics["regions"][parameter]["all_lax"]["l100_full"][side]
                         except KeyError:
-                            raise ValueError(f"{metrics_path} lacks formal primary metrics for {parameter}/{side}") from error
-            rows.append({
-                "method": method if side == "proposed" else "Fit-first", "endpoint": endpoint, "condition": condition,
-                "level": level, "fold": fold, "parameter": display_parameter, "rmse": values["rmse"],
-                "mae": values["mae"], "bias": values["bias"], "voxel_count": values.get("voxel_count", values.get("support_voxels")),
-                "coverage_fraction": values.get("coverage_fraction"), "source_manifest": str(manifest_path.resolve()),
-                "source_metrics": str(metrics_path.resolve()), "source_method": method,
-            })
+                            try:
+                                values = metrics["regions"][parameter]["all_lax"][side]
+                            except KeyError:
+                                raise ValueError(f"{metrics_path} lacks formal primary metrics for {parameter}/{side}") from error
+                entries.append(("PRIMARY_FINAL", "primary_native_mask", values))
+            for metric_family, region, values in entries:
+                rows.append({
+                    "method": method if side == "proposed" else "Fit-first", "endpoint": endpoint, "condition": condition,
+                    "level": level, "fold": fold, "parameter": display_parameter, "metric_family": metric_family,
+                    "region": region, "rmse": values["rmse"], "mae": values["mae"], "bias": values["bias"],
+                    "voxel_count": values.get("voxel_count", values.get("support_voxels")),
+                    "coverage_fraction": values.get("coverage_fraction"), "source_manifest": str(manifest_path.resolve()),
+                    "source_metrics": str(metrics_path.resolve()), "source_method": method,
+                })
     if not rows:
         raise ValueError(f"no formal aggregate results under {root}")
     return rows
@@ -104,18 +114,19 @@ def _format_mean_sd(mean: float, sample_sd: float | None) -> str:
     return f"{mean:.4g}" if sample_sd is None else f"{mean:.4g} ± {sample_sd:.3g}"
 
 
-def _summaries(rows: list[dict[str, Any]], fit_rows: dict[tuple[str, str, str], dict[str, Any]]) -> list[dict[str, Any]]:
-    grouped: dict[tuple[str, str, str, str], list[dict[str, Any]]] = defaultdict(list)
+def _summaries(rows: list[dict[str, Any]], fit_rows: dict[tuple[str, str, str, str, str], dict[str, Any]]) -> list[dict[str, Any]]:
+    grouped: dict[tuple[str, str, str, str, str, str], list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
-        grouped[(row["method"], row["endpoint"], row["level"], row["parameter"])].append(row)
+        grouped[(row["method"], row["endpoint"], row["level"], row["parameter"], row["metric_family"], row["region"])].append(row)
     output: list[dict[str, Any]] = []
-    for (method, endpoint, level, parameter), values in sorted(grouped.items()):
+    for (method, endpoint, level, parameter, metric_family, region), values in sorted(grouped.items()):
         values.sort(key=lambda row: row["fold"])
         observed = [int(row["fold"]) for row in values]
         missing = sorted(set(EXPECTED_FOLDS[level]).difference(observed))
         metric = lambda name: [float(row[name]) for row in values]
         row: dict[str, Any] = {
             "method": method, "endpoint": endpoint, "level": level, "parameter": parameter,
+            "metric_family": metric_family, "region": region,
             "expected_folds": list(EXPECTED_FOLDS[level]), "observed_folds": observed, "missing_folds": missing,
             "status": "COMPLETE" if not missing else "INCOMPLETE_MISSING_FOLDS",
         }
@@ -124,7 +135,7 @@ def _summaries(rows: list[dict[str, Any]], fit_rows: dict[tuple[str, str, str], 
             row[f"{name}_mean"] = float(np.mean(numbers))
             row[f"{name}_sample_sd"] = _sample_sd(numbers)
         if method != "Fit-first":
-            paired = [fit_rows.get((endpoint, value["condition"], parameter)) for value in values]
+            paired = [fit_rows.get((endpoint, value["condition"], parameter, metric_family, region)) for value in values]
             if all(item is not None for item in paired):
                 for name in ("rmse", "mae", "bias"):
                     deltas = [float(value[name]) - float(reference[name]) for value, reference in zip(values, paired)]
@@ -139,12 +150,12 @@ def _summaries(rows: list[dict[str, Any]], fit_rows: dict[tuple[str, str, str], 
 
 
 def _robustness(summaries: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    by_key = {(row["method"], row["endpoint"], row["parameter"], row["level"]): row for row in summaries}
+    by_key = {(row["method"], row["endpoint"], row["parameter"], row["metric_family"], row["region"], row["level"]): row for row in summaries}
     rows: list[dict[str, Any]] = []
-    identities = sorted({key[:3] for key in by_key})
-    for method, endpoint, parameter in identities:
-        levels = {level: by_key.get((method, endpoint, parameter, level)) for level in EXPECTED_FOLDS}
-        result = {"method": method, "endpoint": endpoint, "parameter": parameter}
+    identities = sorted({key[:5] for key in by_key})
+    for method, endpoint, parameter, metric_family, region in identities:
+        levels = {level: by_key.get((method, endpoint, parameter, metric_family, region, level)) for level in EXPECTED_FOLDS}
+        result = {"method": method, "endpoint": endpoint, "parameter": parameter, "metric_family": metric_family, "region": region}
         for metric in ("rmse", "mae"):
             for first, second in (("L100", "L50"), ("L50", "L25"), ("L100", "L25")):
                 a, b = levels[first], levels[second]
@@ -164,10 +175,10 @@ def _paper_table(rows: list[dict[str, Any]], *, subject: str) -> tuple[list[dict
     for row in rows:
         for metric in ("rmse", "mae"):
             value, sd = row[f"{metric}_mean"], row[f"{metric}_sample_sd"]
-            output.append({"method": row["method"], "endpoint": row["endpoint"], "sparsity": row["level"], "parameter": row["parameter"], "metric": metric.upper(), "value": f"{value:.4g}" if sd is None else f"{value:.4g} ± {sd:.3g}"})
+            output.append({"method": row["method"], "endpoint": row["endpoint"], "sparsity": row["level"], "parameter": row["parameter"], "metric_family": row["metric_family"], "region": row["region"], "metric": metric.upper(), "value": f"{value:.4g}" if sd is None else f"{value:.4g} ± {sd:.3g}"})
     header = f"# {subject} final matched table\n\nAll values use frozen `primary_native_mask`; L100 is a single value and L50/L25 use observed-fold mean ± sample SD.\n\n"
-    lines = [header, "| Method | Endpoint | Sparsity | Parameter | Metric | Value |", "|---|---|---|---|---|---:|"]
-    lines.extend(f"| {row['method']} | {row['endpoint']} | {row['sparsity']} | {row['parameter']} | {row['metric']} | {row['value']} |" for row in output)
+    lines = [header, "| Method | Endpoint | Sparsity | Parameter | Metric family | Region | Metric | Value |", "|---|---|---|---|---|---|---|---:|"]
+    lines.extend(f"| {row['method']} | {row['endpoint']} | {row['sparsity']} | {row['parameter']} | {row['metric_family']} | {row['region']} | {row['metric']} | {row['value']} |" for row in output)
     return output, "\n".join(lines) + "\n"
 
 
@@ -175,8 +186,8 @@ def _summary_markdown(rows: list[dict[str, Any]], robustness: list[dict[str, Any
     lines = [
         f"# {subject} final matched summary", "",
         "All values use the frozen current-native `primary_native_mask`. L100 is a single value; L50/L25 are observed-fold mean ± sample SD. Missing folds are not imputed.", "",
-        "| Method | Endpoint | Level | Parameter | RMSE | MAE | Bias | ΔRMSE vs Fit-first | ΔMAE vs Fit-first | RMSE wins | MAE wins | Status |",
-        "|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---|",
+        "| Method | Endpoint | Level | Parameter | Metric family | Region | RMSE | MAE | Bias | ΔRMSE vs Fit-first | ΔMAE vs Fit-first | RMSE wins | MAE wins | Status |",
+        "|---|---|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---|",
     ]
     for row in rows:
         delta_rmse = row.get("delta_rmse_vs_fit_first_mean")
@@ -186,16 +197,16 @@ def _summary_markdown(rows: list[dict[str, Any]], robustness: list[dict[str, Any
         rmse_wins = "—" if wins is None else f"{wins}/{total}"
         mae_wins = "—" if wins is None else f"{row['proposed_mae_win_count']}/{total}"
         lines.append(
-            f"| {row['method']} | {row['endpoint']} | {row['level']} | {row['parameter']} | "
+            f"| {row['method']} | {row['endpoint']} | {row['level']} | {row['parameter']} | {row['metric_family']} | {row['region']} | "
             f"{_format_mean_sd(row['rmse_mean'], row['rmse_sample_sd'])} | {_format_mean_sd(row['mae_mean'], row['mae_sample_sd'])} | "
             f"{_format_mean_sd(row['bias_mean'], row['bias_sample_sd'])} | "
             f"{'—' if delta_rmse is None else f'{delta_rmse:.4g}'} | {'—' if delta_mae is None else f'{delta_mae:.4g}'} | "
             f"{rmse_wins} | {mae_wins} | {row['status']} |"
         )
-    lines.extend(("", "## Sparsity robustness", "", "| Method | Endpoint | Parameter | RMSE L100→L50 | RMSE L50→L25 | RMSE L100→L25 | MAE L100→L50 | MAE L50→L25 | MAE L100→L25 |", "|---|---|---|---:|---:|---:|---:|---:|---:|"))
+    lines.extend(("", "## Sparsity robustness", "", "| Method | Endpoint | Parameter | Metric family | Region | RMSE L100→L50 | RMSE L50→L25 | RMSE L100→L25 | MAE L100→L50 | MAE L50→L25 | MAE L100→L25 |", "|---|---|---|---|---|---:|---:|---:|---:|---:|---:|"))
     for row in robustness:
         values = [row[f"{metric}_{first}_to_{second}_change"] for metric in ("rmse", "mae") for first, second in (("L100", "L50"), ("L50", "L25"), ("L100", "L25"))]
-        lines.append(f"| {row['method']} | {row['endpoint']} | {row['parameter']} | " + " | ".join("—" if value is None else f"{value:.4g}" for value in values) + " |")
+        lines.append(f"| {row['method']} | {row['endpoint']} | {row['parameter']} | {row['metric_family']} | {row['region']} | " + " | ".join("—" if value is None else f"{value:.4g}" for value in values) + " |")
     return "\n".join(lines) + "\n"
 
 
@@ -210,7 +221,7 @@ def aggregate_final_subject(subject: str, method_roots: Mapping[str, str | Path]
         raise FileExistsError(f"refusing overwrite: {output}")
     proposed_rows = [row for method, root in sorted(method_roots.items()) for row in _metric_records(root, method, "proposed", subject=subject)]
     fit_rows_list = _metric_records(method_roots[fit_first_source_method], fit_first_source_method, "fit_first", subject=subject)
-    fit_index = {(row["endpoint"], row["condition"], row["parameter"]): row for row in fit_rows_list}
+    fit_index = {(row["endpoint"], row["condition"], row["parameter"], row["metric_family"], row["region"]): row for row in fit_rows_list}
     all_rows = proposed_rows + fit_rows_list
     summaries = _summaries(all_rows, fit_index)
     robustness = _robustness(summaries)
@@ -222,7 +233,7 @@ def aggregate_final_subject(subject: str, method_roots: Mapping[str, str | Path]
         _write_csv(staging / "paper_table.csv", paper_rows)
         (staging / "paper_table.md").write_text(paper_markdown, encoding="utf-8")
         (staging / "summary.md").write_text(_summary_markdown(summaries, robustness, subject=subject), encoding="utf-8")
-        write_immutable_json(staging / "summary.json", {"schema": "phase4r_final_subject_summary/v3", "subject": subject, "primary_region": "primary_native_mask", "fit_first_source_method": fit_first_source_method, "method_roots": {key: str(Path(value).resolve()) for key, value in method_roots.items()}, "fold_rows": all_rows, "level_summaries": summaries, "sparsity_robustness": robustness})
+        write_immutable_json(staging / "summary.json", {"schema": "phase4r_final_subject_summary/v4", "subject": subject, "primary_region": "primary_native_mask", "fit_first_source_method": fit_first_source_method, "method_roots": {key: str(Path(value).resolve()) for key, value in method_roots.items()}, "fold_rows": all_rows, "level_summaries": summaries, "sparsity_robustness": robustness})
         staging.rename(output)
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True); raise
@@ -392,8 +403,8 @@ def native_preview_groups(native: Mapping[str, Any], sparse: Mapping[str, Any], 
 
 def native_group_statuses(groups: list[int], sparse: Mapping[str, Any], stack: str) -> dict[int, str]:
     """Label source groups without changing sparse membership or numerical support."""
-    if sparse.get("condition") == "L100":
-        return {int(group): "source" for group in groups}
+    if stack == "sax" or sparse.get("condition") == "L100":
+        return {int(group): "observed" for group in groups}
     heldout = set(_heldout_ids(dict(sparse), stack))
     return {int(group): "held-out" if int(group) in heldout else "observed" for group in groups}
 
@@ -528,19 +539,23 @@ def _render_longitudinal(config: Mapping[str, Any], output: Path, inputs: dict[s
         sampled_mask, in_mask = _world_sample(mask.astype(np.uint8), mask_image.affine, plane["world"], order=0)
         support = in_mask & np.isfinite(sampled_mask) & (sampled_mask > .5)
         cmap, limits = colorbars().mapping[display_parameter], DISPLAY_RANGES_MS[display_parameter]
-        panels: list[dict[str, Any]] = []
+        sampled_methods: dict[str, tuple[np.ndarray, np.ndarray]] = {}
         method_inputs: dict[str, Any] = {}
         for method in methods:
             map_path = Path(config["methods"][method][parameter])
             image = _image(map_path)
             values, valid = _world_sample(image.get_fdata(), image.affine, plane["world"], order=1)
-            panels.append({"label": method, "values": values, "support": support & valid & np.isfinite(values), "cmap": cmap, "range_ms": limits})
+            sampled_methods[method] = (np.asarray(values), np.asarray(valid, bool))
             method_inputs[method] = _file_record(map_path)
+        shared_support = support.copy()
+        for values, valid in sampled_methods.values():
+            shared_support &= valid & np.isfinite(values)
+        panels = [{"label": method, "values": values, "support": shared_support, "cmap": cmap, "range_ms": limits} for method, (values, _valid) in sampled_methods.items()]
         filename = f"longitudinal_{display_parameter}.png"
         _plot_panels(output / filename, panels, extent=plane["extent_mm"], title=f"{config['subject']} {config['condition']} {config['endpoint']} — frozen L100 longitudinal {display_parameter}")
         inputs[f"l100_mask_{parameter}"] = _file_record(mask_path)
         inputs.update({f"{method}_{parameter}": value for method, value in method_inputs.items()})
-        records.append({"parameter": display_parameter, "file": filename, "frozen_l100_source": _file_record(mask_path), "plane": {key: value for key, value in plane.items() if key != "world"}, "plane_selection": selection_mode, "world_coordinate_sampling": True, "interpolation": {"map": "linear", "mask": "nearest-neighbor"}, "no_auto_crop": True, "lut_range_ms": list(limits)})
+        records.append({"parameter": display_parameter, "file": filename, "frozen_l100_source": _file_record(mask_path), "plane": {key: value for key, value in plane.items() if key != "world"}, "plane_selection": selection_mode, "world_coordinate_sampling": True, "comparison_support_contract": "frozen_L100_display_mask AND in_volume(all configured comparison methods) AND finite(all configured comparison methods)", "common_support_voxels": int(shared_support.sum()), "all_methods_share_identical_support": True, "interpolation": {"map": "linear", "mask": "nearest-neighbor"}, "no_auto_crop": True, "lut_range_ms": list(limits)})
     return records
 
 
@@ -670,19 +685,24 @@ def _render_scmr_style_longitudinal(config: Mapping[str, Any], output: Path, inp
         for cut, index in sax_centerline_cuts(source_shape):
             plane = _sax_cut_plane(stack_shape, source_affine, cut=cut, index=index)
             dense_plane = _dense_physical_plane(plane, spacing_mm=float(section.get("reconstruction_spacing_mm", 1.0)))
-            native_values, native_valid = _world_sample(source_stack, source_affine, plane["world"], order=0)
-            native_support, native_support_valid = _world_sample(support_stack.astype(np.uint8), source_affine, plane["world"], order=0)
-            longitudinal = [{"label": scmr_longitudinal_panel_labels()[1], "values": native_values, "support": native_valid & native_support_valid & (native_support > .5) & np.isfinite(native_values)}]
+            native_values, native_valid = _world_sample(source_stack, source_affine, dense_plane["world"], order=0)
+            native_support, native_support_valid = _world_sample(support_stack.astype(np.uint8), source_affine, dense_plane["world"], order=0)
+            shared_support = native_valid & native_support_valid & (native_support > .5) & np.isfinite(native_values)
+            sampled_methods: dict[str, np.ndarray] = {}
             for method, image in method_images.items():
                 values, valid = _world_sample(image.get_fdata(), image.affine, dense_plane["world"], order=1)
-                longitudinal.append({"label": method, "values": values, "support": valid & np.isfinite(values)})
+                values = np.asarray(values)
+                sampled_methods[method] = values
+                shared_support &= np.asarray(valid, bool) & np.isfinite(values)
+            longitudinal = [{"label": scmr_longitudinal_panel_labels()[1], "values": native_values, "support": shared_support}]
+            longitudinal.extend({"label": method, "values": values, "support": shared_support} for method, values in sampled_methods.items())
             line_coordinate = float(index * source_spacing[0 if cut == "center_row" else 1])
             rows.append({"cut": cut, "source": {"values": np.asarray(sax[f"{parameter}_ms"][reference_index], float), "support": np.asarray(sax["source_support"][reference_index], bool), "extent_mm": source_extent}, "source_line_coordinate_mm": line_coordinate, "longitudinal": longitudinal, "extent_mm": plane["extent_mm"]})
-            cut_records.append({"cut": cut, "source_line_index": index, "source_line_coordinate_mm": line_coordinate, "source_plane_group_idx": reference_group, "line_origin_world_ras_mm": [float(value) for value in plane["world"][:3, 0, 0]], "source_plane": {key: value for key, value in plane.items() if key != "world"}, "reconstruction_plane": {key: value for key, value in dense_plane.items() if key != "world"}})
+            cut_records.append({"cut": cut, "source_line_index": index, "source_line_coordinate_mm": line_coordinate, "source_plane_group_idx": reference_group, "line_origin_world_ras_mm": [float(value) for value in plane["world"][:3, 0, 0]], "source_plane": {key: value for key, value in plane.items() if key != "world"}, "reconstruction_plane": {key: value for key, value in dense_plane.items() if key != "world"}, "comparison_support_contract": "source comparison domain AND in_volume(all configured comparison methods) AND finite(all configured comparison methods)", "common_support_voxels": int(shared_support.sum()), "all_methods_share_identical_support": True})
         cmap, limits = colorbars().mapping[display_parameter], DISPLAY_RANGES_MS[display_parameter]
         filename = f"longitudinal_sax_centerline_{display_parameter}.png"
         _plot_scmr_longitudinal(output / filename, rows, title=f"{config['subject']} {config['condition']} {config['endpoint']} — SAX centre-line longitudinal {display_parameter}", limits=limits, cmap=cmap)
-        records.append({"parameter": display_parameter, "file": filename, "layout": {"rows": 2, "columns": 5, "column_labels": list(scmr_longitudinal_panel_labels())}, "sax_reference_group_idx": reference_group, "sax_reference_group_selection": selection_rule, "cuts": cut_records, "sampling": {"source": "nearest-neighbor on source-stack grid", "reconstruction": "linear on shared approximately-1-mm physical plane", "same_physical_plane_for_source_reformat_and_all_reconstructions": True, "reconstruction_support": "in_volume AND finite only", "optional_reconstruction_display_roi": bool(section.get("reconstruction_display_roi", False))}, "no_auto_crop": True, "physical_aspect_ratio_preserved": True, "colorbars": {"shared_parameter": "dedicated_axis", "range_ms": list(limits), "colormap": "same_parameter_map_lut"}, "native_source": sax["provenance"]})
+        records.append({"parameter": display_parameter, "file": filename, "layout": {"rows": 2, "columns": 5, "column_labels": list(scmr_longitudinal_panel_labels())}, "sax_reference_group_idx": reference_group, "sax_reference_group_selection": selection_rule, "cuts": cut_records, "sampling": {"source": "nearest-neighbor on source-stack grid", "reconstruction": "linear on shared approximately-1-mm physical plane", "same_physical_plane_for_source_reformat_and_all_reconstructions": True, "reconstruction_support": "source comparison domain AND in_volume(all configured comparison methods) AND finite(all configured comparison methods)", "optional_reconstruction_display_roi": bool(section.get("reconstruction_display_roi", False))}, "all_methods_share_identical_support": True, "no_auto_crop": True, "physical_aspect_ratio_preserved": True, "colorbars": {"shared_parameter": "dedicated_axis", "range_ms": list(limits), "colormap": "same_parameter_map_lut"}, "native_source": sax["provenance"]})
     for key in ("native_maps_path", "geometry_path", "manifest_path"):
         inputs[f"scmr_sax_{key}"] = _file_record(sax["provenance"][key])
     return records

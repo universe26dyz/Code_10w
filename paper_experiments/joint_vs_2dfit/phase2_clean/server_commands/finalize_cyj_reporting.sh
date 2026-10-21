@@ -2,7 +2,13 @@
 # Server-only reporting/figure wrapper. It reads completed formal exports only.
 set -euo pipefail
 
-[[ $# -ge 1 ]] || { echo "usage: $0 aggregate NEW_SUMMARY_ROOT FIT_FIRST_SOURCE_METHOD METHOD=FORMAL_RESULT_ROOT [METHOD=FORMAL_RESULT_ROOT ...] | $0 figures FIGURE_CONFIG_JSON NEW_FIGURE_ROOT" >&2; exit 2; }
+SUBJECT=${SUBJECT:-CYJ}
+if [[ ${1:-} == "--subject" ]]; then
+  [[ $# -ge 3 && -n ${2:-} ]] || { echo "--subject requires an explicit identity" >&2; exit 2; }
+  SUBJECT=$2
+  shift 2
+fi
+[[ $# -ge 1 ]] || { echo "usage: $0 [--subject SUBJECT] aggregate NEW_SUMMARY_ROOT FIT_FIRST_SOURCE_METHOD METHOD=FORMAL_RESULT_ROOT [METHOD=FORMAL_RESULT_ROOT ...] | $0 [--subject SUBJECT] figures FIGURE_CONFIG_JSON NEW_FIGURE_ROOT" >&2; exit 2; }
 MODE=$1
 shift
 REPO=${REPO:-/data/dengyz/code/Code_10w}
@@ -15,7 +21,7 @@ case "$MODE" in
     FIT_FIRST_SOURCE_METHOD=$2
     shift 2
     test ! -e "$OUTPUT" || { echo "refusing overwrite: $OUTPUT" >&2; exit 1; }
-    ARGS=(aggregate --fit-first-source-method "$FIT_FIRST_SOURCE_METHOD" --output "$OUTPUT")
+    ARGS=(aggregate --subject "$SUBJECT" --fit-first-source-method "$FIT_FIRST_SOURCE_METHOD" --output "$OUTPUT")
     for ITEM in "$@"; do
       [[ "$ITEM" == *=* ]] || { echo "method root must be METHOD=FORMAL_RESULT_ROOT: $ITEM" >&2; exit 2; }
       ROOT=${ITEM#*=}
