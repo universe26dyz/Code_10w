@@ -42,7 +42,7 @@ def test_sparse_evaluator_uses_only_heldout_original_geometry_and_current_native
 
     proposed, fit = _endpoint(tmp_path / "proposed", "Proposed", "central"), _endpoint(tmp_path / "fit", "Fit-first", "central")
     manifest = tmp_path / "sparse.json"
-    manifest.write_text(json.dumps({"subject": "CYJ", "condition": "L50_fold0", "status": "ELIGIBLE", "stacks": {stack: {"heldout_original_group_ids": [3]} for stack in ("2ch", "4ch")}}), encoding="utf-8")
+    manifest.write_text(json.dumps({"subject": "CYJ", "condition": "L50", "phase": 0, "status": "ELIGIBLE", "stacks": {stack: {"heldout_original_group_ids": [3]} for stack in ("2ch", "4ch")}}), encoding="utf-8")
     cache = {"group_idx": np.array([3, 9]), "source_support": np.ones((2, 2, 2), bool), "affine_lps_rc": np.repeat(np.eye(4)[None], 2, axis=0), "t1_ms": np.full((2, 2, 2), 1000.0), "t2_ms": np.full((2, 2, 2), 80.0)}
     calls = []
     monkeypatch.setattr(sparse, "select_verified_native_cache_groups", lambda root, source, stack, groups: calls.append((stack, groups)) or {key: (value[[0]] if isinstance(value, np.ndarray) and value.shape[0] == 2 else value) for key, value in cache.items()})
@@ -59,3 +59,18 @@ def test_sparse_evaluator_rejects_endpoint_mismatch(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="endpoint mismatch"):
         sparse.validate_sparse_endpoint_roots(_endpoint(tmp_path / "proposed", "Proposed", "central"), _endpoint(tmp_path / "fit", "Fit-first", "psf128"), "L50_fold0")
+
+
+@pytest.mark.parametrize(("level", "phase", "case"), (("L50", 0, "L50_fold0"), ("L50", 1, "L50_fold1"), ("L25", 0, "L25_fold0"), ("L25", 3, "L25_fold3")))
+def test_sparse_manifest_level_phase_builds_formal_case(level: str, phase: int, case: str) -> None:
+    from paper_experiments.joint_vs_2dfit.phase2_clean import final_sparse_native_metrics as sparse
+
+    assert sparse.sparse_manifest_case({"condition": level, "phase": phase}) == case
+
+
+@pytest.mark.parametrize("payload", ({"condition": "L50", "phase": 2}, {"condition": "L25", "phase": 4}, {"condition": "L50"}, {"condition": "L25", "phase": "0"}))
+def test_sparse_manifest_invalid_phase_fails_closed(payload: dict[str, object]) -> None:
+    from paper_experiments.joint_vs_2dfit.phase2_clean import final_sparse_native_metrics as sparse
+
+    with pytest.raises(ValueError, match="L50/L25"):
+        sparse.sparse_manifest_case(payload)

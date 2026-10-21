@@ -29,6 +29,15 @@ def _manifest(root: Path) -> tuple[Path, dict[str, Any]]:
     return path, json.loads(path.read_text(encoding="utf-8"))
 
 
+def sparse_manifest_case(sparse: dict[str, Any]) -> str:
+    """Turn the immutable sparse level/phase schema into a formal case ID."""
+    level, phase = sparse.get("condition"), sparse.get("phase")
+    valid = {"L50": (0, 1), "L25": (0, 1, 2, 3)}
+    if level not in valid or type(phase) is not int or phase not in valid[level]:
+        raise ValueError("sparse formal evaluator supports CYJ L50/L25 phases only")
+    return f"{level}_fold{phase}"
+
+
 def validate_sparse_endpoint_roots(proposed_root: str | Path, fit_first_root: str | Path, condition: str) -> tuple[dict[str, Path], dict[str, Any]]:
     """Validate matched immutable endpoint exports before any native sampling."""
     proposed_root, fit_first_root = Path(proposed_root), Path(fit_first_root)
@@ -65,9 +74,9 @@ def build_final_sparse_native_metrics(*, proposed_endpoint_root: str | Path, fit
 
     sparse_manifest, native_mask_root, output = Path(sparse_manifest), Path(native_mask_root), Path(output)
     sparse = json.loads(sparse_manifest.read_text(encoding="utf-8"))
-    condition = sparse.get("condition")
-    if sparse.get("subject") != "CYJ" or not isinstance(condition, str) or not condition.startswith(("L50_fold", "L25_fold")):
+    if sparse.get("subject") != "CYJ":
         raise ValueError("sparse formal evaluator supports CYJ L50/L25 folds only")
+    condition = sparse_manifest_case(sparse)
     if sparse.get("status") != "ELIGIBLE":
         raise ValueError("sparse formal evaluator requires an ELIGIBLE manifest")
     if output.exists():

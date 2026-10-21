@@ -5,7 +5,7 @@ set -euo pipefail
 PROPOSED=$(realpath -m "$1"); FIT=$(realpath -m "$2"); MASKS=$(realpath -m "$3"); R0=$(realpath -m "$4"); SPARSE=$(realpath -m "$5"); CONFIG=$(realpath -m "$6"); METRICS=$(realpath -m "$7"); FIGURES=$(realpath -m "$8"); PY=$9; REPO=${10}
 for path in "$PROPOSED/manifest.json" "$FIT/manifest.json" "$MASKS/manifest.json" "$SPARSE" "$CONFIG"; do test -f "$path" || { echo "missing prerequisite: $path" >&2; exit 1; }; done
 test -d "$R0"; test ! -e "$METRICS"; test ! -e "$FIGURES"
-"$PY" -c 'import json,sys; s=json.load(open(sys.argv[1])); c=json.load(open(sys.argv[2])); assert s.get("condition", "").startswith(("L50_fold", "L25_fold")), "sparse wrapper requires L50/L25"; assert c.get("condition")==s["condition"] and c.get("native_mask_root"), "figure config condition/native mask mismatch"' "$SPARSE" "$CONFIG"
+"$PY" -c 'import json,sys; s=json.load(open(sys.argv[1])); c=json.load(open(sys.argv[2])); level,phase=s.get("condition"),s.get("phase"); valid={"L50":(0,1),"L25":(0,1,2,3)}; assert level in valid and type(phase) is int and phase in valid[level], "sparse wrapper requires L50/L25 valid phase"; case=f"{level}_fold{phase}"; assert c.get("condition")==case and c.get("native_mask_root"), "figure config condition/native mask mismatch"' "$SPARSE" "$CONFIG"
 mkdir -p "$(dirname "$METRICS")" "$(dirname "$FIGURES")"; cd "$REPO"
 "$PY" -m paper_experiments.joint_vs_2dfit.phase2_clean.final_sparse_native_metrics --proposed-endpoint-root "$PROPOSED" --fit-first-endpoint-root "$FIT" --native-mask-root "$MASKS" --r0-native-maps-root "$R0" --sparse-manifest "$SPARSE" --output "$METRICS"
 "$PY" -m paper_experiments.joint_vs_2dfit.phase2_clean.final_cyj_reporting figures --config "$CONFIG" --output "$FIGURES"
