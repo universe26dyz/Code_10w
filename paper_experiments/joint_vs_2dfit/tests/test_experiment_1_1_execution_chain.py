@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from argparse import Namespace
 from pathlib import Path
 
 import numpy as np
@@ -89,6 +90,35 @@ def test_strict_validator_rejects_acquisition_and_source_derived_identity_tamper
         validate_sparse_profile_manifest(manifest, subject="CYJ", strict=True, expected_generator_git_sha="b" * 40)
 
 
+def test_experiment_launcher_is_dry_by_default_and_passes_both_sparse_pins(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from paper_experiments.joint_vs_2dfit.phase2_clean import experiment_1_1
+
+    manifest = {"_manifest_path": "/sparse/sparse_manifest.json", "_manifest_sha256": "c" * 64, "git_sha": "b" * 40, "prepared_root": "/sparse", "subject": "CYJ"}
+    seen: list[dict] = []
+    monkeypatch.setattr(experiment_1_1, "validate_sparse_profile_manifest", lambda *args, **kwargs: seen.append(kwargs) or manifest)
+    monkeypatch.setattr(experiment_1_1, "validate_dependencies", lambda **kwargs: seen.append({"dependencies": kwargs}))
+    args = Namespace(sparse_manifest="/sparse/sparse_manifest.json", b6_model="/b6.pt", decoder="/decoder.pt", expected_generator_git_sha="b" * 40, expected_manifest_sha256="c" * 64, output=str(tmp_path / "fresh"), device="cuda:0", protocol="protocol.yaml", execute=False)
+    command = experiment_1_1.run(args)
+    assert "--expected-sparse-generator-git-sha" in command and "--expected-sparse-manifest-sha256" in command
+    assert seen == [{"subject": "CYJ", "strict": True, "expected_generator_git_sha": "b" * 40, "expected_manifest_sha256": "c" * 64}, {"dependencies": {"b6_model": "/b6.pt", "decoder": "/decoder.pt", "protocol": "protocol.yaml"}}]
+    invoked: list[str] = []
+    args.execute = True
+    monkeypatch.setattr(experiment_1_1.subprocess, "run", lambda command, **kwargs: invoked.append(command))
+    assert experiment_1_1.run(args) == command and invoked == [command]
+
+
+def test_fit_first_sparse_dry_run_validates_pins_without_writing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    from paper_experiments.joint_vs_2dfit.phase2_clean import baseline
+
+    seen: list[dict] = []
+    monkeypatch.setattr(baseline, "validate_sparse_profile_manifest", lambda *args, **kwargs: seen.append(kwargs) or {})
+    monkeypatch.setattr(baseline, "build_baseline_run", lambda *args, **kwargs: pytest.fail("dry-run must not build Fit-first outputs"))
+    monkeypatch.setattr("sys.argv", ["baseline", "--prepared-root", "/prepared", "--subject-id", "CYJ", "--output", str(tmp_path / "fresh"), "--reuse-native-maps-root", "/r0", "--sparse-manifest", "/sparse.json", "--expected-generator-git-sha", "b" * 40, "--expected-manifest-sha256", "c" * 64])
+    baseline.main()
+    assert "--execute" in capsys.readouterr().out
+    assert seen == [{"subject": "CYJ", "strict": True, "expected_generator_git_sha": "b" * 40, "expected_manifest_sha256": "c" * 64}]
+
+
 @pytest.mark.parametrize("none_stacks", [("2ch",), ("4ch",), ("2ch", "4ch")])
 def test_profile_validator_and_k8_launcher_preserve_empty_stack_contract(tmp_path: Path, none_stacks: tuple[str, ...]) -> None:
     from paper_experiments.joint_vs_2dfit.phase2_clean.experiment_1_1 import build_experiment_1_1_command
@@ -103,7 +133,7 @@ def test_profile_validator_and_k8_launcher_preserve_empty_stack_contract(tmp_pat
         stacks[stack] = item
     manifest = derived / "sparse_manifest.json"; manifest.write_text(json.dumps({"schema_version": "phase4r_sparse_profile_v2", "status": "ELIGIBLE", "subject": "CYJ", "profile_id": "CYJ_test", "case_id": "CYJ_test", "source_prepared_root": str((source / "CYJ").resolve()), "prepared_root": str(derived.resolve()), "git_sha": "a" * 40, "stacks": stacks}), encoding="utf-8")
     validated = validate_sparse_profile_manifest(manifest, subject="CYJ")
-    command = build_experiment_1_1_command(validated, expected_generator_git_sha="a" * 40, b6_model="/b6.pt", decoder="/decoder.pt", output=tmp_path / "fresh", device="cuda:0")
+    command = build_experiment_1_1_command(validated, expected_generator_git_sha="a" * 40, expected_manifest_sha256=sha256(manifest), b6_model="/b6.pt", decoder="/decoder.pt", output=tmp_path / "fresh", device="cuda:0")
     assert "Q002S640_B6_roi_same_anchor_mse" in command and "--anchor-batch-size 640" in command and "--sparse-manifest" in command and "--expected-sparse-generator-git-sha" in command
     for stack in none_stacks: assert not (derived / stack / "observations.npz").exists()
 

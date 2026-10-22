@@ -1,14 +1,15 @@
 """Formal fit-first driver: dictionary maps then independent T1/T2 NeSVoR executions."""
 from __future__ import annotations
-import argparse, json, subprocess
+import argparse, json, subprocess, sys
+import shlex
 from pathlib import Path
 from .contracts import HISTORICAL_NESVOR_EXECUTABLE_DEFAULT, sha256, write_immutable_json
 from .fit_first import fit_native, reuse_native_maps, export_nesvor_native_inputs, build_independent_nesvor_commands
 from .sparse_profile_manifest import validate_sparse_profile_manifest
 
-def build_baseline_run(prepared_root: str|Path, subject_id: str, output: str|Path, nesvor_executable: str|Path = HISTORICAL_NESVOR_EXECUTABLE_DEFAULT, *, reuse_native_maps_root: str|Path|None = None, sparse_manifest: str|Path|None = None) -> tuple[Path, list[str]]:
+def build_baseline_run(prepared_root: str|Path, subject_id: str, output: str|Path, nesvor_executable: str|Path = HISTORICAL_NESVOR_EXECUTABLE_DEFAULT, *, reuse_native_maps_root: str|Path|None = None, sparse_manifest: str|Path|None = None, expected_generator_git_sha: str|None = None, expected_manifest_sha256: str|None = None) -> tuple[Path, list[str]]:
     base, destination = Path(prepared_root), Path(output)
-    sparse_profile = validate_sparse_profile_manifest(sparse_manifest, subject=subject_id) if sparse_manifest is not None else None
+    sparse_profile = validate_sparse_profile_manifest(sparse_manifest, subject=subject_id, strict=expected_generator_git_sha is not None, expected_generator_git_sha=expected_generator_git_sha, expected_manifest_sha256=expected_manifest_sha256) if sparse_manifest is not None else None
     prepared = base if sparse_profile is not None or all((base/stack/'observations.npz').is_file() for stack in ('sax','2ch','4ch')) else base/subject_id
     if destination.exists(): raise FileExistsError(f'refusing overwrite: {destination}')
     destination.mkdir(parents=True)
@@ -39,12 +40,31 @@ def build_baseline_run(prepared_root: str|Path, subject_id: str, output: str|Pat
     write_immutable_json(destination/'input_manifest.json', result_manifest)
     return destination, commands
 
+
+def build_baseline_command(args: argparse.Namespace) -> str:
+    """Return the future Fit-first command without creating native-map outputs."""
+    values = [sys.executable, "-m", "paper_experiments.joint_vs_2dfit.phase2_clean.baseline", "--prepared-root", args.prepared_root, "--subject-id", args.subject_id, "--output", args.output, "--nesvor-executable", args.nesvor_executable]
+    if args.reuse_native_maps_root:
+        values.extend(("--reuse-native-maps-root", args.reuse_native_maps_root))
+    if args.sparse_manifest:
+        values.extend(("--sparse-manifest", args.sparse_manifest, "--expected-generator-git-sha", args.expected_generator_git_sha, "--expected-manifest-sha256", args.expected_manifest_sha256))
+    values.append("--execute")
+    return " ".join(shlex.quote(str(value)) for value in values)
+
 def main() -> None:
-    parser=argparse.ArgumentParser(description=__doc__); parser.add_argument('--prepared-root',required=True); parser.add_argument('--subject-id',required=True); parser.add_argument('--output',required=True); parser.add_argument('--nesvor-executable',default=HISTORICAL_NESVOR_EXECUTABLE_DEFAULT); parser.add_argument('--reuse-native-maps-root'); parser.add_argument('--sparse-manifest'); parser.add_argument('--execute',action='store_true'); args=parser.parse_args()
+    parser=argparse.ArgumentParser(description=__doc__); parser.add_argument('--prepared-root',required=True); parser.add_argument('--subject-id',required=True); parser.add_argument('--output',required=True); parser.add_argument('--nesvor-executable',default=HISTORICAL_NESVOR_EXECUTABLE_DEFAULT); parser.add_argument('--reuse-native-maps-root'); parser.add_argument('--sparse-manifest'); parser.add_argument('--expected-generator-git-sha'); parser.add_argument('--expected-manifest-sha256'); parser.add_argument('--execute',action='store_true'); args=parser.parse_args()
+    if bool(args.expected_generator_git_sha) != bool(args.expected_manifest_sha256):
+        parser.error("sparse Fit-first requires both generator and manifest SHA256 pins")
+    if args.sparse_manifest and not (args.expected_generator_git_sha and args.expected_manifest_sha256):
+        parser.error("sparse Fit-first requires --expected-generator-git-sha and --expected-manifest-sha256")
+    if not args.execute:
+        if args.sparse_manifest:
+            validate_sparse_profile_manifest(args.sparse_manifest, subject=args.subject_id, strict=True, expected_generator_git_sha=args.expected_generator_git_sha, expected_manifest_sha256=args.expected_manifest_sha256)
+        print(build_baseline_command(args)); return
     reuse = {'reuse_native_maps_root': args.reuse_native_maps_root, 'sparse_manifest': args.sparse_manifest} if args.reuse_native_maps_root or args.sparse_manifest else {}
-    root, commands=build_baseline_run(args.prepared_root,args.subject_id,args.output,args.nesvor_executable,**reuse)
-    if args.execute:
-        for parameter in ('t1','t2'): (root/'nesvor'/parameter).mkdir(parents=True, exist_ok=False)
-        for command in commands: subprocess.run(command, shell=True, check=True)
+    pins = {"expected_generator_git_sha": args.expected_generator_git_sha, "expected_manifest_sha256": args.expected_manifest_sha256} if args.expected_generator_git_sha else {}
+    root, commands=build_baseline_run(args.prepared_root,args.subject_id,args.output,args.nesvor_executable,**pins,**reuse)
+    for parameter in ('t1','t2'): (root/'nesvor'/parameter).mkdir(parents=True, exist_ok=False)
+    for command in commands: subprocess.run(command, shell=True, check=True)
     print(root)
 if __name__ == '__main__': main()
