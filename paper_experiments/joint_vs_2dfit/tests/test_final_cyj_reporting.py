@@ -93,6 +93,41 @@ def test_custom_profile_cases_do_not_average_fold0_and_fold1_as_one_case(tmp_pat
     case_rows = [row for row in summary["level_summaries"] if row["parameter"] == "T1" and row["method"] == "Q002S640"]
     assert {(row["case_id"], row["rmse_mean"]) for row in case_rows} == {("CYJ_S2CH50_4CH100_fold0", 1.0), ("CYJ_S2CH50_4CH100_fold1", 3.0)}
     assert len(summary["profile_summaries"]) > 0
+    assert summary["sparsity_robustness"] == []
+
+
+def test_legacy_stratified_bundle_recovers_custom_identity_from_verified_sparse_manifest(tmp_path: Path) -> None:
+    from paper_experiments.joint_vs_2dfit.phase2_clean.final_cyj_reporting import aggregate_final_subject
+
+    case_id = "S2CH50_4CH100_fold0"
+    sparse = tmp_path / "sparse.json"
+    sparse.write_text(json.dumps({"schema_version": "phase4r_sparse_profile_v2", "subject": "CYJ", "profile_id": "S2CH50_4CH100", "case_id": case_id, "fold_id": 0, "fold_count": 2}), encoding="utf-8")
+    root, target = tmp_path / "q002", tmp_path / "q002" / case_id / "central"; target.mkdir(parents=True)
+    (target / "manifest.json").write_text(json.dumps({"schema": "final_stratified_native_bundle_metrics/v1", "subject": "CYJ", "condition": case_id, "endpoint": "central", "sparse_manifest": {"path": str(sparse), "sha256": sha256(sparse)}}), encoding="utf-8")
+    (target / "aggregate_metrics.json").write_text(json.dumps({"schema": "final_stratified_native_common_support_metrics/v1", "regions": {parameter: {"all_lax": {"status": "COMPLETE", "proposed": _metrics(1.0), "fit_first": _metrics(2.0)}} for parameter in ("t1", "t2")}}), encoding="utf-8")
+    summary = json.loads((aggregate_final_subject("CYJ", {"Q002S640": root}, tmp_path / "summary", fit_first_source_method="Q002S640") / "summary.json").read_text(encoding="utf-8"))
+    row = next(row for row in summary["level_summaries"] if row["method"] == "Q002S640" and row["parameter"] == "T1")
+    assert {key: row[key] for key in ("profile_id", "case_id", "level", "fold_id", "fold_count")} == {"profile_id": "S2CH50_4CH100", "case_id": case_id, "level": "S2CH50_4CH100", "fold_id": 0, "fold_count": 2}
+
+
+@pytest.mark.parametrize("tamper", ["wrong_sha", "missing_sparse", "wrong_subject", "wrong_case"])
+def test_legacy_stratified_bundle_recovery_fails_closed_on_invalid_sparse_provenance(tmp_path: Path, tamper: str) -> None:
+    from paper_experiments.joint_vs_2dfit.phase2_clean.final_cyj_reporting import aggregate_final_subject
+
+    case_id = "S2CH50_4CH100_fold0"
+    sparse = tmp_path / "sparse.json"
+    payload = {"schema_version": "phase4r_sparse_profile_v2", "subject": "CYJ", "profile_id": "S2CH50_4CH100", "case_id": case_id, "fold_id": 0, "fold_count": 2}
+    if tamper == "wrong_subject": payload["subject"] = "OTHER"
+    if tamper == "wrong_case": payload["case_id"] = "S2CH50_4CH100_fold1"
+    sparse.write_text(json.dumps(payload), encoding="utf-8")
+    record = {"path": str(sparse), "sha256": sha256(sparse)}
+    if tamper == "wrong_sha": record["sha256"] = "0" * 64
+    if tamper == "missing_sparse": record["path"] = str(tmp_path / "missing.json")
+    target = tmp_path / "q002" / case_id / "central"; target.mkdir(parents=True)
+    (target / "manifest.json").write_text(json.dumps({"schema": "final_stratified_native_bundle_metrics/v1", "subject": "CYJ", "condition": case_id, "endpoint": "central", "sparse_manifest": record}), encoding="utf-8")
+    (target / "aggregate_metrics.json").write_text(json.dumps({"schema": "final_stratified_native_common_support_metrics/v1", "regions": {parameter: {"all_lax": {"status": "COMPLETE", "proposed": _metrics(1.0), "fit_first": _metrics(2.0)}} for parameter in ("t1", "t2")}}), encoding="utf-8")
+    with pytest.raises((FileNotFoundError, ValueError)):
+        aggregate_final_subject("CYJ", {"Q002S640": tmp_path / "q002"}, tmp_path / "summary", fit_first_source_method="Q002S640")
 
 
 def test_subject_summary_keeps_stratified_regions_as_separate_metric_family(tmp_path: Path) -> None:
@@ -465,7 +500,7 @@ def test_scmr_longitudinal_uses_sax_source_for_two_centreline_rows(monkeypatch: 
         ["Original SAX-stack longitudinal reformatting", "Fit-first", "Q002S640", "Q004S640"],
         ["Original SAX-stack longitudinal reformatting", "Fit-first", "Q002S640", "Q004S640"],
     ]
-    assert all(record["layout"] == {"rows": 2, "columns": 5, "column_labels": list(reporting.scmr_longitudinal_panel_labels())} for record in records)
+    assert all(record["layout"] == {"rows": 2, "columns": 5, "column_labels": list(reporting.scmr_longitudinal_panel_labels()), "configured_comparison_methods": ["Fit-first", "Q002S640", "Q004S640"]} for record in records)
     assert all(record["sampling"]["source"] == "nearest-neighbor on source-stack grid" for record in records)
     assert all(record["sampling"]["reconstruction"] == "linear on shared approximately-1-mm physical plane" for record in records)
     assert all(record["sampling"]["reconstruction_support"] == "source comparison domain AND in_volume(all configured comparison methods) AND finite(all configured comparison methods)" for record in records)
@@ -475,6 +510,33 @@ def test_scmr_longitudinal_uses_sax_source_for_two_centreline_rows(monkeypatch: 
     assert all(record["cuts"][0]["reconstruction_plane"]["actual_spacing_mm"][1] <= 1.0 for record in records)
     assert {(tmp_path / record["file"]).name for record in records} == {"longitudinal_sax_centerline_T1.png", "longitudinal_sax_centerline_T2.png"}
     assert all((tmp_path / record["file"]).is_file() for record in records)
+
+
+def test_scmr_longitudinal_uses_only_configured_two_method_comparison(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from paper_experiments.joint_vs_2dfit.phase2_clean import final_cyj_reporting as reporting
+
+    affine = np.eye(4)
+    cache_files = [tmp_path / name for name in ("native_maps.npz", "geometry.npz", "native_manifest.json")]
+    for path in cache_files:
+        path.write_bytes(b"cache")
+    sax = {
+        "group_idx": np.array([2, 5, 8]), "source_support": np.ones((3, 4, 6), bool),
+        "affine_lps_rc": np.repeat(np.eye(4)[None], 3, axis=0), "pixel_spacing_rc_mm": np.ones((3, 2)), "slice_thickness_mm": np.ones(3),
+        "t1_ms": np.full((3, 4, 6), 1000.0), "t2_ms": np.full((3, 4, 6), 80.0),
+        "provenance": dict(zip(("native_maps_path", "geometry_path", "manifest_path"), map(str, cache_files))),
+    }
+    sax["affine_lps_rc"][1, 2, 3] = 8.0; sax["affine_lps_rc"][2, 2, 3] = 16.0
+    monkeypatch.setattr(reporting, "_load_all_verified_native_cache_groups", lambda *args: sax)
+    methods = {method: {parameter: str(_nifti(tmp_path / method / f"{parameter}.nii.gz", np.full((4, 6, 3), value), affine)) for parameter in ("t1", "t2")} for method, value in (("Fit-first", 1100), ("Q002S640", 1000))}
+    config = {"subject": "CYJ", "condition": "L100_fold0", "endpoint": "psf128", "methods": methods,
+              "native": {"r0_native_maps_root": str(tmp_path), "sparse_manifest": str(tmp_path / "sparse.json")}, "scmr_longitudinal": {}}
+    records = reporting._render_scmr_style_longitudinal(config, tmp_path, {})
+    assert reporting.scmr_longitudinal_panel_labels(methods) == (
+        "SAX source + centerline overlay", "Original SAX-stack longitudinal reformatting", "Fit-first", "Q002S640",
+    )
+    assert all(record["layout"] == {"rows": 2, "columns": 4, "column_labels": list(reporting.scmr_longitudinal_panel_labels(methods)), "configured_comparison_methods": ["Fit-first", "Q002S640"]} for record in records)
+    assert all(record["all_methods_share_identical_support"] is True for record in records)
+    assert all(cut["comparison_support_contract"] == "source comparison domain AND in_volume(all configured comparison methods) AND finite(all configured comparison methods)" for record in records for cut in record["cuts"])
 
 
 def test_all_source_native_render_records_displayed_statuses(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

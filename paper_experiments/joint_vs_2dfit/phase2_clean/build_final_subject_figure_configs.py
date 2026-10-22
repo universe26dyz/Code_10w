@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Mapping
 
 from .contracts import write_immutable_json
-from .final_cyj_reporting import ENDPOINTS, EXPECTED_FOLDS, NATIVE_MOSAIC_METHODS
+from .final_cyj_reporting import ENDPOINTS, EXPECTED_FOLDS, METHOD_DISPLAY_ORDER, PROPOSED_METHODS
 
 
 COMMON_SUPPORT_CONTRACT = "frozen_L100_display_mask AND in_volume(all configured comparison methods) AND finite(all configured comparison methods)"
@@ -41,10 +41,16 @@ def _case_root(root: Path, subject: str, condition: str, endpoint: str) -> Path:
 
 
 def _methods(method_roots: Mapping[str, str | Path], subject: str, condition: str, endpoint: str) -> dict[str, dict[str, str]]:
-    if set(method_roots) != set(NATIVE_MOSAIC_METHODS):
-        raise ValueError(f"method_roots must name exactly {', '.join(NATIVE_MOSAIC_METHODS)}")
+    names = set(method_roots)
+    unknown = names.difference(METHOD_DISPLAY_ORDER)
+    if unknown:
+        raise ValueError(f"unsupported reporting method(s): {', '.join(sorted(unknown))}")
+    if "Fit-first" not in names or not names.intersection(PROPOSED_METHODS):
+        raise ValueError("method_roots must include Fit-first plus at least one supported Proposed method")
     result: dict[str, dict[str, str]] = {}
-    for method in NATIVE_MOSAIC_METHODS:
+    for method in METHOD_DISPLAY_ORDER:
+        if method not in method_roots:
+            continue
         root = _case_root(Path(method_roots[method]), subject, condition, endpoint)
         if method == "Fit-first":
             maps = {"t1": str((root / "t1" / "volume_ms.nii.gz").resolve()), "t2": str((root / "t2" / "volume_ms.nii.gz").resolve())}

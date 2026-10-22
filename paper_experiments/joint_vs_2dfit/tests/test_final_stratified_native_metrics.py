@@ -58,6 +58,35 @@ def test_stratified_evaluator_pools_only_exact_paired_support_and_disjoint_regio
     assert all(record["parameters"]["t1"]["common_support_voxels"] == 3 for record in payload["per_plane_records"])
     assert json.loads((output / "manifest.json").read_text(encoding="utf-8"))["no_final_pose_voxels"] is True
 
+
+def test_stratified_manifest_preserves_explicit_custom_sparse_profile_identity(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from paper_experiments.joint_vs_2dfit.phase2_clean import final_stratified_native_metrics as stratified
+
+    case_id = "S2CH50_4CH100_fold0"
+    groups = {"sax": [0], "2ch": [0, 1], "4ch": [0, 1]}
+    sparse = tmp_path / "sparse.json"
+    sparse.write_text(json.dumps({
+        "schema_version": "phase4r_sparse_profile_v2", "status": "ELIGIBLE", "subject": "DYL_2",
+        "profile_id": "S2CH50_4CH100", "case_id": case_id, "fold_id": 0, "fold_count": 2,
+        "stacks": {"sax": {}, "2ch": {"retained_original_group_ids": [0], "heldout_original_group_ids": [1]}, "4ch": {"retained_original_group_ids": [0], "heldout_original_group_ids": [1]}},
+    }), encoding="utf-8")
+    proposed, fit_first = _endpoint(tmp_path / "proposed", "Proposed"), _endpoint(tmp_path / "fit", "Fit-first")
+    for root in (proposed, fit_first):
+        manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8")); manifest["condition"] = case_id
+        (root / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    def cache(stack: str) -> dict[str, np.ndarray]:
+        ids = groups[stack]
+        return {"group_idx": np.asarray(ids), "source_support": np.ones((len(ids), 2, 2), bool), "affine_lps_rc": np.repeat(np.eye(4)[None], len(ids), axis=0), "t1_ms": np.full((len(ids), 2, 2), 1000.0), "t2_ms": np.full((len(ids), 2, 2), 80.0)}
+    monkeypatch.setattr(stratified, "_load_all_verified_native_cache_groups", lambda _root, _manifest, stack: cache(stack))
+    monkeypatch.setattr(stratified, "reproject_volume_to_native_plane", lambda _values, _affine, _plane, shape: (np.ones(shape), np.ones(shape, bool)))
+    output = stratified.build_final_stratified_native_metrics(proposed_endpoint_root=proposed, fit_first_endpoint_root=fit_first, native_mask_root=_mask_root(tmp_path / "masks", groups), r0_native_maps_root=tmp_path / "r0", sparse_manifest=sparse, output=tmp_path / "out")
+    manifest = json.loads((output / "manifest.json").read_text(encoding="utf-8"))
+    assert {key: manifest[key] for key in ("profile_id", "case_id", "fold_id", "fold_count", "sparse_schema_version")} == {
+        "profile_id": "S2CH50_4CH100", "case_id": case_id, "fold_id": 0, "fold_count": 2,
+        "sparse_schema_version": "phase4r_sparse_profile_v2",
+    }
+    assert manifest["condition"] == case_id
+
 def test_sparse_group_classification_uses_manifest_identities_without_overlap() -> None:
     from paper_experiments.joint_vs_2dfit.phase2_clean.final_stratified_native_metrics import classify_stratified_groups
 

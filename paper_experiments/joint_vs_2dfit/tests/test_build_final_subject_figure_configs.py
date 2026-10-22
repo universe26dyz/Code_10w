@@ -39,6 +39,18 @@ def test_builder_accepts_explicit_custom_cases_without_legacy_level_inference(tm
     assert config["case_id"] == "CYJ_SAX100_2CH0_4CH0"
 
 
+def test_builder_accepts_fit_first_plus_one_proposed_method_and_future_q005(tmp_path: Path) -> None:
+    from paper_experiments.joint_vs_2dfit.phase2_clean.build_final_subject_figure_configs import build_final_subject_figure_configs
+
+    output = build_final_subject_figure_configs(subject="CYJ", formal_grid_root=tmp_path / "formal", sparse_root=tmp_path / "sparse", r0_native_maps_root=tmp_path / "r0", native_mask_root=tmp_path / "masks", method_roots={"Fit-first": tmp_path / "fit", "Q005S640_K4": tmp_path / "q005"}, output=tmp_path / "configs")
+    config = json.loads((output / "L100_fold0" / "central.json").read_text(encoding="utf-8"))
+    assert list(config["methods"]) == ["Fit-first", "Q005S640_K4"]
+    assert config["endpoint"] == "central"
+    assert json.loads((output / "L100_fold0" / "psf128.json").read_text(encoding="utf-8"))["endpoint"] == "psf128"
+    with pytest.raises(ValueError, match="unsupported"):
+        build_final_subject_figure_configs(subject="CYJ", formal_grid_root=tmp_path / "formal2", sparse_root=tmp_path / "sparse2", r0_native_maps_root=tmp_path / "r02", native_mask_root=tmp_path / "masks2", method_roots={"Fit-first": tmp_path / "fit2", "SomeRandomMethod": tmp_path / "bad"}, output=tmp_path / "invalid")
+
+
 def test_cli_accepts_seven_explicit_custom_cases_and_writes_both_endpoints(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from paper_experiments.joint_vs_2dfit.phase2_clean import build_final_subject_figure_configs as builder
 

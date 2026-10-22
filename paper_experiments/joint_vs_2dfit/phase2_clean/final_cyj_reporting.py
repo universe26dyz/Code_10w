@@ -21,11 +21,13 @@ from .heldout import _heldout_ids
 from .visualization import DISPLAY_RANGES_MS, colorbars
 
 
-METHODS = ("Q002S640", "Q002S640_K256", "Q004S640")
+PROPOSED_METHODS = ("Q002S640", "Q002S640_K256", "Q005S640_K4", "Q004S640")
+METHOD_DISPLAY_ORDER = ("Fit-first", *PROPOSED_METHODS)
+METHODS = PROPOSED_METHODS
 ENDPOINTS = ("central", "psf128")
 EXPECTED_FOLDS = {"L100": (0,), "L50": (0, 1), "L25": (0, 1, 2, 3)}
 PARAMETERS = {"t1": "T1", "t2": "T2"}
-NATIVE_MOSAIC_METHODS = ("Fit-first", "Q002S640", "Q004S640")
+NATIVE_MOSAIC_METHODS = METHOD_DISPLAY_ORDER
 
 
 def _git_sha() -> str | None:
@@ -54,6 +56,44 @@ def _case(condition: str, *, profile_id: str | None = None, case_id: str | None 
     return level, fold_int, False
 
 
+def _recovered_custom_identity(manifest: Mapping[str, Any], metrics: Mapping[str, Any], *, condition: str, subject: str) -> dict[str, Any] | None:
+    """Recover identity only from a verified custom sparse manifest, never a path name."""
+    if manifest.get("profile_id") is not None or manifest.get("case_id") is not None:
+        return None
+    if manifest.get("schema") != "final_stratified_native_bundle_metrics/v1" or metrics.get("schema") != "final_stratified_native_common_support_metrics/v1":
+        return None
+    try:
+        level, _fold = condition.split("_fold", 1)
+    except ValueError:
+        level = condition
+    if level in EXPECTED_FOLDS:
+        return None
+    record = manifest.get("sparse_manifest")
+    if not isinstance(record, Mapping) or not isinstance(record.get("path"), str) or not isinstance(record.get("sha256"), str):
+        raise ValueError("custom stratified metrics require a recorded sparse manifest path and SHA256")
+    sparse_path = Path(record["path"])
+    if not sparse_path.is_file():
+        raise FileNotFoundError(sparse_path)
+    if sha256(sparse_path) != record["sha256"]:
+        raise ValueError("custom stratified metrics sparse manifest SHA256 mismatch")
+    sparse = json.loads(sparse_path.read_text(encoding="utf-8"))
+    if sparse.get("schema_version") != "phase4r_sparse_profile_v2":
+        raise ValueError("custom stratified metrics sparse manifest schema mismatch")
+    profile_id, case_id = sparse.get("profile_id"), sparse.get("case_id")
+    fold_id, fold_count = sparse.get("fold_id"), sparse.get("fold_count")
+    if sparse.get("subject") != subject or not isinstance(profile_id, str) or not profile_id or not isinstance(case_id, str) or case_id != condition:
+        raise ValueError("custom stratified metrics sparse manifest subject/case identity mismatch")
+    valid_fold = isinstance(fold_count, int) and fold_count >= 1 and (
+        (fold_count == 1 and fold_id is None) or (isinstance(fold_id, int) and 0 <= fold_id < fold_count)
+    )
+    if not valid_fold:
+        raise ValueError("custom stratified metrics sparse manifest fold identity mismatch")
+    parsed_fold = _case(condition, profile_id=profile_id, case_id=case_id)[1]
+    if fold_id is not None and parsed_fold != fold_id:
+        raise ValueError("custom stratified metrics sparse manifest case/fold mismatch")
+    return {"profile_id": profile_id, "case_id": case_id, "fold_id": fold_id, "fold_count": fold_count}
+
+
 def _metric_records(root: str | Path, method: str, side: str, *, subject: str) -> list[dict[str, Any]]:
     root = Path(root)
     if method not in METHODS:
@@ -78,7 +118,12 @@ def _metric_records(root: str | Path, method: str, side: str, *, subject: str) -
         if identity in seen:
             raise ValueError(f"duplicate {method} result for {endpoint}/{condition}/{schema}")
         seen.add(identity)
-        level, fold, custom_profile = _case(condition, profile_id=manifest.get("profile_id"), case_id=manifest.get("case_id"))
+        recovered = _recovered_custom_identity(manifest, metrics, condition=condition, subject=subject)
+        profile_id = manifest.get("profile_id") if recovered is None else recovered["profile_id"]
+        case_id = manifest.get("case_id") if recovered is None else recovered["case_id"]
+        fold_id = manifest.get("fold_id") if recovered is None else recovered["fold_id"]
+        fold_count = manifest.get("fold_count") if recovered is None else recovered["fold_count"]
+        level, fold, custom_profile = _case(condition, profile_id=profile_id, case_id=case_id)
         for parameter, display_parameter in PARAMETERS.items():
             entries: list[tuple[str, str, Mapping[str, Any]]] = []
             if schema == "final_stratified_native_common_support_metrics/v1":
@@ -104,7 +149,8 @@ def _metric_records(root: str | Path, method: str, side: str, *, subject: str) -
                 rows.append({
                     "method": method if side == "proposed" else "Fit-first", "endpoint": endpoint, "condition": condition,
                     "level": level, "fold": fold, "parameter": display_parameter, "metric_family": metric_family,
-                    "profile_id": manifest.get("profile_id") if custom_profile else None, "case_id": manifest.get("case_id") if custom_profile else None, "custom_profile": custom_profile,
+                    "profile_id": profile_id if custom_profile else None, "case_id": case_id if custom_profile else None, "custom_profile": custom_profile,
+                    "fold_id": fold if custom_profile and fold_id is None else fold_id, "fold_count": fold_count if custom_profile else None,
                     "region": region, "rmse": values["rmse"], "mae": values["mae"], "bias": values["bias"],
                     "voxel_count": values.get("voxel_count", values.get("support_voxels")),
                     "coverage_fraction": values.get("coverage_fraction"), "source_manifest": str(manifest_path.resolve()),
@@ -144,6 +190,8 @@ def _summaries(rows: list[dict[str, Any]], fit_rows: dict[tuple[str, str, str, s
         if custom_profile:
             row["profile_id"] = values[0]["profile_id"]
             row["case_id"] = case_id
+            row["fold_id"] = values[0]["fold_id"]
+            row["fold_count"] = values[0]["fold_count"]
         for name in ("rmse", "mae", "bias"):
             numbers = metric(name)
             row[f"{name}_mean"] = float(np.mean(numbers))
@@ -181,7 +229,7 @@ def _profile_summaries(case_summaries: list[dict[str, Any]]) -> list[dict[str, A
 
 
 def _robustness(summaries: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    by_key = {(row["method"], row["endpoint"], row["parameter"], row["metric_family"], row["region"], row["level"]): row for row in summaries}
+    by_key = {(row["method"], row["endpoint"], row["parameter"], row["metric_family"], row["region"], row["level"]): row for row in summaries if not row.get("profile_id")}
     rows: list[dict[str, Any]] = []
     identities = sorted({key[:5] for key in by_key})
     for method, endpoint, parameter, metric_family, region in identities:
@@ -206,18 +254,26 @@ def _paper_table(rows: list[dict[str, Any]], *, subject: str) -> tuple[list[dict
     for row in rows:
         for metric in ("rmse", "mae"):
             value, sd = row[f"{metric}_mean"], row[f"{metric}_sample_sd"]
-            output.append({"method": row["method"], "endpoint": row["endpoint"], "sparsity": row["level"], "parameter": row["parameter"], "metric_family": row["metric_family"], "region": row["region"], "metric": metric.upper(), "value": f"{value:.4g}" if sd is None else f"{value:.4g} ± {sd:.3g}"})
-    header = f"# {subject} final matched table\n\nAll values use frozen `primary_native_mask`; L100 is a single value and L50/L25 use observed-fold mean ± sample SD.\n\n"
-    lines = [header, "| Method | Endpoint | Sparsity | Parameter | Metric family | Region | Metric | Value |", "|---|---|---|---|---|---|---|---:|"]
-    lines.extend(f"| {row['method']} | {row['endpoint']} | {row['sparsity']} | {row['parameter']} | {row['metric_family']} | {row['region']} | {row['metric']} | {row['value']} |" for row in output)
+            output.append({"method": row["method"], "endpoint": row["endpoint"], "level_or_profile": row["level"], "parameter": row["parameter"], "metric_family": row["metric_family"], "region": row["region"], "metric": metric.upper(), "value": f"{value:.4g}" if sd is None else f"{value:.4g} ± {sd:.3g}"})
+    has_custom = any(row.get("profile_id") for row in rows)
+    note = "L100 is a single value and L50/L25 use observed-fold mean ± sample SD."
+    if has_custom:
+        note += " Explicit custom-profile cases are preserved case-by-case; profile-level summaries aggregate those cases only after case-level results are retained."
+    header = f"# {subject} final matched table\n\nAll values use frozen `primary_native_mask`; {note}\n\n"
+    lines = [header, "| Method | Endpoint | Level / Profile | Parameter | Metric family | Region | Metric | Value |", "|---|---|---|---|---|---|---|---:|"]
+    lines.extend(f"| {row['method']} | {row['endpoint']} | {row['level_or_profile']} | {row['parameter']} | {row['metric_family']} | {row['region']} | {row['metric']} | {row['value']} |" for row in output)
     return output, "\n".join(lines) + "\n"
 
 
 def _summary_markdown(rows: list[dict[str, Any]], robustness: list[dict[str, Any]], *, subject: str) -> str:
+    has_custom = any(row.get("profile_id") for row in rows)
+    note = "L100 is a single value; L50/L25 are observed-fold mean ± sample SD. Missing folds are not imputed."
+    if has_custom:
+        note += " Explicit custom-profile cases are preserved case-by-case; profile-level summaries aggregate explicit cases only after case-level results are retained."
     lines = [
         f"# {subject} final matched summary", "",
-        "All values use the frozen current-native `primary_native_mask`. L100 is a single value; L50/L25 are observed-fold mean ± sample SD. Missing folds are not imputed.", "",
-        "| Method | Endpoint | Level | Parameter | Metric family | Region | RMSE | MAE | Bias | ΔRMSE vs Fit-first | ΔMAE vs Fit-first | RMSE wins | MAE wins | Status |",
+        f"All values use the frozen current-native `primary_native_mask`. {note}", "",
+        "| Method | Endpoint | Level / Profile | Parameter | Metric family | Region | RMSE | MAE | Bias | ΔRMSE vs Fit-first | ΔMAE vs Fit-first | RMSE wins | MAE wins | Status |",
         "|---|---|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---|",
     ]
     for row in rows:
@@ -320,8 +376,10 @@ def final_panel_specifications(parameter: str, methods: tuple[str, ...]) -> tupl
 
 def native_mosaic_methods(methods: Mapping[str, Any]) -> tuple[str, ...]:
     """Put the formal comparison methods first, independent of JSON key order."""
-    formal = tuple(method for method in NATIVE_MOSAIC_METHODS if method in methods)
-    return formal + tuple(method for method in methods if method not in formal)
+    unknown = set(methods).difference(METHOD_DISPLAY_ORDER)
+    if unknown:
+        raise ValueError(f"unsupported reporting method(s): {', '.join(sorted(unknown))}")
+    return tuple(method for method in METHOD_DISPLAY_ORDER if method in methods)
 
 
 def _load_mask_spec(config: Mapping[str, Any], parameter: str) -> Path:
@@ -464,8 +522,9 @@ def sax_centerline_cuts(shape_rc: tuple[int, int]) -> tuple[tuple[str, int], tup
     return (("center_row", (int(shape_rc[0]) - 1) // 2), ("center_column", (int(shape_rc[1]) - 1) // 2))
 
 
-def scmr_longitudinal_panel_labels() -> tuple[str, str, str, str, str]:
-    return ("SAX source + centerline overlay", "Original SAX-stack longitudinal reformatting", "Fit-first", "Q002S640", "Q004S640")
+def scmr_longitudinal_panel_labels(methods: Mapping[str, Any] | None = None) -> tuple[str, ...]:
+    comparison = ("Fit-first", "Q002S640", "Q004S640") if methods is None else native_mosaic_methods(methods)
+    return ("SAX source + centerline overlay", "Original SAX-stack longitudinal reformatting", *comparison)
 
 
 def native_preview_stack_configs(native: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -648,13 +707,13 @@ def _dense_physical_plane(source_plane: Mapping[str, Any], *, spacing_mm: float 
     return {"world": world, "extent_mm": [0.0, first_length, 0.0, second_length], "shape": [first_count, second_count], "requested_spacing_mm": float(spacing_mm), "actual_spacing_mm": [first_length / (first_count - 1), second_length / (second_count - 1)], "same_physical_plane_as_source": True}
 
 
-def _plot_scmr_longitudinal(path: Path, rows: list[dict[str, Any]], *, title: str, limits: tuple[float, float], cmap: Any) -> None:
+def _plot_scmr_longitudinal(path: Path, rows: list[dict[str, Any]], *, title: str, limits: tuple[float, float], cmap: Any, column_labels: tuple[str, ...]) -> None:
     """Two physical SAX centre-line cuts with one parameter colorbar."""
     import matplotlib.pyplot as plt
 
-    labels = scmr_longitudinal_panel_labels()
-    figure = plt.figure(figsize=(15.2, 6.1))
-    grid = figure.add_gridspec(2, 6, width_ratios=[1.0] * 5 + [.06], wspace=.12, hspace=.20)
+    comparison_columns = len(column_labels)
+    figure = plt.figure(figsize=(3.0 * comparison_columns + .65, 6.1))
+    grid = figure.add_gridspec(2, comparison_columns + 1, width_ratios=[1.0] * comparison_columns + [.06], wspace=.12, hspace=.20)
     handle = None
     for row_index, row in enumerate(rows):
         source = row["source"]
@@ -666,14 +725,14 @@ def _plot_scmr_longitudinal(path: Path, rows: list[dict[str, Any]], *, title: st
         else:
             source_axis.axhline(row["source_line_coordinate_mm"], color="cyan", linewidth=1.2)
         source_axis.set_ylabel(row["cut"].replace("_", " "), fontsize=8)
-        source_axis.set_title(labels[0], fontsize=8)
+        source_axis.set_title(column_labels[0], fontsize=8)
         source_axis.set_xticks([]); source_axis.set_yticks([])
         for column, panel in enumerate(row["longitudinal"], start=1):
             axis = figure.add_subplot(grid[row_index, column])
             shown = np.ma.masked_invalid(np.where(panel["support"], panel["values"], np.nan))
             handle = axis.imshow(shown.T, origin="lower", extent=row["extent_mm"], cmap=cmap, vmin=limits[0], vmax=limits[1], interpolation="none", aspect="equal")
             if row_index == 0:
-                axis.set_title(labels[column], fontsize=8)
+                axis.set_title(column_labels[column], fontsize=8)
             axis.set_xticks([]); axis.set_yticks([])
     colorbar_axis = figure.add_subplot(grid[:, -1])
     figure.colorbar(handle, cax=colorbar_axis, label="ms; shared parameter map scale")
@@ -704,9 +763,10 @@ def _render_scmr_style_longitudinal(config: Mapping[str, Any], output: Path, inp
     stack_shape = (source_shape[0], source_shape[1], len(groups))
     source_spacing = np.asarray(sax["pixel_spacing_rc_mm"][reference_index], float)
     source_extent = [0.0, (source_shape[0] - 1) * float(source_spacing[0]), 0.0, (source_shape[1] - 1) * float(source_spacing[1])]
-    methods = tuple(scmr_longitudinal_panel_labels()[2:])
-    if any(method not in config["methods"] for method in methods):
-        raise ValueError("scmr_longitudinal requires Fit-first, Q002S640, and Q004S640 map inputs")
+    methods = native_mosaic_methods(config["methods"])
+    if "Fit-first" not in methods or len(methods) < 2:
+        raise ValueError("scmr_longitudinal requires Fit-first plus at least one configured Proposed method")
+    column_labels = scmr_longitudinal_panel_labels(config["methods"])
     records: list[dict[str, Any]] = []
     for parameter, display_parameter in PARAMETERS.items():
         source_stack = np.moveaxis(np.asarray(sax[f"{parameter}_ms"], float), 0, -1)
@@ -726,15 +786,15 @@ def _render_scmr_style_longitudinal(config: Mapping[str, Any], output: Path, inp
                 values = np.asarray(values)
                 sampled_methods[method] = values
                 shared_support &= np.asarray(valid, bool) & np.isfinite(values)
-            longitudinal = [{"label": scmr_longitudinal_panel_labels()[1], "values": native_values, "support": shared_support}]
+            longitudinal = [{"label": column_labels[1], "values": native_values, "support": shared_support}]
             longitudinal.extend({"label": method, "values": values, "support": shared_support} for method, values in sampled_methods.items())
             line_coordinate = float(index * source_spacing[0 if cut == "center_row" else 1])
             rows.append({"cut": cut, "source": {"values": np.asarray(sax[f"{parameter}_ms"][reference_index], float), "support": np.asarray(sax["source_support"][reference_index], bool), "extent_mm": source_extent}, "source_line_coordinate_mm": line_coordinate, "longitudinal": longitudinal, "extent_mm": plane["extent_mm"]})
             cut_records.append({"cut": cut, "source_line_index": index, "source_line_coordinate_mm": line_coordinate, "source_plane_group_idx": reference_group, "line_origin_world_ras_mm": [float(value) for value in plane["world"][:3, 0, 0]], "source_plane": {key: value for key, value in plane.items() if key != "world"}, "reconstruction_plane": {key: value for key, value in dense_plane.items() if key != "world"}, "comparison_support_contract": "source comparison domain AND in_volume(all configured comparison methods) AND finite(all configured comparison methods)", "common_support_voxels": int(shared_support.sum()), "all_methods_share_identical_support": True})
         cmap, limits = colorbars().mapping[display_parameter], DISPLAY_RANGES_MS[display_parameter]
         filename = f"longitudinal_sax_centerline_{display_parameter}.png"
-        _plot_scmr_longitudinal(output / filename, rows, title=f"{config['subject']} {config['condition']} {config['endpoint']} — SAX centre-line longitudinal {display_parameter}", limits=limits, cmap=cmap)
-        records.append({"parameter": display_parameter, "file": filename, "layout": {"rows": 2, "columns": 5, "column_labels": list(scmr_longitudinal_panel_labels())}, "sax_reference_group_idx": reference_group, "sax_reference_group_selection": selection_rule, "cuts": cut_records, "sampling": {"source": "nearest-neighbor on source-stack grid", "reconstruction": "linear on shared approximately-1-mm physical plane", "same_physical_plane_for_source_reformat_and_all_reconstructions": True, "reconstruction_support": "source comparison domain AND in_volume(all configured comparison methods) AND finite(all configured comparison methods)", "optional_reconstruction_display_roi": bool(section.get("reconstruction_display_roi", False))}, "all_methods_share_identical_support": True, "no_auto_crop": True, "physical_aspect_ratio_preserved": True, "colorbars": {"shared_parameter": "dedicated_axis", "range_ms": list(limits), "colormap": "same_parameter_map_lut"}, "native_source": sax["provenance"]})
+        _plot_scmr_longitudinal(output / filename, rows, title=f"{config['subject']} {config['condition']} {config['endpoint']} — SAX centre-line longitudinal {display_parameter}", limits=limits, cmap=cmap, column_labels=column_labels)
+        records.append({"parameter": display_parameter, "file": filename, "layout": {"rows": 2, "columns": len(column_labels), "column_labels": list(column_labels), "configured_comparison_methods": list(methods)}, "sax_reference_group_idx": reference_group, "sax_reference_group_selection": selection_rule, "cuts": cut_records, "sampling": {"source": "nearest-neighbor on source-stack grid", "reconstruction": "linear on shared approximately-1-mm physical plane", "same_physical_plane_for_source_reformat_and_all_reconstructions": True, "reconstruction_support": "source comparison domain AND in_volume(all configured comparison methods) AND finite(all configured comparison methods)", "optional_reconstruction_display_roi": bool(section.get("reconstruction_display_roi", False))}, "all_methods_share_identical_support": True, "no_auto_crop": True, "physical_aspect_ratio_preserved": True, "colorbars": {"shared_parameter": "dedicated_axis", "range_ms": list(limits), "colormap": "same_parameter_map_lut"}, "native_source": sax["provenance"]})
     for key in ("native_maps_path", "geometry_path", "manifest_path"):
         inputs[f"scmr_sax_{key}"] = _file_record(sax["provenance"][key])
     return records

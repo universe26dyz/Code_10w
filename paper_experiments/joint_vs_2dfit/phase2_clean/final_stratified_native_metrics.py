@@ -137,7 +137,12 @@ def build_final_stratified_native_metrics(*, proposed_endpoint_root: str | Path,
             for region, values in accumulators[parameter].items():
                 region_metrics[parameter][region] = {"status": "NOT_APPLICABLE_L100", "group_ids": None} if regions[region] is None else {"group_ids": regions[region], **_aggregate(values, int(values["mask_voxels"]))}
         write_immutable_json(staging / "aggregate_metrics.json", {"schema": "final_stratified_native_common_support_metrics/v1", "primary_mask": "primary_native_mask", "primary_support_equation": SUPPORT_EQUATION, "regions": region_metrics, "per_plane_records": planes, "original_native_geometry_for_all_strata": True})
-        write_immutable_json(staging / "manifest.json", {"schema": "final_stratified_native_bundle_metrics/v1", "subject": subject, "condition": condition, "endpoint": endpoint_provenance["endpoint"], "endpoint_provenance": endpoint_provenance, "sparse_manifest": _record(sparse_manifest), "native_mask_manifest": _record(native_mask_root / "manifest.json"), "aggregate_metrics": _record(staging / "aggregate_metrics.json"), "region_definitions": regions, "no_final_pose_voxels": True, "no_training": True, "no_reconstruction": True})
+        manifest = {"schema": "final_stratified_native_bundle_metrics/v1", "subject": subject, "condition": condition, "endpoint": endpoint_provenance["endpoint"], "endpoint_provenance": endpoint_provenance, "sparse_manifest": _record(sparse_manifest), "native_mask_manifest": _record(native_mask_root / "manifest.json"), "aggregate_metrics": _record(staging / "aggregate_metrics.json"), "region_definitions": regions, "no_final_pose_voxels": True, "no_training": True, "no_reconstruction": True}
+        if custom:
+            for field in ("profile_id", "case_id", "fold_id", "fold_count"):
+                manifest[field] = sparse[field]
+            manifest["sparse_schema_version"] = sparse["schema_version"]
+        write_immutable_json(staging / "manifest.json", manifest)
         staging.rename(output)
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True)
