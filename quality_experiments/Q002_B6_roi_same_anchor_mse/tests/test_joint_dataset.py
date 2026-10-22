@@ -115,6 +115,19 @@ def test_cropped_path_contract_rejects_full_fov_and_route_forbids_warm_start(tmp
         build_q002_route_config(config, cropped_prepared_root=root, reconstruction_checkpoint="/b6/model.pt")
 
 
+def test_profiled_paths_skip_none_stack_without_fake_observation(tmp_path):
+    from quality_experiments.Q002_B6_roi_same_anchor_mse.contracts import profiled_observation_paths
+
+    root = tmp_path / "derived"
+    _write_observations(root / "sax" / "observations.npz")
+    manifest = tmp_path / "sparse_manifest.json"
+    manifest.write_text(__import__("json").dumps({"schema_version": "phase4r_sparse_profile_v2", "subject": "CYJ", "prepared_root": str(root.resolve()), "stacks": {"sax": {"training_stack_present": True}, "2ch": {"training_stack_present": False}, "4ch": {"training_stack_present": False}}}), encoding="utf-8")
+    assert profiled_observation_paths(root, "CYJ", manifest) == [root / "sax" / "observations.npz"]
+    _write_observations(root / "2ch" / "observations.npz")
+    with pytest.raises(ValueError, match="must not contain"):
+        profiled_observation_paths(root, "CYJ", manifest)
+
+
 def test_fixed_monitor_is_seed_stable_and_records_integer_anchor_hash(tmp_path):
     from quality_experiments.Q002_B6_roi_same_anchor_mse.joint_dataset import JointAnchorDataset
 

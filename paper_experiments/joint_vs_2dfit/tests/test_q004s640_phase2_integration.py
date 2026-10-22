@@ -59,6 +59,15 @@ def test_q004_phase2_adapter_preserves_an_explicit_non_cyj_subject(tmp_path: Pat
     assert "--subject-id DYL_2" in command
 
 
+def test_q004_phase2_adapter_uses_explicit_custom_case_identity_without_condition_split(tmp_path: Path) -> None:
+    from paper_experiments.joint_vs_2dfit.phase2_clean.q004s640 import select_prepared_root
+
+    sparse = tmp_path / "sparse"; sparse.mkdir()
+    manifest = tmp_path / "custom.json"
+    manifest.write_text(json.dumps({"schema_version": "phase4r_sparse_profile_v2", "subject": "CYJ", "profile_id": "SAX100_2CH0_4CH0", "case_id": "SAX100_2CH0_4CH0", "prepared_root": str(sparse.resolve())}), encoding="utf-8")
+    assert select_prepared_root("CYJ", "SAX100_2CH0_4CH0", tmp_path / "r0", sparse, manifest) == sparse
+
+
 def test_q004_alias_records_k1_training_separately_from_central_and_psf128_exports(tmp_path: Path) -> None:
     from paper_experiments.joint_vs_2dfit.phase2_clean.cyj_matched_comparison import formalize_q004s640_alias
 

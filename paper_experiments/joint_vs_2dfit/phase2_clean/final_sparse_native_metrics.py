@@ -30,7 +30,12 @@ def _manifest(root: Path) -> tuple[Path, dict[str, Any]]:
 
 
 def sparse_manifest_case(sparse: dict[str, Any]) -> str:
-    """Turn the immutable sparse level/phase schema into a formal case ID."""
+    """Return a custom explicit case ID or the narrow legacy level/phase ID."""
+    if sparse.get("schema_version") == "phase4r_sparse_profile_v2":
+        case_id, profile_id = sparse.get("case_id"), sparse.get("profile_id")
+        if not isinstance(case_id, str) or not case_id or not isinstance(profile_id, str) or not profile_id:
+            raise ValueError("custom sparse manifest requires explicit profile_id and case_id")
+        return case_id
     level, phase = sparse.get("condition"), sparse.get("phase")
     valid = {"L50": (0, 1), "L25": (0, 1, 2, 3)}
     if level not in valid or type(phase) is not int or phase not in valid[level]:

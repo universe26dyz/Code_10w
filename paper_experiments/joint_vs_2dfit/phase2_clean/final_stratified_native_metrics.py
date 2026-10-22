@@ -93,9 +93,10 @@ def build_final_stratified_native_metrics(*, proposed_endpoint_root: str | Path,
     sparse_manifest, native_mask_root, output = Path(sparse_manifest), Path(native_mask_root), Path(output)
     sparse = json.loads(sparse_manifest.read_text(encoding="utf-8"))
     subject, level = sparse.get("subject"), sparse.get("condition")
-    if not isinstance(subject, str) or not subject or level not in {"L100", "L50", "L25"} or sparse.get("status") != "ELIGIBLE":
-        raise ValueError("stratified evaluation requires an ELIGIBLE named L100/L50/L25 sparse manifest")
-    condition = "L100_fold0" if level == "L100" else sparse_manifest_case(sparse)
+    custom = sparse.get("schema_version") == "phase4r_sparse_profile_v2"
+    if not isinstance(subject, str) or not subject or sparse.get("status") != "ELIGIBLE" or (not custom and level not in {"L100", "L50", "L25"}):
+        raise ValueError("stratified evaluation requires an ELIGIBLE named legacy or explicit custom sparse manifest")
+    condition = sparse_manifest_case(sparse) if custom or level != "L100" else "L100_fold0"
     if output.exists():
         raise FileExistsError(f"refusing overwrite: {output}")
     paths, endpoint_provenance = validate_sparse_endpoint_roots(proposed_endpoint_root, fit_first_endpoint_root, condition, subject=subject)

@@ -83,3 +83,9 @@ def test_sparse_manifest_invalid_phase_fails_closed(payload: dict[str, object]) 
 
     with pytest.raises(ValueError, match="L50/L25"):
         sparse.sparse_manifest_case(payload)
+
+
+def test_sparse_manifest_case_uses_explicit_custom_case_id_without_string_splitting() -> None:
+    from paper_experiments.joint_vs_2dfit.phase2_clean import final_sparse_native_metrics as sparse
+
+    assert sparse.sparse_manifest_case({"schema_version": "phase4r_sparse_profile_v2", "case_id": "SAX100_2CH0_4CH0", "profile_id": "SAX100_2CH0_4CH0"}) == "SAX100_2CH0_4CH0"

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import json
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -13,6 +14,7 @@ Q002S640_K256_EXPERIMENT_ID = "Q002S640_K256"
 Q003S640_EXPERIMENT_ID = "Q003S640_B6_roi_same_anchor_mse_plus_cosine"
 Q003S640_10K_EXPERIMENT_ID = "Q003S640_B6_roi_same_anchor_mse_plus_cosine_10k"
 Q004S640_K1_EXPERIMENT_ID = "Q004S640_K1_B6_roi_same_anchor_mse"
+Q005S640_K4_EXPERIMENT_ID = "Q005S640_K4_B6_roi_same_anchor_mse"
 STACKS = ("sax", "2ch", "4ch")
 
 
@@ -31,6 +33,34 @@ def cropped_observation_paths(root: str | Path, subject_id: str = "CYJ") -> list
     return paths
 
 
+def profiled_observation_paths(root: str | Path, subject_id: str, sparse_manifest: str | Path) -> list[Path]:
+    """Select only manifest-present training stacks; never synthesize an empty one."""
+    manifest_path = Path(sparse_manifest)
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if manifest.get("schema_version") != "phase4r_sparse_profile_v2" or manifest.get("subject") != subject_id:
+        raise ValueError("profiled Q002 inputs require a matching phase4r_sparse_profile_v2 manifest")
+    declared_root = Path(str(manifest.get("prepared_root", ""))).resolve()
+    actual_root = Path(root).resolve()
+    if declared_root != actual_root:
+        raise ValueError("profiled prepared root does not match sparse manifest")
+    paths: list[Path] = []
+    for stack in STACKS:
+        spec = manifest.get("stacks", {}).get(stack)
+        if not isinstance(spec, Mapping):
+            raise ValueError(f"profile manifest lacks stack {stack}")
+        present = bool(spec.get("training_stack_present"))
+        path = actual_root / stack / "observations.npz"
+        if present:
+            if not path.is_file():
+                raise FileNotFoundError(f"profiled active stack is missing: {path}")
+            paths.append(path)
+        elif path.exists():
+            raise ValueError(f"profiled empty stack must not contain a derived observation: {path}")
+    if not paths:
+        raise ValueError("profile has no active training stacks")
+    return paths
+
+
 def build_q002_route_config(
     resolved_config: Mapping[str, Any], *, cropped_prepared_root: str | Path, reconstruction_checkpoint: str | None = None,
     experiment_id: str = Q002_EXPERIMENT_ID, anchor_batch_size: int = 64,
@@ -44,7 +74,7 @@ def build_q002_route_config(
     root = Path(cropped_prepared_root)
     if "full_fov" in str(root).lower():
         raise ValueError("Q002 training root must be B6 cropped, not full-FOV.")
-    expected_batch_size = {Q002_EXPERIMENT_ID: 64, Q002S640_EXPERIMENT_ID: 640, Q002S640_K256_EXPERIMENT_ID: 640, Q003S640_EXPERIMENT_ID: 640, Q003S640_10K_EXPERIMENT_ID: 640, Q004S640_K1_EXPERIMENT_ID: 640}.get(experiment_id)
+    expected_batch_size = {Q002_EXPERIMENT_ID: 64, Q002S640_EXPERIMENT_ID: 640, Q002S640_K256_EXPERIMENT_ID: 640, Q003S640_EXPERIMENT_ID: 640, Q003S640_10K_EXPERIMENT_ID: 640, Q004S640_K1_EXPERIMENT_ID: 640, Q005S640_K4_EXPERIMENT_ID: 640}.get(experiment_id)
     if expected_batch_size is None or int(anchor_batch_size) != expected_batch_size:
         raise ValueError("Q002 route experiment_id must use its fixed anchor_batch_size.")
     sampling: dict[str, Any]
@@ -58,6 +88,16 @@ def build_q002_route_config(
             "shared_training_psf_samples": 1,
             "data_psf_inr_location_count": 640,
             "B6_scalar_batch_size": 640,
+        }
+    elif experiment_id == Q005S640_K4_EXPERIMENT_ID:
+        sampling = {
+            "anchor_batch_size": 640,
+            "weights_per_anchor": 10,
+            "signal_residual_count": 6400,
+            "shared_training_psf_samples": 4,
+            "data_psf_inr_location_count": 2560,
+            "B6_scalar_batch_size": 640,
+            "psf_forward_chunk_size": 4,
         }
     elif experiment_id == Q002S640_K256_EXPERIMENT_ID:
         sampling = {
@@ -113,6 +153,14 @@ def build_q002_route_config(
             "scientific_change": "training_psf_samples_8_to_central_1_only",
             "training_psf_semantics": "central_local_coordinate_no_gaussian_draw",
             "loss": "MSE_only",
+        })
+    if experiment_id == Q005S640_K4_EXPERIMENT_ID:
+        route["route"].update({
+            "parent_experiment": Q002S640_EXPERIMENT_ID,
+            "scientific_change": "training_psf_samples_8_to_4_only",
+            "loss": "MSE_only",
+            "training_psf_semantics": "same-anchor local PSF neighbourhood samples averaged before the 10-weight joint-vector MSE",
+            "endpoint_semantics": {"central": "central/no map-domain PSF post-hoc endpoint", "psf128": "post-hoc map-domain PSF128 endpoint, distinct from training K4"},
         })
     if experiment_id == Q002S640_K256_EXPERIMENT_ID:
         route["route"].update({

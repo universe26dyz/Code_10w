@@ -36,8 +36,8 @@ def q002_training_controls(training: Mapping[str, Any], *, anchor_batch_size: in
             raise ValueError(f"Q002 requires B6 training.{key}={value}, got {training.get(key)!r}.")
     if anchor_batch_size not in (64, 640):
         raise ValueError("Q002 route anchor_batch_size must be exactly 64 or 640.")
-    if training_psf_samples not in (1, 8, 256):
-        raise ValueError("Q002/Q004/K256 training_psf_samples must be exactly 1, 8, or 256.")
+    if training_psf_samples not in (1, 4, 8, 256):
+        raise ValueError("Q002/Q004/Q005/K256 training_psf_samples must be exactly 1, 4, 8, or 256.")
     if training_psf_samples == 256 and anchor_batch_size != 640:
         raise ValueError("Q002S640_K256 requires exactly 640 anchors.")
     if anchor_batch_size == 64:
@@ -99,8 +99,8 @@ class JointAnchorSampler:
         self.dataset = dataset
         self.anchor_batch_size = int(anchor_batch_size)
         self.training_psf_samples = int(training_psf_samples)
-        if self.training_psf_samples not in (1, 8, 256):
-            raise ValueError("Q002/Q004/K256 sampler training_psf_samples must be exactly 1, 8, or 256.")
+        if self.training_psf_samples not in (1, 4, 8, 256):
+            raise ValueError("Q002/Q004/Q005/K256 sampler training_psf_samples must be exactly 1, 4, 8, or 256.")
         self.generator = torch.Generator(device=dataset.xyz.device).manual_seed(int(seed))
 
     def sample(self, anchor_batch_size: int | None = None) -> dict[str, Any]:

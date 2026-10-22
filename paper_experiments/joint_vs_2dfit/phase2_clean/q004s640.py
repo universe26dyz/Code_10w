@@ -17,12 +17,16 @@ CYJ_CASES = FORMAL_CASES  # Backward-compatible import for the established CYJ r
 
 
 def _validate_case_manifest(subject: str, condition: str, sparse_manifest: str | Path) -> Path:
-    if condition not in FORMAL_CASES:
-        raise ValueError(f"unsupported formal condition: {condition}")
     path = Path(sparse_manifest)
     payload = json.loads(path.read_text(encoding="utf-8"))
-    if payload.get("subject") != subject or payload.get("condition") != condition.split("_", 1)[0]:
-        raise ValueError("sparse manifest does not match the requested subject/condition")
+    if payload.get("subject") != subject:
+        raise ValueError("sparse manifest does not match the requested subject")
+    if payload.get("schema_version") == "phase4r_sparse_profile_v2":
+        if payload.get("case_id") != condition or not isinstance(payload.get("profile_id"), str):
+            raise ValueError("custom sparse manifest does not match the requested explicit case_id")
+    else:
+        if condition not in FORMAL_CASES or payload.get("condition") != condition.split("_", 1)[0]:
+            raise ValueError("sparse manifest does not match the requested legacy condition")
     return path
 
 
@@ -31,6 +35,12 @@ def select_prepared_root(subject: str, condition: str, l100_prepared_root: str |
     """Choose the immutable R0 source for L100 and the sparse source for held-out cases."""
     _validate_case_manifest(subject, condition, sparse_manifest)
     l100, sparse = Path(l100_prepared_root).resolve(), Path(sparse_prepared_root).resolve()
+    payload = json.loads(Path(sparse_manifest).read_text(encoding="utf-8"))
+    if payload.get("schema_version") == "phase4r_sparse_profile_v2":
+        declared = Path(str(payload.get("prepared_root", ""))).resolve()
+        if sparse != declared:
+            raise ValueError("custom sparse prepared root does not match its immutable manifest")
+        return sparse
     if condition == "L100_fold0":
         if l100 != sparse:
             raise ValueError("L100 must reuse the R0/L100 prepared root as the sparse prepared root")
@@ -45,15 +55,17 @@ def select_cyj_prepared_root(condition: str, l100_prepared_root: str | Path, spa
 
 
 def build_q004s640_command(condition: str, prepared_root: str | Path, *, subject: str = "CYJ", decoder: str | Path, b6_model: str | Path,
-                           output: str | Path, device: str = "cuda:0") -> str:
-    if condition not in FORMAL_CASES:
-        raise ValueError(f"unsupported formal condition: {condition}")
+                           output: str | Path, device: str = "cuda:0", sparse_manifest: str | Path | None = None) -> str:
+    if not isinstance(condition, str) or not condition:
+        raise ValueError("condition must be an explicit case identity")
     args = [
         sys.executable, "-m", "quality_experiments.Q002_B6_roi_same_anchor_mse.run_q004_s640_k1_reconstruction",
         "--cropped-prepared-root", str(Path(prepared_root)), "--subject-id", subject,
         "--b6-model", str(Path(b6_model)), "--signal-simulator", str(Path(decoder)), "--output", str(Path(output)),
         "--device", device, "--experiment-id", Q004_EXPERIMENT_ID, "--anchor-batch-size", "640",
     ]
+    if sparse_manifest is not None:
+        args.extend(("--sparse-manifest", str(Path(sparse_manifest))))
     return " ".join(shlex.quote(value) for value in args)
 
 
@@ -63,7 +75,7 @@ def run(args: argparse.Namespace) -> Path:
     output = Path(args.output)
     if output.exists():
         raise FileExistsError(f"refusing overwrite: {output}")
-    command = build_q004s640_command(args.condition, prepared, subject=args.subject, decoder=args.decoder, b6_model=args.b6_model, output=output, device=args.device)
+    command = build_q004s640_command(args.condition, prepared, subject=args.subject, decoder=args.decoder, b6_model=args.b6_model, output=output, device=args.device, sparse_manifest=manifest if json.loads(manifest.read_text(encoding="utf-8")).get("schema_version") == "phase4r_sparse_profile_v2" else None)
     subprocess.run(command, shell=True, check=True)
     route_manifest = output / "experiment_manifest.json"
     if not route_manifest.is_file():
@@ -88,7 +100,7 @@ def main() -> None:
     manifest = _validate_case_manifest(args.subject, args.condition, args.sparse_manifest)
     prepared = select_prepared_root(args.subject, args.condition, args.l100_prepared_root, args.sparse_prepared_root, manifest)
     if not args.execute:
-        print(build_q004s640_command(args.condition, prepared, subject=args.subject, decoder=args.decoder, b6_model=args.b6_model, output=args.output, device=args.device)); return
+        print(build_q004s640_command(args.condition, prepared, subject=args.subject, decoder=args.decoder, b6_model=args.b6_model, output=args.output, device=args.device, sparse_manifest=manifest if json.loads(manifest.read_text(encoding="utf-8")).get("schema_version") == "phase4r_sparse_profile_v2" else None)); return
     print(run(args))
 
 
