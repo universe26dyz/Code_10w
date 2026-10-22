@@ -5,6 +5,7 @@ from pathlib import Path
 import numpy as np
 from .contracts import BASELINE_POSE_POLICY, FROZEN_GRID, HISTORICAL_NESVOR_EXECUTABLE_DEFAULT, sha256, write_immutable_json
 from .dictionary import frozen_dictionary, match_fingerprints
+from .sparse_profile_manifest import SCHEMA_VERSION, validate_sparse_profile_manifest
 
 STACKS = ('sax', '2ch', '4ch')
 NATIVE_FIT_METHOD = 'current-protocol HHZ/TRAD dictionary matching; normalized 10D inner product; no interpolation/refinement'
@@ -155,6 +156,11 @@ def reuse_native_maps(full_native_maps_root: str | Path, sparse_manifest: str | 
 
 def _reuse_native_maps_into(source_root: Path, manifest_path: Path, target: Path) -> None:
     sparse = json.loads(manifest_path.read_text())
+    profile_v2 = sparse.get('schema_version') == SCHEMA_VERSION
+    if profile_v2:
+        # This is a read-only admission check.  It also prevents a hand-edited
+        # empty-stack record from being turned into a fake native observation.
+        sparse = validate_sparse_profile_manifest(manifest_path, subject=sparse.get('subject'))
     if sparse.get('status') != 'ELIGIBLE':
         raise ValueError('native-map reuse requires an ELIGIBLE sparse manifest')
     if sparse.get('condition') == 'L100':
@@ -168,6 +174,18 @@ def _reuse_native_maps_into(source_root: Path, manifest_path: Path, target: Path
         heldout = [int(value) for value in sparse_stack.get('heldout_original_group_ids', [])]
         if len(retained) != len(set(retained)):
             raise ValueError(f'{stack}: retained original group IDs must be unique')
+        if profile_v2 and not sparse_stack.get('training_stack_present'):
+            if retained:
+                raise ValueError(f'{stack}: empty training stack cannot retain native-map groups')
+            records[stack] = {
+                'training_stack_present': False,
+                'status': 'NOT_APPLICABLE_EMPTY_TRAINING_STACK',
+                'retained_original_group_ids': [],
+                'heldout_original_group_ids': heldout,
+                'nesvor_input_original_group_ids': [],
+                'heldout_native_geometry_evaluation': 'preserved in R0 native cache; never exported to NeSVoR',
+            }
+            continue
         cached_root = source_root / stack
         maps_path, geometry_path, cached_manifest_path = cached_root/'native_maps.npz', cached_root/'geometry.npz', cached_root/'manifest.json'
         if not all(path.is_file() for path in (maps_path, geometry_path, cached_manifest_path)):
@@ -213,8 +231,11 @@ def _reuse_native_maps_into(source_root: Path, manifest_path: Path, target: Path
             else:
                 np.savez_compressed(stack_target/'native_maps.npz', t1_ms=maps['t1_ms'][positions], t2_ms=maps['t2_ms'][positions], b1=maps['b1'][positions], group_idx=np.asarray(retained, dtype=maps['group_idx'].dtype))
                 np.savez_compressed(stack_target/'geometry.npz', affine_lps_rc=geometry['affine_lps_rc'][positions], pixel_spacing_rc_mm=geometry['pixel_spacing_rc_mm'][positions], slice_thickness_mm=geometry['slice_thickness_mm'][positions])
-        records[stack] = {'retained_original_group_ids': retained, 'heldout_original_group_ids': heldout, 'nesvor_input_original_group_ids': retained, 'reused_source_map_sha256': sha256(maps_path), 'reused_source_geometry_sha256': sha256(geometry_path), 'subset_output_map_sha256': sha256(stack_target/'native_maps.npz'), 'subset_output_geometry_sha256': sha256(stack_target/'geometry.npz')}
-    write_immutable_json(target/'reuse_manifest.json', {'method': 'fit_first_native_map_group_local_reuse', 'sparse_manifest': {'path': str(manifest_path.resolve()), 'sha256': sha256(manifest_path)}, 'full_native_maps_root': str(source_root.resolve()), 'native_fit_reuse_is_group_local': True, 'heldout_groups_never_passed_to_nesvor': True, 'stacks': records})
+        records[stack] = {'training_stack_present': True, 'retained_original_group_ids': retained, 'heldout_original_group_ids': heldout, 'nesvor_input_original_group_ids': retained, 'reused_source_map_sha256': sha256(maps_path), 'reused_source_geometry_sha256': sha256(geometry_path), 'subset_output_map_sha256': sha256(stack_target/'native_maps.npz'), 'subset_output_geometry_sha256': sha256(stack_target/'geometry.npz')}
+    reuse_manifest = {'method': 'fit_first_native_map_group_local_reuse', 'sparse_manifest': {'path': str(manifest_path.resolve()), 'sha256': sha256(manifest_path)}, 'full_native_maps_root': str(source_root.resolve()), 'native_fit_reuse_is_group_local': True, 'heldout_groups_never_passed_to_nesvor': True, 'stacks': records}
+    if profile_v2:
+        reuse_manifest.update({'subject_id': sparse['subject'], 'profile_id': sparse['profile_id'], 'case_id': sparse['case_id'], 'sparse_generator_git_sha': sparse['git_sha'], 'endpoint_contract': {'central': 'central/no map-domain PSF post-hoc endpoint', 'psf128': 'PSF128 downstream endpoint uses the same case identity'}})
+    write_immutable_json(target/'reuse_manifest.json', reuse_manifest)
 
 def export_nesvor_native_inputs(native_maps: str|Path, output: str|Path, normalization: dict[str, float] | None = None) -> Path:
     """Export current dictionary maps as independent geometry-preserving NeSVoR stacks."""
@@ -248,7 +269,7 @@ def build_independent_nesvor_commands(nesvor_input: str|Path|list[str|Path], out
     for parameter in ('t1', 't2'):
         destination = result/parameter
         inputs=[str(root/parameter/'stack.nii.gz') for root in roots]; scale='2500' if parameter=='t1' else '200'
-        args = [str(nesvor_executable),'reconstruct','--input-stacks',*inputs,'--thicknesses','8','8','8','--registration','stack','--scanner-space','--metric','none','--weight-transformation','1','--weight-deform','0.1','--weight-image','1','--weight-pixel-var-smooth','0','--output-volume',str(destination/'volume_normalized.nii.gz'),'--output-model',str(destination/'model.pt'),'--output-json',str(destination/'result.json'),'--output-log',str(destination/'nesvor.log'),'--output-slices',str(destination/'slices'),'--output-intensity-mean','0','--output-resolution','1.0','--output-psf-factor','1','--no-slice-scale','--single-precision','--log2-hashmap-size','19','--batch-size','2000','--n-iter','10000','--n-samples','256','--n-inference-samples','128','--inference-batch-size','16000','--pixel-variance-weight','1','--coarsest-resolution','16','--finest-resolution','0.5','--level-scale','1.3819','--n-features-per-level','2','--depth','1','--width','64','--n-features-z','15','--n-features-slice','16','--weight-bias','100','--image-regularization','edge','--delta','0.2','--learning-rate','0.005','--gamma','0.33','--milestones','0.5','0.75','0.9','--seed','20260823','--device',str(device)]
+        args = [str(nesvor_executable),'reconstruct','--input-stacks',*inputs,'--thicknesses',*(['8'] * len(roots)),'--registration','stack','--scanner-space','--metric','none','--weight-transformation','1','--weight-deform','0.1','--weight-image','1','--weight-pixel-var-smooth','0','--output-volume',str(destination/'volume_normalized.nii.gz'),'--output-model',str(destination/'model.pt'),'--output-json',str(destination/'result.json'),'--output-log',str(destination/'nesvor.log'),'--output-slices',str(destination/'slices'),'--output-intensity-mean','0','--output-resolution','1.0','--output-psf-factor','1','--no-slice-scale','--single-precision','--log2-hashmap-size','19','--batch-size','2000','--n-iter','10000','--n-samples','256','--n-inference-samples','128','--inference-batch-size','16000','--pixel-variance-weight','1','--coarsest-resolution','16','--finest-resolution','0.5','--level-scale','1.3819','--n-features-per-level','2','--depth','1','--width','64','--n-features-z','15','--n-features-slice','16','--weight-bias','100','--image-regularization','edge','--delta','0.2','--learning-rate','0.005','--gamma','0.33','--milestones','0.5','0.75','0.9','--seed','20260823','--device',str(device)]
         commands.append(' '.join(shlex.quote(value) for value in args)+f' && {shlex.quote(sys.executable)} -m paper_experiments.joint_vs_2dfit.phase2_clean.fit_first_denormalize --input {shlex.quote(str(destination/"volume_normalized.nii.gz"))} --scale {scale} --output {shlex.quote(str(destination/"volume_ms.nii.gz"))}')
     return commands
 def main()->None:
