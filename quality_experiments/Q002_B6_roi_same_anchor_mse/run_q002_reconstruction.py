@@ -49,16 +49,41 @@ def sparse_profile_provenance(manifest: dict[str, object], inputs: list[Path]) -
     }
 
 
+def validate_formal_q002s640_dependencies(args: argparse.Namespace) -> None:
+    """Fail closed on the complete immutable dependency set for sparse Q002S640."""
+    if not (getattr(args, "sparse_manifest", None) and args.experiment_id == Q002S640_EXPERIMENT_ID):
+        return
+    expected = {
+        "generator": getattr(args, "expected_sparse_generator_git_sha", None),
+        "manifest": getattr(args, "expected_sparse_manifest_sha256", None),
+        "B6 model": getattr(args, "expected_b6_model_sha256", None),
+        "protocol": getattr(args, "expected_protocol_sha256", None),
+    }
+    missing = [label for label, value in expected.items() if value is None]
+    if missing:
+        raise ValueError("Q002S640 sparse execution requires explicit pins for " + ", ".join(missing))
+    for label, value in expected.items():
+        width = 40 if label == "generator" else 64
+        if not isinstance(value, str) or len(value) != width or any(char not in "0123456789abcdef" for char in value):
+            raise ValueError(f"Q002S640 sparse execution has an invalid {label} pin")
+    b6 = Path(args.b6_model)
+    decoder = Path(args.signal_simulator)
+    protocol = Path(args.protocol)
+    if not b6.is_file() or _sha256(b6) != B6_CONFIG_SOURCE_SHA256 or expected["B6 model"] != B6_CONFIG_SOURCE_SHA256:
+        raise ValueError("Q002S640 sparse execution B6 model SHA256 disagrees with the frozen contract")
+    if not decoder.is_file() or _sha256(decoder) != APPROVED_DECODER_SHA256:
+        raise ValueError("Q002S640 sparse execution decoder SHA256 is not the approved FrozenMLP")
+    if not protocol.is_file() or _sha256(protocol) != expected["protocol"]:
+        raise ValueError("Q002S640 sparse execution protocol SHA256 disagrees with the explicit admission pin")
+
+
 def run(args: argparse.Namespace) -> Path:
-    if args.device.startswith("cpu") or not torch.cuda.is_available():
-        raise RuntimeError("Formal Q002 reconstruction requires CUDA.")
+    validate_formal_q002s640_dependencies(args)
     sparse_manifest = getattr(args, "sparse_manifest", None)
     expected_sparse_generator_sha = getattr(args, "expected_sparse_generator_git_sha", None)
     expected_sparse_manifest_sha = getattr(args, "expected_sparse_manifest_sha256", None)
-    if sparse_manifest and args.experiment_id == Q002S640_EXPERIMENT_ID and (expected_sparse_generator_sha is None or expected_sparse_manifest_sha is None):
-        raise ValueError("Q002S640 sparse execution requires generator and manifest SHA256 pins")
-    if sparse_manifest and args.experiment_id == Q002S640_EXPERIMENT_ID and _sha256(Path(args.b6_model)) != B6_CONFIG_SOURCE_SHA256:
-        raise ValueError("Q002S640 sparse execution B6 model SHA256 disagrees with the frozen contract")
+    if args.device.startswith("cpu") or not torch.cuda.is_available():
+        raise RuntimeError("Formal Q002 reconstruction requires CUDA.")
     sparse_profile = validate_sparse_profile_manifest(sparse_manifest, subject=args.subject_id, strict=expected_sparse_generator_sha is not None, expected_generator_git_sha=expected_sparse_generator_sha, expected_manifest_sha256=expected_sparse_manifest_sha) if sparse_manifest else None
     inputs = profiled_observation_paths(args.cropped_prepared_root, args.subject_id, sparse_manifest) if sparse_manifest else cropped_observation_paths(args.cropped_prepared_root, args.subject_id)
     output = Path(args.output)
@@ -120,7 +145,9 @@ def run(args: argparse.Namespace) -> Path:
         export_native_plane_reprojections(result["model"], result["training_space"], inputs, output / "evaluation/mapping_central_no_psf", output_psf={"enabled": False}, export_parameter_maps=True)
         export_native_plane_reprojections(result["model"], result["training_space"], inputs, output / "evaluation/signal_psf_K8", output_psf={"enabled": True, "n_samples": 8}, evaluation_seed=20260911, export_parameter_maps=False)
     export_quantitative_outputs_psf128(result["model"], result["training_space"], output, dataset=scalar, export_config=export_config, batch_size=int(export["output_batch_size"]), experiment_id=args.experiment_id, subject_id=args.subject_id, source_checkpoint=output / "model.pt", reconstruction_code_git_commit=git_sha)
-    common = {"experiment_id": args.experiment_id, "subject_id": args.subject_id, "route": route["route"], "reconstruction_git_sha": git_sha, "git_dirty": bool(__import__("subprocess").check_output(["git", "status", "--porcelain"], text=True).strip()), "B6_model_path": str(Path(args.b6_model)), "b6_model_sha256": _sha256(Path(args.b6_model)), "decoder_relocation":{"b6_resolved_config_path":source_decoder_path,"runtime_decoder_path":str(Path(args.signal_simulator)),"approved_decoder_sha256":_sha256(Path(args.signal_simulator)),"scientific_config_changed":False}, "approved_decoder_path": str(Path(args.signal_simulator)), "approved_decoder_sha256": _sha256(Path(args.signal_simulator)), "dependency_sha256": {"B6_model": _sha256(Path(args.b6_model)), "frozen_decoder": _sha256(Path(args.signal_simulator))}, "prepared_inputs_sha256": {str(path): _sha256(path) for path in inputs}, "joint_dataset_qc": joint.qc, "controls": result["controls"], "intensity_normalization": result["intensity_normalization"], "stack_weights": result["stack_weights"], "fixed_monitor": {"seed": result["fixed_monitor"]["seed"], "anchor_identity_sha256": result["fixed_monitor"]["anchor_identity_sha256"]}, "q002_checkpoint_sha256": _sha256(output / "model.pt"), "psf128_contract": {"resolution_mm": 1.0, "factor": 1.0, "samples": 128, "seed": 20260911}}
+    protocol_path = Path(args.protocol)
+    protocol_provenance = {"protocol_path": str(protocol_path), "protocol_sha256": _sha256(protocol_path)} if protocol_path.is_file() else {}
+    common = {"experiment_id": args.experiment_id, "subject_id": args.subject_id, "route": route["route"], "reconstruction_git_sha": git_sha, "git_dirty": bool(__import__("subprocess").check_output(["git", "status", "--porcelain"], text=True).strip()), "B6_model_path": str(Path(args.b6_model)), "b6_model_sha256": _sha256(Path(args.b6_model)), "decoder_relocation":{"b6_resolved_config_path":source_decoder_path,"runtime_decoder_path":str(Path(args.signal_simulator)),"approved_decoder_sha256":_sha256(Path(args.signal_simulator)),"scientific_config_changed":False}, "approved_decoder_path": str(Path(args.signal_simulator)), "approved_decoder_sha256": _sha256(Path(args.signal_simulator)), "dependency_sha256": {"B6_model": _sha256(Path(args.b6_model)), "frozen_decoder": _sha256(Path(args.signal_simulator)), **({"protocol": _sha256(protocol_path)} if protocol_path.is_file() else {})}, **protocol_provenance, "prepared_inputs_sha256": {str(path): _sha256(path) for path in inputs}, "joint_dataset_qc": joint.qc, "controls": result["controls"], "intensity_normalization": result["intensity_normalization"], "stack_weights": result["stack_weights"], "fixed_monitor": {"seed": result["fixed_monitor"]["seed"], "anchor_identity_sha256": result["fixed_monitor"]["anchor_identity_sha256"]}, "q002_checkpoint_sha256": _sha256(output / "model.pt"), "psf128_contract": {"resolution_mm": 1.0, "factor": 1.0, "samples": 128, "seed": 20260911}}
     if sparse_profile is not None:
         common.update(sparse_profile_provenance(sparse_profile, inputs))
     if args.experiment_id == Q003S640_EXPERIMENT_ID:
@@ -154,7 +181,7 @@ These are mechanistic interpretations, not population-level claims.
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--cropped-prepared-root", required=True); parser.add_argument("--subject-id", default="CYJ"); parser.add_argument("--sparse-manifest"); parser.add_argument("--expected-sparse-generator-git-sha"); parser.add_argument("--expected-sparse-manifest-sha256"); parser.add_argument("--b6-model", required=True); parser.add_argument("--signal-simulator", required=True); parser.add_argument("--protocol", default="trad/configs/protocol_hhz_v1.yaml"); parser.add_argument("--output", required=True); parser.add_argument("--device", default="cuda:0")
+    parser.add_argument("--cropped-prepared-root", required=True); parser.add_argument("--subject-id", default="CYJ"); parser.add_argument("--sparse-manifest"); parser.add_argument("--expected-sparse-generator-git-sha"); parser.add_argument("--expected-sparse-manifest-sha256"); parser.add_argument("--b6-model", required=True); parser.add_argument("--expected-b6-model-sha256"); parser.add_argument("--signal-simulator", required=True); parser.add_argument("--protocol", default="trad/configs/protocol_hhz_v1.yaml"); parser.add_argument("--expected-protocol-sha256"); parser.add_argument("--output", required=True); parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--experiment-id", choices=(Q002_EXPERIMENT_ID, Q002S640_EXPERIMENT_ID, Q002S640_K256_EXPERIMENT_ID, Q003S640_EXPERIMENT_ID, Q003S640_10K_EXPERIMENT_ID, Q004S640_K1_EXPERIMENT_ID, Q005S640_K4_EXPERIMENT_ID), default=Q002_EXPERIMENT_ID)
     parser.add_argument("--anchor-batch-size", type=int, default=64)
     return parser

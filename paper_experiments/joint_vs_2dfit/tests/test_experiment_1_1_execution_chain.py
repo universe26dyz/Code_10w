@@ -90,21 +90,57 @@ def test_strict_validator_rejects_acquisition_and_source_derived_identity_tamper
         validate_sparse_profile_manifest(manifest, subject="CYJ", strict=True, expected_generator_git_sha="b" * 40)
 
 
-def test_experiment_launcher_is_dry_by_default_and_passes_both_sparse_pins(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_experiment_launcher_is_dry_by_default_and_passes_all_admission_pins(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from paper_experiments.joint_vs_2dfit.phase2_clean import experiment_1_1
 
     manifest = {"_manifest_path": "/sparse/sparse_manifest.json", "_manifest_sha256": "c" * 64, "git_sha": "b" * 40, "prepared_root": "/sparse", "subject": "CYJ"}
     seen: list[dict] = []
     monkeypatch.setattr(experiment_1_1, "validate_sparse_profile_manifest", lambda *args, **kwargs: seen.append(kwargs) or manifest)
     monkeypatch.setattr(experiment_1_1, "validate_dependencies", lambda **kwargs: seen.append({"dependencies": kwargs}))
-    args = Namespace(sparse_manifest="/sparse/sparse_manifest.json", b6_model="/b6.pt", decoder="/decoder.pt", expected_generator_git_sha="b" * 40, expected_manifest_sha256="c" * 64, output=str(tmp_path / "fresh"), device="cuda:0", protocol="protocol.yaml", execute=False)
+    args = Namespace(sparse_manifest="/sparse/sparse_manifest.json", b6_model="/b6.pt", decoder="/decoder.pt", expected_generator_git_sha="b" * 40, expected_manifest_sha256="c" * 64, expected_b6_model_sha256="d" * 64, expected_protocol_sha256="e" * 64, output=str(tmp_path / "fresh"), device="cuda:0", protocol="protocol.yaml", execute=False)
     command = experiment_1_1.run(args)
-    assert "--expected-sparse-generator-git-sha" in command and "--expected-sparse-manifest-sha256" in command
-    assert seen == [{"subject": "CYJ", "strict": True, "expected_generator_git_sha": "b" * 40, "expected_manifest_sha256": "c" * 64}, {"dependencies": {"b6_model": "/b6.pt", "decoder": "/decoder.pt", "protocol": "protocol.yaml"}}]
+    assert "--expected-sparse-generator-git-sha" in command and "--expected-sparse-manifest-sha256" in command and "--expected-b6-model-sha256" in command and "--expected-protocol-sha256" in command
+    assert seen == [{"subject": "CYJ", "strict": True, "expected_generator_git_sha": "b" * 40, "expected_manifest_sha256": "c" * 64}, {"dependencies": {"b6_model": "/b6.pt", "decoder": "/decoder.pt", "protocol": "protocol.yaml", "expected_b6_model_sha256": "d" * 64, "expected_protocol_sha256": "e" * 64}}]
     invoked: list[str] = []
     args.execute = True
     monkeypatch.setattr(experiment_1_1.subprocess, "run", lambda command, **kwargs: invoked.append(command))
     assert experiment_1_1.run(args) == command and invoked == [command]
+
+
+def test_protocol_and_frozen_dependency_admission_fail_closed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from paper_experiments.joint_vs_2dfit.phase2_clean import experiment_1_1
+
+    b6, decoder, protocol = tmp_path / "b6.json", tmp_path / "decoder.pth", tmp_path / "protocol.yaml"
+    b6.write_text("frozen B6", encoding="utf-8"); decoder.write_text("frozen decoder", encoding="utf-8"); protocol.write_text("TR: 2.61\n", encoding="utf-8")
+    monkeypatch.setattr(experiment_1_1, "B6_CONFIG_SOURCE_SHA256", sha256(b6))
+    monkeypatch.setattr(experiment_1_1, "APPROVED_DECODER_SHA256", sha256(decoder))
+    experiment_1_1.validate_dependencies(b6_model=b6, decoder=decoder, protocol=protocol, expected_b6_model_sha256=sha256(b6), expected_protocol_sha256=sha256(protocol))
+    with pytest.raises(ValueError, match="B6 model pin"):
+        experiment_1_1.validate_dependencies(b6_model=b6, decoder=decoder, protocol=protocol, expected_b6_model_sha256="0" * 64, expected_protocol_sha256=sha256(protocol))
+    protocol.write_text("TR: 2.62\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="protocol SHA256"):
+        experiment_1_1.validate_dependencies(b6_model=b6, decoder=decoder, protocol=protocol, expected_b6_model_sha256=sha256(b6), expected_protocol_sha256="1" * 64)
+    protocol.write_text("TR: 2.61\n", encoding="utf-8"); decoder.write_text("not frozen", encoding="utf-8")
+    with pytest.raises(ValueError, match="decoder SHA256"):
+        experiment_1_1.validate_dependencies(b6_model=b6, decoder=decoder, protocol=protocol, expected_b6_model_sha256=sha256(b6), expected_protocol_sha256=sha256(protocol))
+
+
+def test_q002_sparse_q002s640_dependency_pins_fail_before_cuda(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from quality_experiments.Q002_B6_roi_same_anchor_mse import run_q002_reconstruction as q002
+    from quality_experiments.Q002_B6_roi_same_anchor_mse.contracts import Q002S640_EXPERIMENT_ID
+
+    b6, decoder, protocol = tmp_path / "b6.json", tmp_path / "decoder.pth", tmp_path / "protocol.yaml"
+    b6.write_text("frozen B6", encoding="utf-8"); decoder.write_text("frozen decoder", encoding="utf-8"); protocol.write_text("TR: 2.61\n", encoding="utf-8")
+    monkeypatch.setattr(q002, "B6_CONFIG_SOURCE_SHA256", sha256(b6))
+    monkeypatch.setattr(q002, "APPROVED_DECODER_SHA256", sha256(decoder))
+    args = Namespace(sparse_manifest="/sparse.json", experiment_id=Q002S640_EXPERIMENT_ID, expected_sparse_generator_git_sha="a" * 40, expected_sparse_manifest_sha256="b" * 64, expected_b6_model_sha256=sha256(b6), expected_protocol_sha256=sha256(protocol), b6_model=str(b6), signal_simulator=str(decoder), protocol=str(protocol))
+    q002.validate_formal_q002s640_dependencies(args)
+    args.expected_protocol_sha256 = "0" * 64
+    with pytest.raises(ValueError, match="protocol SHA256"):
+        q002.validate_formal_q002s640_dependencies(args)
+    args.expected_protocol_sha256 = sha256(protocol); decoder.write_text("wrong", encoding="utf-8")
+    with pytest.raises(ValueError, match="decoder SHA256"):
+        q002.validate_formal_q002s640_dependencies(args)
 
 
 def test_fit_first_sparse_dry_run_validates_pins_without_writing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
@@ -133,8 +169,11 @@ def test_profile_validator_and_k8_launcher_preserve_empty_stack_contract(tmp_pat
         stacks[stack] = item
     manifest = derived / "sparse_manifest.json"; manifest.write_text(json.dumps({"schema_version": "phase4r_sparse_profile_v2", "status": "ELIGIBLE", "subject": "CYJ", "profile_id": "CYJ_test", "case_id": "CYJ_test", "source_prepared_root": str((source / "CYJ").resolve()), "prepared_root": str(derived.resolve()), "git_sha": "a" * 40, "stacks": stacks}), encoding="utf-8")
     validated = validate_sparse_profile_manifest(manifest, subject="CYJ")
-    command = build_experiment_1_1_command(validated, expected_generator_git_sha="a" * 40, expected_manifest_sha256=sha256(manifest), b6_model="/b6.pt", decoder="/decoder.pt", output=tmp_path / "fresh", device="cuda:0")
+    command = build_experiment_1_1_command(validated, expected_generator_git_sha="a" * 40, expected_manifest_sha256=sha256(manifest), expected_b6_model_sha256="b" * 64, expected_protocol_sha256="c" * 64, b6_model="/b6.pt", decoder="/decoder.pt", output=tmp_path / "fresh", device="cuda:0")
     assert "Q002S640_B6_roi_same_anchor_mse" in command and "--anchor-batch-size 640" in command and "--sparse-manifest" in command and "--expected-sparse-generator-git-sha" in command
+    existing = tmp_path / "existing"; existing.mkdir()
+    with pytest.raises(FileExistsError, match="existing Experiment 1.1 output"):
+        build_experiment_1_1_command(validated, expected_generator_git_sha="a" * 40, expected_manifest_sha256=sha256(manifest), expected_b6_model_sha256="b" * 64, expected_protocol_sha256="c" * 64, b6_model="/b6.pt", decoder="/decoder.pt", output=existing, device="cuda:0")
     for stack in none_stacks: assert not (derived / stack / "observations.npz").exists()
 
     from paper_experiments.joint_vs_2dfit.phase2_clean.baseline import build_baseline_run
