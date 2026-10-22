@@ -14,6 +14,7 @@ from typing import Any
 import numpy as np
 
 from .contracts import sha256
+from .sparse import _json_sha256, _resolve_profile, load_sparse_profile
 
 
 STACKS = ("sax", "2ch", "4ch")
@@ -65,6 +66,12 @@ def _groups_and_weights(data: np.lib.npyio.NpzFile, path: Path) -> list[int]:
         rows = np.flatnonzero(data["group_idx"] == group)
         if rows.size != 10 or not np.array_equal(np.sort(data["weight_idx"][rows]), np.arange(10)):
             _fail(f"{path}: group {group} must contain exactly weights 0..9")
+    tr_ms = np.asarray(data["tr_ms"], dtype=float)
+    vps = np.asarray(data["vps"])
+    if not np.isfinite(tr_ms).all() or not np.allclose(tr_ms, 2.61, atol=1.0e-8, rtol=0.0):
+        _fail(f"{path}: frozen acquisition requires finite tr_ms=2.61")
+    if not np.isfinite(np.asarray(vps, dtype=float)).all() or not np.all(vps == 87):
+        _fail(f"{path}: frozen acquisition requires vps=87")
     return groups
 
 
@@ -148,7 +155,58 @@ def _gap_audit(value: object, *, stack: str, positions: list[float]) -> None:
             _fail(f"{stack}.stack_gap_qc gap_mm disagrees with derived geometry")
 
 
-def validate_sparse_profile_manifest(manifest: str | Path, *, subject: str | None = None) -> dict[str, Any]:
+def _strict_profile_contract(payload: dict[str, Any], *, expected_generator_git_sha: str | None, permitted_stack_strides: dict[str, int] | None, permitted_stack_modes: dict[str, str] | None) -> dict[str, Any]:
+    """Recreate the generator's resolved profile record from its source JSON."""
+    if not isinstance(expected_generator_git_sha, str) or len(expected_generator_git_sha) != 40:
+        _fail("strict audit requires an explicit 40-character expected_generator_git_sha established from generation history")
+    if payload["git_sha"] != expected_generator_git_sha:
+        _fail("generator git_sha does not match explicit expected_generator_git_sha")
+    resolved = payload.get("resolved_config")
+    if not isinstance(resolved, dict):
+        _fail("strict audit requires resolved_config")
+    profile_path = resolved.get("profile_path")
+    if not isinstance(profile_path, str):
+        _fail("resolved_config.profile_path is required")
+    profile = load_sparse_profile(Path(profile_path))
+    actual_strides = resolved.get("stack_stride_overrides")
+    actual_modes = resolved.get("stack_mode_overrides")
+    if not isinstance(actual_strides, dict) or not isinstance(actual_modes, dict):
+        _fail("resolved_config override records must be objects")
+    allowed_strides = dict(permitted_stack_strides or {})
+    allowed_modes = dict(permitted_stack_modes or {})
+    if actual_strides != allowed_strides or actual_modes != allowed_modes:
+        _fail("resolved_config contains unapproved configuration overrides")
+    fold_count = payload.get("fold_count")
+    fold_id = payload.get("fold_id")
+    if not isinstance(fold_count, int) or fold_count < 1:
+        _fail("fold_count must be a positive integer")
+    if fold_count == 1:
+        if fold_id is not None or payload.get("phase") is not None:
+            _fail("single-fold profile must use fold_id=null and phase=null")
+        requested_fold: int | None = None
+    else:
+        if not isinstance(fold_id, int) or not 0 <= fold_id < fold_count or payload.get("phase") != fold_id:
+            _fail("multi-fold profile fold_id/phase is inconsistent")
+        requested_fold = fold_id
+    expected = _resolve_profile(profile, fold=requested_fold, stack_strides=allowed_strides, stack_modes=allowed_modes)
+    expected_record = {
+        **expected,
+        "subject": payload["subject"],
+        "prepared_root": str(Path(payload["source_prepared_root"]).resolve()),
+        "stack_stride_overrides": allowed_strides,
+        "stack_mode_overrides": allowed_modes,
+    }
+    if resolved != expected_record:
+        _fail("profile/case/fold resolved_config identity mismatch")
+    if payload.get("resolved_config_sha256") != _json_sha256(expected_record):
+        _fail("resolved_config_sha256 mismatch")
+    for field in ("profile_id", "case_id", "fold_id", "fold_count"):
+        if payload.get(field) != expected[field]:
+            _fail(f"profile {field} does not match source profile")
+    return expected_record
+
+
+def validate_sparse_profile_manifest(manifest: str | Path, *, subject: str | None = None, strict: bool = False, expected_generator_git_sha: str | None = None, permitted_stack_strides: dict[str, int] | None = None, permitted_stack_modes: dict[str, str] | None = None) -> dict[str, Any]:
     """Validate a sparse profile before it is admitted to any reconstruction.
 
     Returns a shallowly enriched copy with private ``_manifest_path`` and
@@ -167,6 +225,7 @@ def validate_sparse_profile_manifest(manifest: str | Path, *, subject: str | Non
         _fail(f"subject is {payload['subject']!r}, expected {subject!r}")
     if len(payload["git_sha"]) != 40:
         _fail("git_sha must identify the sparse generator commit")
+    strict_profile = _strict_profile_contract(payload, expected_generator_git_sha=expected_generator_git_sha, permitted_stack_strides=permitted_stack_strides, permitted_stack_modes=permitted_stack_modes) if strict else None
     prepared_root = Path(payload["prepared_root"]).resolve()
     if path != prepared_root / "sparse_manifest.json":
         _fail("manifest path must be prepared_root/sparse_manifest.json")
@@ -202,6 +261,19 @@ def validate_sparse_profile_manifest(manifest: str | Path, *, subject: str | Non
             present = item.get("training_stack_present")
             if not isinstance(present, bool) or present != bool(retained):
                 _fail(f"{stack}.training_stack_present must match retained groups")
+            if strict_profile is not None:
+                spec = strict_profile["stacks"][stack]
+                if item.get("mode") != spec["mode"] or item.get("stride") != spec.get("stride"):
+                    _fail(f"{stack}: resolved effective mode/stride disagrees with source profile")
+                if spec["mode"] == "all":
+                    expected_retained = ordered
+                elif spec["mode"] == "none":
+                    expected_retained = []
+                else:
+                    expected_retained = [group for ordinal, group in enumerate(ordered) if ordinal % int(spec["stride"]) == int(strict_profile["fold_id"])]
+                expected_heldout = [group for group in ordered if group not in expected_retained]
+                if retained != expected_retained or heldout != expected_heldout:
+                    _fail(f"{stack}: selection does not match physical-ordinal profile selection")
             expected_derived = prepared_root / stack / "observations.npz"
             if not present:
                 forbidden = {"derived_observation", "derived_to_original_group_idx"}.intersection(item)
@@ -233,8 +305,10 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--manifest", required=True)
     parser.add_argument("--subject")
+    parser.add_argument("--strict", action="store_true", help="require source-profile reconstruction and explicit generator provenance")
+    parser.add_argument("--expected-generator-git-sha", help="generator commit established from the recorded sparse-input generation run")
     args = parser.parse_args()
-    payload = validate_sparse_profile_manifest(args.manifest, subject=args.subject)
+    payload = validate_sparse_profile_manifest(args.manifest, subject=args.subject, strict=args.strict, expected_generator_git_sha=args.expected_generator_git_sha)
     print(json.dumps({"manifest": payload["_manifest_path"], "sha256": payload["_manifest_sha256"], "profile_id": payload["profile_id"], "case_id": payload["case_id"]}, sort_keys=True))
 
 

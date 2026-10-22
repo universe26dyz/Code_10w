@@ -53,7 +53,10 @@ def run(args: argparse.Namespace) -> Path:
     if args.device.startswith("cpu") or not torch.cuda.is_available():
         raise RuntimeError("Formal Q002 reconstruction requires CUDA.")
     sparse_manifest = getattr(args, "sparse_manifest", None)
-    sparse_profile = validate_sparse_profile_manifest(sparse_manifest, subject=args.subject_id) if sparse_manifest else None
+    expected_sparse_generator_sha = getattr(args, "expected_sparse_generator_git_sha", None)
+    if sparse_manifest and args.experiment_id == Q002S640_EXPERIMENT_ID and expected_sparse_generator_sha is None:
+        raise ValueError("Q002S640 sparse execution requires --expected-sparse-generator-git-sha")
+    sparse_profile = validate_sparse_profile_manifest(sparse_manifest, subject=args.subject_id, strict=expected_sparse_generator_sha is not None, expected_generator_git_sha=expected_sparse_generator_sha) if sparse_manifest else None
     inputs = profiled_observation_paths(args.cropped_prepared_root, args.subject_id, sparse_manifest) if sparse_manifest else cropped_observation_paths(args.cropped_prepared_root, args.subject_id)
     output = Path(args.output)
     if output.exists() and any(output.iterdir()):
@@ -148,7 +151,7 @@ These are mechanistic interpretations, not population-level claims.
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--cropped-prepared-root", required=True); parser.add_argument("--subject-id", default="CYJ"); parser.add_argument("--sparse-manifest"); parser.add_argument("--b6-model", required=True); parser.add_argument("--signal-simulator", required=True); parser.add_argument("--protocol", default="trad/configs/protocol_hhz_v1.yaml"); parser.add_argument("--output", required=True); parser.add_argument("--device", default="cuda:0")
+    parser.add_argument("--cropped-prepared-root", required=True); parser.add_argument("--subject-id", default="CYJ"); parser.add_argument("--sparse-manifest"); parser.add_argument("--expected-sparse-generator-git-sha"); parser.add_argument("--b6-model", required=True); parser.add_argument("--signal-simulator", required=True); parser.add_argument("--protocol", default="trad/configs/protocol_hhz_v1.yaml"); parser.add_argument("--output", required=True); parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--experiment-id", choices=(Q002_EXPERIMENT_ID, Q002S640_EXPERIMENT_ID, Q002S640_K256_EXPERIMENT_ID, Q003S640_EXPERIMENT_ID, Q003S640_10K_EXPERIMENT_ID, Q004S640_K1_EXPERIMENT_ID, Q005S640_K4_EXPERIMENT_ID), default=Q002_EXPERIMENT_ID)
     parser.add_argument("--anchor-batch-size", type=int, default=64)
     return parser
