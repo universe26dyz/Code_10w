@@ -49,7 +49,7 @@ def test_strict_validator_recomputes_profile_physical_selection_and_provenance(t
     from paper_experiments.joint_vs_2dfit.phase2_clean.sparse_profile_manifest import validate_sparse_profile_manifest
 
     manifest, payload = _strict_fixture(tmp_path)
-    validated = validate_sparse_profile_manifest(manifest, subject="CYJ", strict=True, expected_generator_git_sha="b" * 40)
+    validated = validate_sparse_profile_manifest(manifest, subject="CYJ", strict=True, expected_generator_git_sha="b" * 40, expected_manifest_sha256=sha256(manifest))
     assert validated["stacks"]["2ch"]["retained_original_group_ids"] == [3, 99]
 
     def reject(mutator, match: str) -> None:
@@ -64,6 +64,9 @@ def test_strict_validator_recomputes_profile_physical_selection_and_provenance(t
     reject(wrong_selection, "selection")
     reject(lambda value: value.__setitem__("resolved_config_sha256", "0" * 64), "resolved_config")
     reject(lambda value: value.__setitem__("git_sha", "a" * 40), "generator")
+    manifest.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(ValueError, match="manifest SHA256"):
+        validate_sparse_profile_manifest(manifest, subject="CYJ", strict=True, expected_generator_git_sha="b" * 40, expected_manifest_sha256="0" * 64)
 
 
 @pytest.mark.parametrize("target,field,value,message", [

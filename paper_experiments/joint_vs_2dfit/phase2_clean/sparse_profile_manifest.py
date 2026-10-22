@@ -206,13 +206,17 @@ def _strict_profile_contract(payload: dict[str, Any], *, expected_generator_git_
     return expected_record
 
 
-def validate_sparse_profile_manifest(manifest: str | Path, *, subject: str | None = None, strict: bool = False, expected_generator_git_sha: str | None = None, permitted_stack_strides: dict[str, int] | None = None, permitted_stack_modes: dict[str, str] | None = None) -> dict[str, Any]:
+def validate_sparse_profile_manifest(manifest: str | Path, *, subject: str | None = None, strict: bool = False, expected_generator_git_sha: str | None = None, expected_manifest_sha256: str | None = None, permitted_stack_strides: dict[str, int] | None = None, permitted_stack_modes: dict[str, str] | None = None) -> dict[str, Any]:
     """Validate a sparse profile before it is admitted to any reconstruction.
 
     Returns a shallowly enriched copy with private ``_manifest_path`` and
     ``_manifest_sha256`` provenance fields for launchers.  No file is written.
     """
     path = Path(manifest).resolve()
+    actual_manifest_sha256 = sha256(path)
+    if expected_manifest_sha256 is not None:
+        if not isinstance(expected_manifest_sha256, str) or len(expected_manifest_sha256) != 64 or actual_manifest_sha256 != expected_manifest_sha256:
+            _fail("manifest SHA256 does not match the explicit expected_manifest_sha256")
     payload = _read_json(path)
     if payload.get("schema_version") != SCHEMA_VERSION:
         _fail(f"schema_version must be {SCHEMA_VERSION}")
@@ -297,7 +301,7 @@ def validate_sparse_profile_manifest(manifest: str | Path, *, subject: str | Non
                     _same_group_content(source, original_group, derived, derived_group, stack=stack)
     result = dict(payload)
     result["_manifest_path"] = str(path)
-    result["_manifest_sha256"] = sha256(path)
+    result["_manifest_sha256"] = actual_manifest_sha256
     return result
 
 
@@ -307,8 +311,9 @@ def main() -> None:
     parser.add_argument("--subject")
     parser.add_argument("--strict", action="store_true", help="require source-profile reconstruction and explicit generator provenance")
     parser.add_argument("--expected-generator-git-sha", help="generator commit established from the recorded sparse-input generation run")
+    parser.add_argument("--expected-manifest-sha256", help="external immutable manifest digest for this named case")
     args = parser.parse_args()
-    payload = validate_sparse_profile_manifest(args.manifest, subject=args.subject, strict=args.strict, expected_generator_git_sha=args.expected_generator_git_sha)
+    payload = validate_sparse_profile_manifest(args.manifest, subject=args.subject, strict=args.strict, expected_generator_git_sha=args.expected_generator_git_sha, expected_manifest_sha256=args.expected_manifest_sha256)
     print(json.dumps({"manifest": payload["_manifest_path"], "sha256": payload["_manifest_sha256"], "profile_id": payload["profile_id"], "case_id": payload["case_id"]}, sort_keys=True))
 
 
