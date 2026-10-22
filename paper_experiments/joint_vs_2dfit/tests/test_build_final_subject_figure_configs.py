@@ -37,3 +37,12 @@ def test_builder_accepts_explicit_custom_cases_without_legacy_level_inference(tm
     config = json.loads((output / "CYJ_SAX100_2CH0_4CH0" / "central.json").read_text(encoding="utf-8"))
     assert config["profile_id"] == "CYJ_SAX100_2CH0_4CH0"
     assert config["case_id"] == "CYJ_SAX100_2CH0_4CH0"
+
+
+def test_cli_accepts_seven_explicit_custom_cases_and_writes_both_endpoints(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from paper_experiments.joint_vs_2dfit.phase2_clean import build_final_subject_figure_configs as builder
+
+    cases = [f"P{index}=P{index}_fold0" for index in range(7)]
+    monkeypatch.setattr("sys.argv", ["builder", "--subject", "CYJ", "--formal-grid-root", str(tmp_path / "formal"), "--sparse-root", str(tmp_path / "sparse"), "--r0-native-maps-root", str(tmp_path / "r0"), "--native-mask-root", str(tmp_path / "masks"), "--method-root", f"Fit-first={tmp_path / 'fit'}", "--method-root", f"Q002S640={tmp_path / 'q002'}", "--method-root", f"Q004S640={tmp_path / 'q004'}", "--output", str(tmp_path / "configs"), *sum((["--custom-case", item] for item in cases), [])])
+    builder.main()
+    assert len(list((tmp_path / "configs").rglob("*.json"))) == 14

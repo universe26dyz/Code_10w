@@ -99,6 +99,7 @@ def main() -> None:
     parser.add_argument("--subject", required=True); parser.add_argument("--formal-grid-root", required=True)
     parser.add_argument("--sparse-root", required=True); parser.add_argument("--r0-native-maps-root", required=True)
     parser.add_argument("--native-mask-root", required=True); parser.add_argument("--method-root", action="append", required=True, metavar="METHOD=ROOT")
+    parser.add_argument("--custom-case", action="append", default=[], metavar="PROFILE_ID=CASE_ID")
     parser.add_argument("--output", required=True)
     args = parser.parse_args(); methods: dict[str, str] = {}
     for item in args.method_root:
@@ -106,7 +107,13 @@ def main() -> None:
         if not separator or not method or not root or method in methods:
             raise ValueError("--method-root must be a unique METHOD=ROOT")
         methods[method] = root
-    print(build_final_subject_figure_configs(subject=args.subject, formal_grid_root=args.formal_grid_root, sparse_root=args.sparse_root, r0_native_maps_root=args.r0_native_maps_root, native_mask_root=args.native_mask_root, method_roots=methods, output=args.output))
+    custom_cases: list[dict[str, str]] = []
+    for item in args.custom_case:
+        profile_id, separator, case_id = item.partition("=")
+        if not separator or not profile_id or not case_id:
+            parser.error("--custom-case must be PROFILE_ID=CASE_ID")
+        custom_cases.append({"profile_id": profile_id, "case_id": case_id})
+    print(build_final_subject_figure_configs(subject=args.subject, formal_grid_root=args.formal_grid_root, sparse_root=args.sparse_root, r0_native_maps_root=args.r0_native_maps_root, native_mask_root=args.native_mask_root, method_roots=methods, output=args.output, custom_cases=custom_cases or None))
 
 
 if __name__ == "__main__":

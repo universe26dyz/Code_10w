@@ -17,6 +17,7 @@ from .sparse import STACKS, _git_sha, _physical_group_order, _read, _subset
 
 TARGET_COUNTS = {"sax": 12, "2ch": 15, "4ch": 10}
 SELECTION_POLICY_VERSION = "physical_contiguous_symmetric_v1"
+MAPPING_FIELD = "derived_to_original_group_idx"
 
 
 def _group_fingerprint(data: dict[str, np.ndarray], group: int) -> str:
@@ -55,6 +56,23 @@ def _select_contiguous(ordered: list[int], positions: dict[int, float], target: 
     }
 
 
+def validated_standardized_mapping(value: object, *, target_count: int, retained_original_group_ids: list[int]) -> list[dict[str, int]]:
+    """Validate the canonical list-of-records mapping emitted by ``sparse._subset``."""
+    if not isinstance(value, list) or len(value) != target_count:
+        raise ValueError("derived_to_original_group_idx must be a complete list of mapping records")
+    normalized: list[dict[str, int]] = []
+    for record in value:
+        if not isinstance(record, dict) or set(record) != {"derived_group_idx", "original_group_idx"}:
+            raise ValueError("each group mapping record must contain derived_group_idx and original_group_idx")
+        derived, original = record["derived_group_idx"], record["original_group_idx"]
+        if type(derived) is not int or type(original) is not int:
+            raise ValueError("group mapping IDs must be integers")
+        normalized.append({"derived_group_idx": derived, "original_group_idx": original})
+    if [item["derived_group_idx"] for item in normalized] != list(range(target_count)) or [item["original_group_idx"] for item in normalized] != retained_original_group_ids or len(set(retained_original_group_ids)) != target_count:
+        raise ValueError("standardized group mapping does not match retained original groups")
+    return normalized
+
+
 def validate_standardization_manifest(manifest: str | Path, *, subject: str | None = None) -> dict[str, Any]:
     """Validate the evidence required before a standardization can be trusted."""
     path = Path(manifest); payload = json.loads(path.read_text(encoding="utf-8"))
@@ -72,9 +90,9 @@ def validate_standardization_manifest(manifest: str | Path, *, subject: str | No
             evidence = item.get(source_name, {}); observation = Path(str(evidence.get("path", "")))
             if not observation.is_file() or sha256(observation) != evidence.get("sha256"):
                 raise ValueError(f"{stack}: {source_name} SHA256 mismatch")
-        mapping = {int(key): int(value) for key, value in item.get("derived_to_original_group_idx", {}).items()}
+        mapping = validated_standardized_mapping(item.get(MAPPING_FIELD), target_count=target, retained_original_group_ids=[int(value) for value in item.get("retained_original_group_ids", [])])
         retained = [int(value) for value in item.get("retained_original_group_ids", [])]
-        if sorted(mapping) != list(range(target)) or list(mapping.values()) != retained or len(set(retained)) != target:
+        if len(mapping) != target:
             raise ValueError(f"{stack}: original-to-standardized mapping is invalid")
         audit = item.get("geometry_audit", {})
         if audit.get("regular_gap") is not True or audit.get("contiguous_physical_interval") is not True:

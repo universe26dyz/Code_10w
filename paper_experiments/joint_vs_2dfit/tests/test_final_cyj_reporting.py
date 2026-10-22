@@ -81,6 +81,20 @@ def test_subject_summary_keeps_explicit_custom_profile_case_identity(tmp_path: P
     assert row["status"] == "COMPLETE_EXPLICIT_CASE"
 
 
+def test_custom_profile_cases_do_not_average_fold0_and_fold1_as_one_case(tmp_path: Path) -> None:
+    from paper_experiments.joint_vs_2dfit.phase2_clean.final_cyj_reporting import aggregate_final_subject
+
+    root = tmp_path / "q002"
+    for fold, value in ((0, 1.0), (1, 3.0)):
+        case = f"CYJ_S2CH50_4CH100_fold{fold}"; target = root / case / "central"; target.mkdir(parents=True)
+        (target / "manifest.json").write_text(json.dumps({"subject": "CYJ", "condition": case, "profile_id": "CYJ_S2CH50_4CH100", "case_id": case, "endpoint": "central"}), encoding="utf-8")
+        (target / "aggregate_metrics.json").write_text(json.dumps({"regions": {parameter: {"all_lax": {"l100_full": {"proposed": _metrics(value), "fit_first": _metrics(4.0)}}} for parameter in ("t1", "t2")}}), encoding="utf-8")
+    summary = json.loads((aggregate_final_subject("CYJ", {"Q002S640": root}, tmp_path / "summary", fit_first_source_method="Q002S640") / "summary.json").read_text(encoding="utf-8"))
+    case_rows = [row for row in summary["level_summaries"] if row["parameter"] == "T1" and row["method"] == "Q002S640"]
+    assert {(row["case_id"], row["rmse_mean"]) for row in case_rows} == {("CYJ_S2CH50_4CH100_fold0", 1.0), ("CYJ_S2CH50_4CH100_fold1", 3.0)}
+    assert len(summary["profile_summaries"]) > 0
+
+
 def test_subject_summary_keeps_stratified_regions_as_separate_metric_family(tmp_path: Path) -> None:
     from paper_experiments.joint_vs_2dfit.phase2_clean.final_cyj_reporting import aggregate_final_subject
 

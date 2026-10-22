@@ -124,11 +124,11 @@ def _format_mean_sd(mean: float, sample_sd: float | None) -> str:
 
 
 def _summaries(rows: list[dict[str, Any]], fit_rows: dict[tuple[str, str, str, str, str], dict[str, Any]]) -> list[dict[str, Any]]:
-    grouped: dict[tuple[str, str, str, str, str, str], list[dict[str, Any]]] = defaultdict(list)
+    grouped: dict[tuple[str, str, str, str, str, str, str | None], list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
-        grouped[(row["method"], row["endpoint"], row["level"], row["parameter"], row["metric_family"], row["region"])].append(row)
+        grouped[(row["method"], row["endpoint"], row["level"], row["parameter"], row["metric_family"], row["region"], row["case_id"] if row.get("custom_profile") else None)].append(row)
     output: list[dict[str, Any]] = []
-    for (method, endpoint, level, parameter, metric_family, region), values in sorted(grouped.items()):
+    for (method, endpoint, level, parameter, metric_family, region, case_id), values in sorted(grouped.items()):
         values.sort(key=lambda row: row["fold"])
         observed = [int(row["fold"]) for row in values]
         custom_profile = all(bool(row.get("custom_profile")) for row in values)
@@ -143,7 +143,7 @@ def _summaries(rows: list[dict[str, Any]], fit_rows: dict[tuple[str, str, str, s
         }
         if custom_profile:
             row["profile_id"] = values[0]["profile_id"]
-            row["case_id"] = values[0]["case_id"]
+            row["case_id"] = case_id
         for name in ("rmse", "mae", "bias"):
             numbers = metric(name)
             row[f"{name}_mean"] = float(np.mean(numbers))
@@ -160,6 +160,23 @@ def _summaries(rows: list[dict[str, Any]], fit_rows: dict[tuple[str, str, str, s
             else:
                 row["fit_first_relative_status"] = "UNAVAILABLE_FOR_ALL_OBSERVED_FOLDS"
         output.append(row)
+    return output
+
+
+def _profile_summaries(case_summaries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Aggregate explicit custom cases only after preserving case-level rows."""
+    grouped: dict[tuple[str, str, str, str, str, str], list[dict[str, Any]]] = defaultdict(list)
+    for row in case_summaries:
+        if row.get("profile_id"):
+            grouped[(row["method"], row["endpoint"], row["profile_id"], row["parameter"], row["metric_family"], row["region"])].append(row)
+    output: list[dict[str, Any]] = []
+    for (method, endpoint, profile_id, parameter, metric_family, region), values in sorted(grouped.items()):
+        result = {"method": method, "endpoint": endpoint, "profile_id": profile_id, "parameter": parameter, "metric_family": metric_family, "region": region, "case_ids": sorted(str(item["case_id"]) for item in values), "case_count": len(values), "status": "PROFILE_LEVEL_EXPLICIT_CASES"}
+        for metric in ("rmse", "mae", "bias"):
+            numbers = [float(item[f"{metric}_mean"]) for item in values]
+            result[f"{metric}_mean_across_cases"] = float(np.mean(numbers))
+            result[f"{metric}_sample_sd_across_cases"] = _sample_sd(numbers)
+        output.append(result)
     return output
 
 
@@ -238,6 +255,7 @@ def aggregate_final_subject(subject: str, method_roots: Mapping[str, str | Path]
     fit_index = {(row["endpoint"], row["condition"], row["parameter"], row["metric_family"], row["region"]): row for row in fit_rows_list}
     all_rows = proposed_rows + fit_rows_list
     summaries = _summaries(all_rows, fit_index)
+    profile_summaries = _profile_summaries(summaries)
     robustness = _robustness(summaries)
     paper_rows, paper_markdown = _paper_table(summaries, subject=subject)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -247,7 +265,7 @@ def aggregate_final_subject(subject: str, method_roots: Mapping[str, str | Path]
         _write_csv(staging / "paper_table.csv", paper_rows)
         (staging / "paper_table.md").write_text(paper_markdown, encoding="utf-8")
         (staging / "summary.md").write_text(_summary_markdown(summaries, robustness, subject=subject), encoding="utf-8")
-        write_immutable_json(staging / "summary.json", {"schema": "phase4r_final_subject_summary/v4", "subject": subject, "primary_region": "primary_native_mask", "fit_first_source_method": fit_first_source_method, "method_roots": {key: str(Path(value).resolve()) for key, value in method_roots.items()}, "fold_rows": all_rows, "level_summaries": summaries, "sparsity_robustness": robustness})
+        write_immutable_json(staging / "summary.json", {"schema": "phase4r_final_subject_summary/v4", "subject": subject, "primary_region": "primary_native_mask", "fit_first_source_method": fit_first_source_method, "method_roots": {key: str(Path(value).resolve()) for key, value in method_roots.items()}, "fold_rows": all_rows, "level_summaries": summaries, "profile_summaries": profile_summaries, "sparsity_robustness": robustness})
         staging.rename(output)
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True); raise

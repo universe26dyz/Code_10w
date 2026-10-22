@@ -13,7 +13,7 @@ import numpy as np
 
 from .contracts import APPROVED_DECODER_SHA256, B6_CONFIG_SOURCE_SHA256, sha256, write_immutable_json
 from .sparse import _git_sha
-from .standardize_subject_slices import TARGET_COUNTS
+from .standardize_subject_slices import TARGET_COUNTS, validate_standardization_manifest
 
 
 SCHEMA = "phase4r_five_subject_readiness_registry/v1"
@@ -51,6 +51,36 @@ def _prepared_stack(path: Path) -> dict[str, Any]:
     return record
 
 
+def _subject_manifest_paths(evidence_root: Path, subject: str, name: str) -> list[Path]:
+    return sorted(path for path in evidence_root.rglob(name) if subject in path.parts)
+
+
+def _standardization_evidence(evidence_root: Path, subject: str) -> dict[str, Any]:
+    paths = _subject_manifest_paths(evidence_root, subject, "slice_standardization_manifest.json")
+    if len(paths) != 1:
+        return {"status": "UNKNOWN_NOT_INSPECTED", "valid": False, "evidence_paths": [str(path) for path in paths]}
+    try:
+        payload = validate_standardization_manifest(paths[0], subject=subject)
+    except (OSError, ValueError, KeyError, TypeError):
+        return {"status": "BLOCKED", "valid": False, "manifest": _artifact(paths[0])}
+    return {"status": "STANDARDIZATION_COMPLETE", "valid": True, "manifest": _artifact(paths[0]), "stacks": {stack: {"output_count": payload["stacks"][stack]["output_count"], "output_observation": payload["stacks"][stack]["output_observation"]} for stack in TARGET_COUNTS}}
+
+
+def _reuse_evidence(evidence_root: Path, subject: str, standardization: dict[str, Any]) -> dict[str, Any]:
+    paths = _subject_manifest_paths(evidence_root, subject, "reuse_manifest.json")
+    if len(paths) != 1:
+        return {"status": "UNKNOWN_NOT_INSPECTED", "evidence_paths": [str(path) for path in paths]}
+    try:
+        payload = json.loads(paths[0].read_text(encoding="utf-8"))
+        valid = payload.get("schema") == "phase4r_standardized_native_dictionary_reuse/v1" and payload.get("subject") == subject and payload.get("status") == "REUSE_VERIFIED"
+        valid = valid and all(payload.get("stacks", {}).get(stack, {}).get("status") == "REUSE_VERIFIED" for stack in TARGET_COUNTS)
+        standard = standardization.get("manifest", {})
+        valid = valid and payload.get("standardization_manifest", {}).get("sha256") == standard.get("sha256")
+    except (OSError, ValueError, TypeError):
+        valid = False
+    return {"status": "REUSE_VERIFIED" if valid else "BLOCKED", "manifest": _artifact(paths[0])}
+
+
 def _dyl2_evidence(evidence_root: Path) -> dict[str, Any]:
     base = evidence_root / "pre_reconstruction" / "DYL_2"
     prepared = base / "prepared_full"
@@ -58,13 +88,20 @@ def _dyl2_evidence(evidence_root: Path) -> dict[str, Any]:
     native: dict[str, Any] = {}
     for stack in TARGET_COUNTS:
         native[stack] = {name: _artifact(base / "native_dictionary_full" / stack / name) for name in ("native_maps.npz", "geometry.npz", "manifest.json")}
-    return {"raw_audit": "PASS", "protocol_admission": "ADMITTED", "handoff": "READY_FOR_STANDARDIZATION", "prepared": stacks, "native_dictionary_full": native, "standardization": {"status": "PROPOSED_NOT_APPLIED", "valid": False, "slice_plan": {"2ch_drop_original_group": 0, "policy": "drop highest signed-coordinate endpoint; retain 15 contiguous groups"}}, "dictionary_reuse": {"status": "UNKNOWN_NOT_INSPECTED"}, "frozen_dependencies": {"decoder_expected_sha256": APPROVED_DECODER_SHA256, "b6_expected_sha256": B6_CONFIG_SOURCE_SHA256, "decoder_sha256_valid": False, "b6_sha256_valid": False}, "server": {"verified": False, "transfer": "BLOCKED", "detail": "CMRServer04 DNS did not resolve; only rsync dry-run occurred"}}
+    handoff = {"evidence_type": "handoff_report", "source": "CODEX 13 verified handoff", "file_reverified": False}
+    return {"raw_audit": {"status": "PASS", **handoff}, "protocol_admission": {"status": "ADMITTED", **handoff}, "handoff": "READY_FOR_STANDARDIZATION", "prepared": stacks, "native_dictionary_full": native, "standardization": {"status": "PROPOSED_NOT_APPLIED", "valid": False, "slice_plan": {"2ch_drop_original_group": 0, "policy": "drop highest signed-coordinate endpoint; retain 15 contiguous groups"}}, "dictionary_reuse": {"status": "UNKNOWN_NOT_INSPECTED"}, "frozen_dependencies": {"decoder_expected_sha256": APPROVED_DECODER_SHA256, "b6_expected_sha256": B6_CONFIG_SOURCE_SHA256, "decoder_sha256_valid": False, "b6_sha256_valid": False}, "server": {"verified": False, "transfer": "BLOCKED", "detail": "CMRServer04 DNS did not resolve; only rsync dry-run occurred"}}
 
 
 def _subject_evidence(subject: str, evidence_root: Path) -> dict[str, Any]:
     if subject == "DYL_2":
-        return _dyl2_evidence(evidence_root)
-    return {"raw_audit": "UNKNOWN_NOT_INSPECTED", "protocol_admission": "UNKNOWN_NOT_INSPECTED", "prepared": {stack: {"status": "UNKNOWN_NOT_INSPECTED"} for stack in TARGET_COUNTS}, "native_dictionary_full": {stack: {"status": "UNKNOWN_NOT_INSPECTED"} for stack in TARGET_COUNTS}, "standardization": {"status": "UNKNOWN_NOT_INSPECTED", "valid": False}, "dictionary_reuse": {"status": "UNKNOWN_NOT_INSPECTED"}, "frozen_dependencies": {"decoder_expected_sha256": APPROVED_DECODER_SHA256, "b6_expected_sha256": B6_CONFIG_SOURCE_SHA256, "decoder_sha256_valid": False, "b6_sha256_valid": False}, "server": {"verified": False, "transfer": "UNKNOWN_NOT_INSPECTED"}}
+        evidence = _dyl2_evidence(evidence_root)
+    else:
+        evidence = {"raw_audit": {"status": "UNKNOWN_NOT_INSPECTED"}, "protocol_admission": {"status": "UNKNOWN_NOT_INSPECTED"}, "prepared": {stack: {"status": "UNKNOWN_NOT_INSPECTED"} for stack in TARGET_COUNTS}, "native_dictionary_full": {stack: {"status": "UNKNOWN_NOT_INSPECTED"} for stack in TARGET_COUNTS}, "standardization": {"status": "UNKNOWN_NOT_INSPECTED", "valid": False}, "dictionary_reuse": {"status": "UNKNOWN_NOT_INSPECTED"}, "frozen_dependencies": {"decoder_expected_sha256": APPROVED_DECODER_SHA256, "b6_expected_sha256": B6_CONFIG_SOURCE_SHA256, "decoder_sha256_valid": False, "b6_sha256_valid": False}, "server": {"verified": False, "transfer": "UNKNOWN_NOT_INSPECTED"}}
+    standardization = _standardization_evidence(evidence_root, subject)
+    if standardization["status"] != "UNKNOWN_NOT_INSPECTED":
+        evidence["standardization"] = standardization
+    evidence["dictionary_reuse"] = _reuse_evidence(evidence_root, subject, evidence["standardization"])
+    return evidence
 
 
 def _manifest(subject: str, evidence: dict[str, Any]) -> dict[str, Any]:
