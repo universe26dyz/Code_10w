@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
-# Defaults to printing immutable profile commands; --execute is intentionally required.
 set -euo pipefail
 MODE=${1:---dry-run}
-[[ "$MODE" == "--dry-run" || "$MODE" == "--execute" ]] || { echo "usage: $0 [--dry-run|--execute]" >&2; exit 2; }
-[[ "$MODE" == "--dry-run" ]] || { echo "execution is deliberately delegated to an approved server session" >&2; exit 1; }
-echo "dry-run: build seven CYJ profile manifests, then schedule Q002S640/Q004S640/Fit-first sequentially; no output written"
+[[ "$MODE" == "--dry-run" ]] || { echo "only --dry-run is authorized; no profile or reconstruction output may be written" >&2; exit 2; }
+cat <<'PLAN'
+dry-run: inspect each profile JSON and print only future commands.
+Future profile command: python -m paper_experiments.joint_vs_2dfit.phase2_clean.sparse --profile <profile.json> --fold <n> --prepared-root <root> --output-root <new-root> --dry-run
+Future training inputs: only stacks declared training_stack_present; `none` has no observations.npz.
+Future outputs (fresh only): Proposed, Fit-first T1/T2, poses, central/psf128 endpoints, native bundles, masks, metrics, figures, summary.
+PLAN

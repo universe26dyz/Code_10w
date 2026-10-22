@@ -35,7 +35,15 @@ def _git_sha() -> str | None:
         return None
 
 
-def _case(condition: str) -> tuple[str, int]:
+def _case(condition: str, *, profile_id: str | None = None, case_id: str | None = None) -> tuple[str, int, bool]:
+    if profile_id is not None or case_id is not None:
+        if not isinstance(profile_id, str) or not profile_id or not isinstance(case_id, str) or not case_id or condition != case_id:
+            raise ValueError("custom profile results require matching explicit profile_id and case_id")
+        try:
+            fold = int(case_id.rsplit("_fold", 1)[1]) if "_fold" in case_id else 0
+        except ValueError as error:
+            raise ValueError(f"invalid custom case_id: {case_id}") from error
+        return profile_id, fold, True
     try:
         level, fold = condition.split("_fold", 1)
         fold_int = int(fold)
@@ -43,7 +51,7 @@ def _case(condition: str) -> tuple[str, int]:
         raise ValueError(f"invalid CYJ condition: {condition}") from error
     if level not in EXPECTED_FOLDS or fold_int not in EXPECTED_FOLDS[level]:
         raise ValueError(f"unsupported CYJ condition: {condition}")
-    return level, fold_int
+    return level, fold_int, False
 
 
 def _metric_records(root: str | Path, method: str, side: str, *, subject: str) -> list[dict[str, Any]]:
@@ -70,7 +78,7 @@ def _metric_records(root: str | Path, method: str, side: str, *, subject: str) -
         if identity in seen:
             raise ValueError(f"duplicate {method} result for {endpoint}/{condition}/{schema}")
         seen.add(identity)
-        level, fold = _case(condition)
+        level, fold, custom_profile = _case(condition, profile_id=manifest.get("profile_id"), case_id=manifest.get("case_id"))
         for parameter, display_parameter in PARAMETERS.items():
             entries: list[tuple[str, str, Mapping[str, Any]]] = []
             if schema == "final_stratified_native_common_support_metrics/v1":
@@ -96,6 +104,7 @@ def _metric_records(root: str | Path, method: str, side: str, *, subject: str) -
                 rows.append({
                     "method": method if side == "proposed" else "Fit-first", "endpoint": endpoint, "condition": condition,
                     "level": level, "fold": fold, "parameter": display_parameter, "metric_family": metric_family,
+                    "profile_id": manifest.get("profile_id") if custom_profile else None, "case_id": manifest.get("case_id") if custom_profile else None, "custom_profile": custom_profile,
                     "region": region, "rmse": values["rmse"], "mae": values["mae"], "bias": values["bias"],
                     "voxel_count": values.get("voxel_count", values.get("support_voxels")),
                     "coverage_fraction": values.get("coverage_fraction"), "source_manifest": str(manifest_path.resolve()),
@@ -122,14 +131,19 @@ def _summaries(rows: list[dict[str, Any]], fit_rows: dict[tuple[str, str, str, s
     for (method, endpoint, level, parameter, metric_family, region), values in sorted(grouped.items()):
         values.sort(key=lambda row: row["fold"])
         observed = [int(row["fold"]) for row in values]
-        missing = sorted(set(EXPECTED_FOLDS[level]).difference(observed))
+        custom_profile = all(bool(row.get("custom_profile")) for row in values)
+        expected = observed if custom_profile else list(EXPECTED_FOLDS[level])
+        missing = sorted(set(expected).difference(observed))
         metric = lambda name: [float(row[name]) for row in values]
         row: dict[str, Any] = {
             "method": method, "endpoint": endpoint, "level": level, "parameter": parameter,
             "metric_family": metric_family, "region": region,
-            "expected_folds": list(EXPECTED_FOLDS[level]), "observed_folds": observed, "missing_folds": missing,
-            "status": "COMPLETE" if not missing else "INCOMPLETE_MISSING_FOLDS",
+            "expected_folds": expected, "observed_folds": observed, "missing_folds": missing,
+            "status": "COMPLETE_EXPLICIT_CASE" if custom_profile else ("COMPLETE" if not missing else "INCOMPLETE_MISSING_FOLDS"),
         }
+        if custom_profile:
+            row["profile_id"] = values[0]["profile_id"]
+            row["case_id"] = values[0]["case_id"]
         for name in ("rmse", "mae", "bias"):
             numbers = metric(name)
             row[f"{name}_mean"] = float(np.mean(numbers))
@@ -830,7 +844,7 @@ def render_final_figures(config_path: str | Path, output: str | Path) -> Path:
         raise ValueError("final figures require an explicit subject and matched endpoint")
     if not isinstance(config.get("condition"), str):
         raise ValueError("final figures require an explicit condition/fold")
-    _case(config["condition"])
+    _case(config["condition"], profile_id=config.get("profile_id"), case_id=config.get("case_id"))
     if not isinstance(config.get("methods"), Mapping) or not config["methods"]:
         raise ValueError("at least one explicit method map set is required")
     for method, maps in config["methods"].items():

@@ -68,6 +68,19 @@ def test_subject_summary_accepts_one_explicit_non_cyj_subject(tmp_path: Path) ->
     assert json.loads((output / "summary.json").read_text())["subject"] == "DYL_2"
 
 
+def test_subject_summary_keeps_explicit_custom_profile_case_identity(tmp_path: Path) -> None:
+    from paper_experiments.joint_vs_2dfit.phase2_clean.final_cyj_reporting import aggregate_final_subject
+
+    root = tmp_path / "q002"; target = root / "CYJ_S2CH50_4CH100_fold0" / "central"; target.mkdir(parents=True)
+    (target / "manifest.json").write_text(json.dumps({"subject": "CYJ", "condition": "CYJ_S2CH50_4CH100_fold0", "profile_id": "CYJ_S2CH50_4CH100", "case_id": "CYJ_S2CH50_4CH100_fold0", "endpoint": "central"}), encoding="utf-8")
+    (target / "aggregate_metrics.json").write_text(json.dumps({"regions": {parameter: {"all_lax": {"l100_full": {"proposed": _metrics(1.0), "fit_first": _metrics(2.0)}}} for parameter in ("t1", "t2")}}), encoding="utf-8")
+    output = aggregate_final_subject("CYJ", {"Q002S640": root}, tmp_path / "summary", fit_first_source_method="Q002S640")
+    row = next(item for item in json.loads((output / "summary.json").read_text())["level_summaries"] if item["parameter"] == "T1")
+    assert row["level"] == "CYJ_S2CH50_4CH100"
+    assert row["case_id"] == "CYJ_S2CH50_4CH100_fold0"
+    assert row["status"] == "COMPLETE_EXPLICIT_CASE"
+
+
 def test_subject_summary_keeps_stratified_regions_as_separate_metric_family(tmp_path: Path) -> None:
     from paper_experiments.joint_vs_2dfit.phase2_clean.final_cyj_reporting import aggregate_final_subject
 

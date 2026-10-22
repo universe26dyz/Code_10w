@@ -69,3 +69,25 @@ def test_dyl2_without_completed_standardization_audit_is_only_ready(tmp_path: Pa
     from paper_experiments.joint_vs_2dfit.phase2_clean.standardize_subject_slices import standardized_subject_readiness
 
     assert standardized_subject_readiness("DYL_2", tmp_path / "missing") == {"subject": "DYL_2", "status": "READY_FOR_STANDARDIZATION"}
+
+
+def test_readiness_rejects_manifest_existence_without_verified_hashes(tmp_path: Path) -> None:
+    from paper_experiments.joint_vs_2dfit.phase2_clean.standardize_subject_slices import standardized_subject_readiness
+
+    path = tmp_path / "DYL_2"; path.mkdir(parents=True)
+    (path / "slice_standardization_manifest.json").write_text(json.dumps({"schema": "phase4r_common_slice_standardization/v1", "subject": "DYL_2", "stacks": {}}), encoding="utf-8")
+    assert standardized_subject_readiness("DYL_2", tmp_path)["status"] == "STANDARDIZATION_AUDIT_REQUIRED"
+
+
+def test_standardizer_accepts_direct_subject_root_without_double_subject(tmp_path: Path) -> None:
+    from paper_experiments.joint_vs_2dfit.phase2_clean.standardize_subject_slices import standardize_subject_slices
+
+    direct = tmp_path / "pre_reconstruction" / "DYL_2" / "prepared_full"
+    for stack, count in zip(("sax", "2ch", "4ch"), (12, 16, 10)):
+        _write(direct / stack / "observations.npz", count)
+    output = standardize_subject_slices(None, "DYL_2", tmp_path / "standardized", prepared_subject_root=direct, git_sha="test")
+    manifest = json.loads((output / "slice_standardization_manifest.json").read_text(encoding="utf-8"))
+    assert output == tmp_path / "standardized" / "DYL_2"
+    assert manifest["subject"] == "DYL_2"
+    assert manifest["resolved_source_root"] == str(direct.resolve())
+    assert manifest["stacks"]["2ch"]["dropped_original_group_ids"] == [15]

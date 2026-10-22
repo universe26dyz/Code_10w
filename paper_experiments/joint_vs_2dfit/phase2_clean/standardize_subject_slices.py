@@ -55,20 +55,58 @@ def _select_contiguous(ordered: list[int], positions: dict[int, float], target: 
     }
 
 
+def validate_standardization_manifest(manifest: str | Path, *, subject: str | None = None) -> dict[str, Any]:
+    """Validate the evidence required before a standardization can be trusted."""
+    path = Path(manifest); payload = json.loads(path.read_text(encoding="utf-8"))
+    if payload.get("schema") != "phase4r_common_slice_standardization/v1" or not isinstance(payload.get("subject"), str):
+        raise ValueError("invalid standardization manifest schema or subject")
+    if subject is not None and payload["subject"] != subject:
+        raise ValueError("standardization manifest subject mismatch")
+    if not isinstance(payload.get("git_sha"), str) or not payload["git_sha"]:
+        raise ValueError("standardization manifest lacks code SHA")
+    for stack, target in TARGET_COUNTS.items():
+        item = payload.get("stacks", {}).get(stack)
+        if not isinstance(item, dict) or int(item.get("output_count", -1)) != target:
+            raise ValueError(f"{stack}: target count is invalid")
+        for source_name in ("source_observation", "output_observation"):
+            evidence = item.get(source_name, {}); observation = Path(str(evidence.get("path", "")))
+            if not observation.is_file() or sha256(observation) != evidence.get("sha256"):
+                raise ValueError(f"{stack}: {source_name} SHA256 mismatch")
+        mapping = {int(key): int(value) for key, value in item.get("derived_to_original_group_idx", {}).items()}
+        retained = [int(value) for value in item.get("retained_original_group_ids", [])]
+        if sorted(mapping) != list(range(target)) or list(mapping.values()) != retained or len(set(retained)) != target:
+            raise ValueError(f"{stack}: original-to-standardized mapping is invalid")
+        audit = item.get("geometry_audit", {})
+        if audit.get("regular_gap") is not True or audit.get("contiguous_physical_interval") is not True:
+            raise ValueError(f"{stack}: geometry audit is invalid")
+        with np.load(Path(item["source_observation"]["path"]), allow_pickle=False) as source, np.load(Path(item["output_observation"]["path"]), allow_pickle=False) as data:
+            if int(item.get("source_count", -1)) != len(np.unique(source["group_idx"])):
+                raise ValueError(f"{stack}: source group count is invalid")
+            if np.unique(data["group_idx"]).tolist() != list(range(target)):
+                raise ValueError(f"{stack}: output group indices are not contiguous")
+    return payload
+
+
 def standardized_subject_readiness(subject: str, standardization_root: str | Path) -> dict[str, str]:
-    """DYL_2 stays explicitly non-reconstructable until standardization evidence exists."""
+    """Return a conservative state; a manifest alone is never completion proof."""
     manifest = Path(standardization_root) / subject / "slice_standardization_manifest.json"
-    if subject == "DYL_2" and not manifest.is_file():
-        return {"subject": subject, "status": "READY_FOR_STANDARDIZATION"}
-    return {"subject": subject, "status": "STANDARDIZATION_AUDIT_REQUIRED" if not manifest.is_file() else "STANDARDIZATION_COMPLETE"}
+    if not manifest.is_file():
+        return {"subject": subject, "status": "READY_FOR_STANDARDIZATION" if subject == "DYL_2" else "RAW_AUDIT_PENDING"}
+    try:
+        validate_standardization_manifest(manifest, subject=subject)
+    except (OSError, ValueError, KeyError, TypeError):
+        return {"subject": subject, "status": "STANDARDIZATION_AUDIT_REQUIRED"}
+    return {"subject": subject, "status": "STANDARDIZATION_COMPLETE"}
 
 
-def standardize_subject_slices(prepared_root: str | Path, subject: str, output_root: str | Path, *, targets: dict[str, int] | None = None, dry_run: bool = False, git_sha: str | None = None) -> Path | dict[str, Any]:
+def standardize_subject_slices(prepared_root: str | Path | None, subject: str, output_root: str | Path, *, prepared_subject_root: str | Path | None = None, targets: dict[str, int] | None = None, dry_run: bool = False, git_sha: str | None = None) -> Path | dict[str, Any]:
     """Subset only complete physical groups and write a new immutable prepared root."""
     targets = dict(TARGET_COUNTS if targets is None else targets)
     if targets != TARGET_COUNTS:
         raise ValueError("standardization targets must be exactly sax=12, 2ch=15, 4ch=10")
-    source_root = Path(prepared_root).resolve() / subject
+    if (prepared_root is None) == (prepared_subject_root is None):
+        raise ValueError("provide exactly one of prepared_root or prepared_subject_root")
+    source_root = Path(prepared_subject_root).resolve() if prepared_subject_root is not None else Path(prepared_root).resolve() / subject
     destination = Path(output_root).resolve() / subject
     if destination.exists() and not dry_run:
         raise FileExistsError(f"refusing overwrite: {destination}")
@@ -98,7 +136,7 @@ def standardize_subject_slices(prepared_root: str | Path, subject: str, output_r
                 "source_group_content_sha256": {str(group): _group_fingerprint(source_data[stack], group) for group in plan["retained"]}, "geometry_audit": plan["audit"],
                 "odd_trim_tie_break": plan["audit"]["odd_trim_tie_break"],
             }
-        manifest = {"schema": "phase4r_common_slice_standardization/v1", "subject": subject, "targets": targets, "selection_policy_version": SELECTION_POLICY_VERSION, "input_not_modified": True, "stacks": records, "git_sha": git_sha or _git_sha(), "status": "STANDARDIZATION_COMPLETE"}
+        manifest = {"schema": "phase4r_common_slice_standardization/v1", "subject": subject, "resolved_source_root": str(source_root), "targets": targets, "selection_policy_version": SELECTION_POLICY_VERSION, "input_not_modified": True, "stacks": records, "git_sha": git_sha or _git_sha(), "status": "STANDARDIZATION_COMPLETE"}
         write_immutable_json(staging / "slice_standardization_manifest.json", manifest)
         staging.rename(destination)
     except BaseException:
@@ -109,10 +147,12 @@ def standardize_subject_slices(prepared_root: str | Path, subject: str, output_r
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--prepared-root", required=True); parser.add_argument("--subject", required=True); parser.add_argument("--output-root", required=True)
+    roots = parser.add_mutually_exclusive_group(required=True)
+    roots.add_argument("--prepared-root"); roots.add_argument("--prepared-subject-root")
+    parser.add_argument("--subject", required=True); parser.add_argument("--output-root", required=True)
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
-    print(standardize_subject_slices(args.prepared_root, args.subject, args.output_root, dry_run=args.dry_run))
+    print(standardize_subject_slices(args.prepared_root, args.subject, args.output_root, prepared_subject_root=args.prepared_subject_root, dry_run=args.dry_run))
 
 
 if __name__ == "__main__":

@@ -21,8 +21,19 @@ from .final_cyj_reporting import ENDPOINTS, EXPECTED_FOLDS, NATIVE_MOSAIC_METHOD
 COMMON_SUPPORT_CONTRACT = "frozen_L100_display_mask AND in_volume(all configured comparison methods) AND finite(all configured comparison methods)"
 
 
-def _cases() -> tuple[str, ...]:
-    return tuple(f"{level}_fold{fold}" for level, folds in EXPECTED_FOLDS.items() for fold in folds)
+def _cases(custom_cases: list[Mapping[str, str]] | None = None) -> tuple[tuple[str, str | None], ...]:
+    legacy = tuple((f"{level}_fold{fold}", None) for level, folds in EXPECTED_FOLDS.items() for fold in folds)
+    if custom_cases is None:
+        return legacy
+    custom: list[tuple[str, str | None]] = []
+    for item in custom_cases:
+        profile_id, case_id = item.get("profile_id"), item.get("case_id")
+        if not isinstance(profile_id, str) or not profile_id or not isinstance(case_id, str) or not case_id:
+            raise ValueError("each custom case requires explicit profile_id and case_id")
+        custom.append((case_id, profile_id))
+    if len({case for case, _profile in custom}) != len(custom):
+        raise ValueError("custom case_id values must be unique")
+    return tuple(custom)
 
 
 def _case_root(root: Path, subject: str, condition: str, endpoint: str) -> Path:
@@ -47,7 +58,7 @@ def _methods(method_roots: Mapping[str, str | Path], subject: str, condition: st
     return result
 
 
-def build_final_subject_figure_configs(*, subject: str, formal_grid_root: str | Path, sparse_root: str | Path, r0_native_maps_root: str | Path, native_mask_root: str | Path, method_roots: Mapping[str, str | Path], output: str | Path) -> Path:
+def build_final_subject_figure_configs(*, subject: str, formal_grid_root: str | Path, sparse_root: str | Path, r0_native_maps_root: str | Path, native_mask_root: str | Path, method_roots: Mapping[str, str | Path], output: str | Path, custom_cases: list[Mapping[str, str]] | None = None) -> Path:
     """Write one complete config per formal condition/endpoint without server work."""
     if not isinstance(subject, str) or not subject:
         raise ValueError("subject must be explicit and non-empty")
@@ -59,7 +70,7 @@ def build_final_subject_figure_configs(*, subject: str, formal_grid_root: str | 
     output.parent.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(prefix=f".{output.name}.staging-", dir=output.parent))
     try:
-        for condition in _cases():
+        for condition, profile_id in _cases(custom_cases):
             for endpoint in ENDPOINTS:
                 case_formal = _case_root(formal_grid_root, subject, condition, endpoint)
                 sparse_manifest = sparse_root / subject / condition / "sparse_manifest.json"
@@ -73,6 +84,8 @@ def build_final_subject_figure_configs(*, subject: str, formal_grid_root: str | 
                     "native": {"mode": "all_source_groups", "stacks": ["sax", "2ch", "4ch"], "sparse_manifest": str(sparse_manifest.resolve()), "r0_native_maps_root": str((r0_native_maps_root / subject).resolve())},
                     "scmr_longitudinal": {"sparse_manifest": str(sparse_manifest.resolve()), "r0_native_maps_root": str((r0_native_maps_root / subject).resolve()), "reconstruction_spacing_mm": 1.0, "common_support_contract": "source comparison domain AND in_volume(all configured comparison methods) AND finite(all configured comparison methods)"},
                 }
+                if profile_id is not None:
+                    payload["profile_id"] = profile_id; payload["case_id"] = condition
                 write_immutable_json(staging / condition / f"{endpoint}.json", payload)
         staging.rename(output)
     except BaseException:
