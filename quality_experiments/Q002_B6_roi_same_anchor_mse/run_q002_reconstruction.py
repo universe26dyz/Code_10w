@@ -54,9 +54,34 @@ def run(args: argparse.Namespace) -> Path:
         raise RuntimeError("Formal Q002 reconstruction requires CUDA.")
     sparse_manifest = getattr(args, "sparse_manifest", None)
     expected_sparse_generator_sha = getattr(args, "expected_sparse_generator_git_sha", None)
-    if sparse_manifest and args.experiment_id == Q002S640_EXPERIMENT_ID and expected_sparse_generator_sha is None:
-        raise ValueError("Q002S640 sparse execution requires --expected-sparse-generator-git-sha")
-    sparse_profile = validate_sparse_profile_manifest(sparse_manifest, subject=args.subject_id, strict=expected_sparse_generator_sha is not None, expected_generator_git_sha=expected_sparse_generator_sha) if sparse_manifest else None
+    expected_sparse_manifest_sha = getattr(args, "expected_sparse_manifest_sha256", None)
+    expected_b6_sha = getattr(args, "expected_b6_model_sha256", None)
+    expected_protocol_sha = getattr(args, "expected_protocol_sha256", None)
+    formal_sparse_q002 = bool(sparse_manifest) and args.experiment_id == Q002S640_EXPERIMENT_ID
+    if formal_sparse_q002:
+        missing = [name for name, value in (
+            ("--expected-sparse-generator-git-sha", expected_sparse_generator_sha),
+            ("--expected-sparse-manifest-sha256", expected_sparse_manifest_sha),
+            ("--expected-b6-model-sha256", expected_b6_sha),
+            ("--expected-protocol-sha256", expected_protocol_sha),
+        ) if value is None]
+        if missing:
+            raise ValueError("Q002S640 sparse execution requires explicit immutable dependency pins: " + ", ".join(missing))
+    sparse_profile = validate_sparse_profile_manifest(
+        sparse_manifest, subject=args.subject_id,
+        strict=expected_sparse_generator_sha is not None,
+        expected_generator_git_sha=expected_sparse_generator_sha,
+        expected_manifest_sha256=expected_sparse_manifest_sha,
+    ) if sparse_manifest else None
+    if formal_sparse_q002:
+        if not Path(args.b6_model).is_file():
+            raise FileNotFoundError(f"B6 model does not exist: {args.b6_model}")
+        if _sha256(Path(args.b6_model)) != expected_b6_sha:
+            raise ValueError("B6 model SHA256 does not match --expected-b6-model-sha256")
+        if not Path(args.protocol).is_file():
+            raise FileNotFoundError(f"protocol file does not exist: {args.protocol}")
+        if _sha256(Path(args.protocol)) != expected_protocol_sha:
+            raise ValueError("protocol SHA256 does not match --expected-protocol-sha256")
     inputs = profiled_observation_paths(args.cropped_prepared_root, args.subject_id, sparse_manifest) if sparse_manifest else cropped_observation_paths(args.cropped_prepared_root, args.subject_id)
     output = Path(args.output)
     if output.exists() and any(output.iterdir()):
@@ -117,7 +142,7 @@ def run(args: argparse.Namespace) -> Path:
         export_native_plane_reprojections(result["model"], result["training_space"], inputs, output / "evaluation/mapping_central_no_psf", output_psf={"enabled": False}, export_parameter_maps=True)
         export_native_plane_reprojections(result["model"], result["training_space"], inputs, output / "evaluation/signal_psf_K8", output_psf={"enabled": True, "n_samples": 8}, evaluation_seed=20260911, export_parameter_maps=False)
     export_quantitative_outputs_psf128(result["model"], result["training_space"], output, dataset=scalar, export_config=export_config, batch_size=int(export["output_batch_size"]), experiment_id=args.experiment_id, subject_id=args.subject_id, source_checkpoint=output / "model.pt", reconstruction_code_git_commit=git_sha)
-    common = {"experiment_id": args.experiment_id, "subject_id": args.subject_id, "route": route["route"], "reconstruction_git_sha": git_sha, "git_dirty": bool(__import__("subprocess").check_output(["git", "status", "--porcelain"], text=True).strip()), "B6_model_path": str(Path(args.b6_model)), "b6_model_sha256": _sha256(Path(args.b6_model)), "decoder_relocation":{"b6_resolved_config_path":source_decoder_path,"runtime_decoder_path":str(Path(args.signal_simulator)),"approved_decoder_sha256":_sha256(Path(args.signal_simulator)),"scientific_config_changed":False}, "approved_decoder_path": str(Path(args.signal_simulator)), "approved_decoder_sha256": _sha256(Path(args.signal_simulator)), "dependency_sha256": {"B6_model": _sha256(Path(args.b6_model)), "frozen_decoder": _sha256(Path(args.signal_simulator))}, "prepared_inputs_sha256": {str(path): _sha256(path) for path in inputs}, "joint_dataset_qc": joint.qc, "controls": result["controls"], "intensity_normalization": result["intensity_normalization"], "stack_weights": result["stack_weights"], "fixed_monitor": {"seed": result["fixed_monitor"]["seed"], "anchor_identity_sha256": result["fixed_monitor"]["anchor_identity_sha256"]}, "q002_checkpoint_sha256": _sha256(output / "model.pt"), "psf128_contract": {"resolution_mm": 1.0, "factor": 1.0, "samples": 128, "seed": 20260911}}
+    common = {"experiment_id": args.experiment_id, "subject_id": args.subject_id, "route": route["route"], "reconstruction_git_sha": git_sha, "git_dirty": bool(__import__("subprocess").check_output(["git", "status", "--porcelain"], text=True).strip()), "B6_model_path": str(Path(args.b6_model)), "b6_model_sha256": _sha256(Path(args.b6_model)), "decoder_relocation":{"b6_resolved_config_path":source_decoder_path,"runtime_decoder_path":str(Path(args.signal_simulator)),"approved_decoder_sha256":_sha256(Path(args.signal_simulator)),"scientific_config_changed":False}, "approved_decoder_path": str(Path(args.signal_simulator)), "approved_decoder_sha256": _sha256(Path(args.signal_simulator)), "dependency_sha256": {"B6_model": _sha256(Path(args.b6_model)), "frozen_decoder": _sha256(Path(args.signal_simulator)), "protocol": _sha256(Path(args.protocol))}, "prepared_inputs_sha256": {str(path): _sha256(path) for path in inputs}, "joint_dataset_qc": joint.qc, "controls": result["controls"], "intensity_normalization": result["intensity_normalization"], "stack_weights": result["stack_weights"], "fixed_monitor": {"seed": result["fixed_monitor"]["seed"], "anchor_identity_sha256": result["fixed_monitor"]["anchor_identity_sha256"]}, "q002_checkpoint_sha256": _sha256(output / "model.pt"), "psf128_contract": {"resolution_mm": 1.0, "factor": 1.0, "samples": 128, "seed": 20260911}}
     if sparse_profile is not None:
         common.update(sparse_profile_provenance(sparse_profile, inputs))
     if args.experiment_id == Q003S640_EXPERIMENT_ID:
@@ -151,7 +176,7 @@ These are mechanistic interpretations, not population-level claims.
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--cropped-prepared-root", required=True); parser.add_argument("--subject-id", default="CYJ"); parser.add_argument("--sparse-manifest"); parser.add_argument("--expected-sparse-generator-git-sha"); parser.add_argument("--b6-model", required=True); parser.add_argument("--signal-simulator", required=True); parser.add_argument("--protocol", default="trad/configs/protocol_hhz_v1.yaml"); parser.add_argument("--output", required=True); parser.add_argument("--device", default="cuda:0")
+    parser.add_argument("--cropped-prepared-root", required=True); parser.add_argument("--subject-id", default="CYJ"); parser.add_argument("--sparse-manifest"); parser.add_argument("--expected-sparse-generator-git-sha"); parser.add_argument("--expected-sparse-manifest-sha256"); parser.add_argument("--b6-model", required=True); parser.add_argument("--expected-b6-model-sha256"); parser.add_argument("--signal-simulator", required=True); parser.add_argument("--protocol", default="trad/configs/protocol_hhz_v1.yaml"); parser.add_argument("--expected-protocol-sha256"); parser.add_argument("--output", required=True); parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--experiment-id", choices=(Q002_EXPERIMENT_ID, Q002S640_EXPERIMENT_ID, Q002S640_K256_EXPERIMENT_ID, Q003S640_EXPERIMENT_ID, Q003S640_10K_EXPERIMENT_ID, Q004S640_K1_EXPERIMENT_ID, Q005S640_K4_EXPERIMENT_ID), default=Q002_EXPERIMENT_ID)
     parser.add_argument("--anchor-batch-size", type=int, default=64)
     return parser
