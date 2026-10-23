@@ -43,6 +43,25 @@ def sparse_manifest_case(sparse: dict[str, Any]) -> str:
     return f"{level}_fold{phase}"
 
 
+def validate_sparse_heldout_admission(sparse: dict[str, Any]) -> dict[str, Any]:
+    """Admit a sparse case with one or two held-out LAX stacks, never neither."""
+    case_id = sparse_manifest_case(sparse)
+    stacks = sparse.get("stacks")
+    if not isinstance(stacks, dict):
+        raise ValueError("sparse formal evaluator requires stack records")
+    heldout: dict[str, list[int]] = {}
+    for stack in ("2ch", "4ch"):
+        item = stacks.get(stack)
+        values = item.get("heldout_original_group_ids") if isinstance(item, dict) else None
+        if not isinstance(values, list) or any(isinstance(value, bool) or not isinstance(value, int) for value in values):
+            raise ValueError(f"{stack}: heldout_original_group_ids must be an integer list")
+        heldout[stack] = [int(value) for value in values]
+    total = sum(len(values) for values in heldout.values())
+    if total == 0:
+        raise ValueError("sparse formal evaluator requires at least one held-out LAX plane")
+    return {"case_id": case_id, "heldout": heldout, "total_heldout_lax": total}
+
+
 def validate_sparse_endpoint_roots(proposed_root: str | Path, fit_first_root: str | Path, condition: str, *, subject: str = "CYJ") -> tuple[dict[str, Path], dict[str, Any]]:
     """Validate matched immutable endpoint exports before any native sampling."""
     proposed_root, fit_first_root = Path(proposed_root), Path(fit_first_root)
@@ -82,7 +101,8 @@ def build_final_sparse_native_metrics(*, proposed_endpoint_root: str | Path, fit
     subject = sparse.get("subject")
     if not isinstance(subject, str) or not subject:
         raise ValueError("sparse formal evaluator requires a named subject")
-    condition = sparse_manifest_case(sparse)
+    admission = validate_sparse_heldout_admission(sparse)
+    condition = admission["case_id"]
     if sparse.get("status") != "ELIGIBLE":
         raise ValueError("sparse formal evaluator requires an ELIGIBLE manifest")
     if output.exists():
@@ -95,7 +115,9 @@ def build_final_sparse_native_metrics(*, proposed_endpoint_root: str | Path, fit
         records: list[dict[str, Any]] = []
         aggregate = {parameter: {stack: {name: [] for name in ("reference", "proposed", "fit_first")} for stack in ("2ch", "4ch", "all_lax")} for parameter in ("t1", "t2")}
         for stack in ("2ch", "4ch"):
-            ids = _heldout_ids(sparse, stack)
+            ids = admission["heldout"][stack]
+            if not ids:
+                continue
             cache = select_verified_native_cache_groups(r0_native_maps_root, sparse_manifest, stack, ids)
             if [int(value) for value in cache["group_idx"]] != ids:
                 raise ValueError(f"{stack}: held-out cache selection is not exact manifest order")

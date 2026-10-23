@@ -89,3 +89,19 @@ def test_sparse_manifest_case_uses_explicit_custom_case_id_without_string_splitt
     from paper_experiments.joint_vs_2dfit.phase2_clean import final_sparse_native_metrics as sparse
 
     assert sparse.sparse_manifest_case({"schema_version": "phase4r_sparse_profile_v2", "case_id": "SAX100_2CH0_4CH0", "profile_id": "SAX100_2CH0_4CH0"}) == "SAX100_2CH0_4CH0"
+
+
+@pytest.mark.parametrize("case_id", ("SAX100_2CH0_4CH0", "SAX100_2CH0_4CH100", "SAX100_2CH100_4CH0", "S2CH50_4CH100_fold0", "S2CH50_4CH100_fold1", "S2CH100_4CH50_fold0", "S2CH100_4CH50_fold1"))
+def test_custom_v2_cases_admit_one_empty_heldout_stack(case_id: str) -> None:
+    from paper_experiments.joint_vs_2dfit.phase2_clean import final_sparse_native_metrics as sparse
+
+    heldout = {"2ch": [3], "4ch": []} if "2CH0_4CH100" in case_id or "S2CH50" in case_id else {"2ch": [], "4ch": [4]}
+    result = sparse.validate_sparse_heldout_admission({"schema_version": "phase4r_sparse_profile_v2", "profile_id": case_id.split("_fold")[0], "case_id": case_id, "stacks": {stack: {"heldout_original_group_ids": ids} for stack, ids in heldout.items()}})
+    assert result["total_heldout_lax"] == 1
+
+
+def test_sparse_case_with_no_heldout_lax_is_rejected() -> None:
+    from paper_experiments.joint_vs_2dfit.phase2_clean import final_sparse_native_metrics as sparse
+
+    with pytest.raises(ValueError, match="at least one held-out LAX"):
+        sparse.validate_sparse_heldout_admission({"schema_version": "phase4r_sparse_profile_v2", "profile_id": "SAX100_2CH100_4CH100", "case_id": "SAX100_2CH100_4CH100", "stacks": {stack: {"heldout_original_group_ids": []} for stack in ("2ch", "4ch")}})
