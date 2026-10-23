@@ -49,11 +49,11 @@ def sparse_profile_provenance(manifest: dict[str, object], inputs: list[Path]) -
     }
 
 
-FORMAL_SPARSE_EXPERIMENT_IDS = (Q002S640_EXPERIMENT_ID, Q005S640_K4_EXPERIMENT_ID)
+FORMAL_SPARSE_EXPERIMENT_IDS = (Q002S640_EXPERIMENT_ID, Q004S640_K1_EXPERIMENT_ID, Q005S640_K4_EXPERIMENT_ID)
 
 
 def validate_formal_sparse_reconstruction_dependencies(args: argparse.Namespace) -> dict[str, object] | None:
-    """Validate immutable sparse inputs for the formal Q002S640 and Q005S640 routes."""
+    """Validate immutable sparse inputs for the formal Q002S640, Q004S640-K1, and Q005S640-K4 routes."""
     if getattr(args, "experiment_id", None) not in FORMAL_SPARSE_EXPERIMENT_IDS:
         return None
     if not getattr(args, "sparse_manifest", None):

@@ -173,6 +173,15 @@ def test_three_method_selection_panels_share_the_parameter_lut_without_residual_
     assert all(spec["displayed_quantity"] != "residual" for spec in specs)
 
 
+def test_four_method_k_sensitivity_panels_keep_the_existing_display_order_and_lut() -> None:
+    from paper_experiments.joint_vs_2dfit.phase2_clean.final_cyj_reporting import final_panel_specifications
+
+    specs = final_panel_specifications("T1", ("Fit-first", "Q002S640", "Q005S640_K4", "Q004S640"))
+    assert [spec["label"] for spec in specs if spec["kind"] == "map_ms"] == ["Fit-first", "Q002S640", "Q005S640_K4", "Q004S640"]
+    assert len({(spec["cmap"].name, spec["range_ms"]) for spec in specs}) == 1
+    assert all(spec["displayed_quantity"] != "residual" for spec in specs)
+
+
 def test_longitudinal_uses_the_joint_valid_support_for_every_comparison_method(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     from paper_experiments.joint_vs_2dfit.phase2_clean import final_cyj_reporting as reporting
 

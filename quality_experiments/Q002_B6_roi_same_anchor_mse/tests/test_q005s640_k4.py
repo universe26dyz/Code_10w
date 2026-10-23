@@ -46,7 +46,7 @@ def test_q005_k4_cpu_forward_uses_exactly_2560_locations_and_chunk_four() -> Non
     assert inr.calls == [(2560, 3)]
 
 
-@pytest.mark.parametrize("experiment_id", ("Q002S640_B6_roi_same_anchor_mse", "Q005S640_K4_B6_roi_same_anchor_mse"))
+@pytest.mark.parametrize("experiment_id", ("Q002S640_B6_roi_same_anchor_mse", "Q004S640_K1_B6_roi_same_anchor_mse", "Q005S640_K4_B6_roi_same_anchor_mse"))
 def test_formal_sparse_routes_require_matching_manifest_and_frozen_dependency_pins(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, experiment_id: str) -> None:
     from quality_experiments.Q002_B6_roi_same_anchor_mse import run_q002_reconstruction as route
 
@@ -56,7 +56,14 @@ def test_formal_sparse_routes_require_matching_manifest_and_frozen_dependency_pi
     monkeypatch.setattr(route, "APPROVED_DECODER_SHA256", route._sha256(decoder))
     manifest = {"subject": "CYJ", "prepared_root": str((tmp_path / "prepared").resolve()), "_manifest_sha256": "a" * 64}
     seen: list[dict] = []
-    monkeypatch.setattr(route, "validate_sparse_profile_manifest", lambda *_args, **kwargs: seen.append(kwargs) or manifest)
+    def validate(*_args, **kwargs):
+        seen.append(kwargs)
+        if kwargs["expected_generator_git_sha"] != "b" * 40:
+            raise ValueError("generator SHA mismatch")
+        if kwargs["expected_manifest_sha256"] != "a" * 64:
+            raise ValueError("manifest SHA256 mismatch")
+        return manifest
+    monkeypatch.setattr(route, "validate_sparse_profile_manifest", validate)
     args = Namespace(experiment_id=experiment_id, sparse_manifest=str(tmp_path / "sparse.json"), expected_sparse_generator_git_sha="b" * 40, expected_sparse_manifest_sha256="a" * 64, expected_b6_model_sha256=route._sha256(b6), expected_protocol_sha256=route._sha256(protocol), b6_model=str(b6), signal_simulator=str(decoder), protocol=str(protocol), subject_id="CYJ", cropped_prepared_root=str(tmp_path / "prepared"), output=str(tmp_path / "fresh"))
 
     route.validate_formal_sparse_reconstruction_dependencies(args)
@@ -65,7 +72,13 @@ def test_formal_sparse_routes_require_matching_manifest_and_frozen_dependency_pi
     args.expected_sparse_generator_git_sha = None
     with pytest.raises(ValueError, match="generator"):
         route.validate_formal_sparse_reconstruction_dependencies(args)
-    args.expected_sparse_generator_git_sha = "b" * 40; args.expected_sparse_manifest_sha256 = "0" * 64
+    args.expected_sparse_generator_git_sha = "0" * 40
+    with pytest.raises(ValueError, match="generator"):
+        route.validate_formal_sparse_reconstruction_dependencies(args)
+    args.expected_sparse_generator_git_sha = "b" * 40; args.expected_sparse_manifest_sha256 = None
+    with pytest.raises(ValueError, match="manifest"):
+        route.validate_formal_sparse_reconstruction_dependencies(args)
+    args.expected_sparse_manifest_sha256 = "0" * 64
     with pytest.raises(ValueError, match="manifest SHA256"):
         route.validate_formal_sparse_reconstruction_dependencies(args)
     args.expected_sparse_manifest_sha256 = "a" * 64; args.expected_b6_model_sha256 = "0" * 64
@@ -73,4 +86,19 @@ def test_formal_sparse_routes_require_matching_manifest_and_frozen_dependency_pi
         route.validate_formal_sparse_reconstruction_dependencies(args)
     args.expected_b6_model_sha256 = route._sha256(b6); args.expected_protocol_sha256 = "0" * 64
     with pytest.raises(ValueError, match="protocol SHA256"):
+        route.validate_formal_sparse_reconstruction_dependencies(args)
+    args.expected_protocol_sha256 = route._sha256(protocol); args.sparse_manifest = None
+    with pytest.raises(ValueError, match="sparse manifest"):
+        route.validate_formal_sparse_reconstruction_dependencies(args)
+    args.sparse_manifest = str(tmp_path / "sparse.json"); args.signal_simulator = str(tmp_path / "missing_decoder.pt")
+    with pytest.raises(ValueError, match="decoder"):
+        route.validate_formal_sparse_reconstruction_dependencies(args)
+    args.signal_simulator = str(decoder); args.subject_id = "OTHER"
+    with pytest.raises(ValueError, match="subject"):
+        route.validate_formal_sparse_reconstruction_dependencies(args)
+    args.subject_id = "CYJ"; args.cropped_prepared_root = str(tmp_path / "other_prepared")
+    with pytest.raises(ValueError, match="prepared root"):
+        route.validate_formal_sparse_reconstruction_dependencies(args)
+    args.cropped_prepared_root = str(tmp_path / "prepared"); Path(args.output).mkdir()
+    with pytest.raises(FileExistsError, match="fresh"):
         route.validate_formal_sparse_reconstruction_dependencies(args)
