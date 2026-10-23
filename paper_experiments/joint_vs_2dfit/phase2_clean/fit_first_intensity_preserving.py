@@ -314,6 +314,8 @@ def prepare_intensity_preserving_fit_first(*, subject_id: str, standardized_nati
 
 def execute_intensity_preserving_fit_first(**kwargs: Any) -> Path:
     root, commands = prepare_intensity_preserving_fit_first(**kwargs)
+    for parameter in PARAMETERS:
+        (root / "stage1_registration" / parameter).mkdir(parents=True, exist_ok=False)
     for command in commands:
         subprocess.run(command, shell=True, check=True)
     route = json.loads((root / "manifest.json").read_text(encoding="utf-8")); active = route["active_stacks"]

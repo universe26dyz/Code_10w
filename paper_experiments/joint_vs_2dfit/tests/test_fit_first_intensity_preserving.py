@@ -24,6 +24,7 @@ from paper_experiments.joint_vs_2dfit.phase2_clean.fit_first_intensity_preservin
     rebuild_registered_quantitative_inputs,
     validate_registered_quantitative_inputs,
 )
+from paper_experiments.joint_vs_2dfit.phase2_clean import fit_first_intensity_preserving as intensity_route
 
 
 def _case(root: Path) -> tuple[Path, Path]:
@@ -96,6 +97,22 @@ def test_rebuild_refuses_existing_output_and_inactive_stack_is_not_requested(tmp
         rebuild_registered_quantitative_inputs(native_maps_root=native, registration_root=stage1, output=output, active_stacks=["sax", "2ch"])
     command = build_registration_commands(tmp_path / "inputs", ["sax"], tmp_path / "reg", nesvor_executable="nesvor", device="-1")[0]
     assert "/4ch/" not in command
+
+
+def test_execute_creates_distinct_stage1_parameter_directories_before_first_subprocess(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root = tmp_path / "route"; root.mkdir()
+    (root / "manifest.json").write_text(json.dumps({"active_stacks": ["sax"]}))
+    monkeypatch.setattr(intensity_route, "prepare_intensity_preserving_fit_first", lambda **_kwargs: (root, ["nesvor register t1", "nesvor register t2"]))
+
+    def assert_before_run(*_args, **_kwargs):
+        t1, t2 = root / "stage1_registration/t1", root / "stage1_registration/t2"
+        assert t1.is_dir() and t2.is_dir()
+        assert t1 != t2
+        raise RuntimeError("stop before NeSVoR")
+
+    monkeypatch.setattr(intensity_route.subprocess, "run", assert_before_run)
+    with pytest.raises(RuntimeError, match="stop before NeSVoR"):
+        intensity_route.execute_intensity_preserving_fit_first()
 
 
 def _selection_fixture(root: Path, *, sparse_sha: str = "standardized-sha", inactive: bool = False) -> tuple[Path, dict, dict]:
