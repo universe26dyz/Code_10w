@@ -1,0 +1,10 @@
+{
+  "schema": "phase4r_final_five_subject_cohort/v1",
+  "subjects": ["CYJ", "DYL_2", "DYZ", "HHZ", "HJL"],
+  "raw_dicom_server_root": "/data/dengyz/dataset/mapping_subject_dicom",
+  "raw_dicom_stack_path": "/data/dengyz/dataset/mapping_subject_dicom/<SUBJECT>/<STACK>",
+  "pre_reconstruction_server_root": "/data/dengyz/dataset/Code_10w_v1/Code_10w_runs/phase4r_v2_common_slice_grid_20261022/pre_reconstruction",
+  "pre_reconstruction_subject_path": "/data/dengyz/dataset/Code_10w_v1/Code_10w_runs/phase4r_v2_common_slice_grid_20261022/pre_reconstruction/<SUBJECT>",
+  "stacks": ["sax", "2ch", "4ch"],
+  "note": "This config declares cohort identity and source conventions only; it does not declare or authorize experiment outputs."
+}

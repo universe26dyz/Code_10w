@@ -49,10 +49,15 @@ def sparse_profile_provenance(manifest: dict[str, object], inputs: list[Path]) -
     }
 
 
-def validate_formal_q002s640_dependencies(args: argparse.Namespace) -> None:
-    """Fail closed on the complete immutable dependency set for sparse Q002S640."""
-    if not (getattr(args, "sparse_manifest", None) and args.experiment_id == Q002S640_EXPERIMENT_ID):
-        return
+FORMAL_SPARSE_EXPERIMENT_IDS = (Q002S640_EXPERIMENT_ID, Q005S640_K4_EXPERIMENT_ID)
+
+
+def validate_formal_sparse_reconstruction_dependencies(args: argparse.Namespace) -> dict[str, object] | None:
+    """Validate immutable sparse inputs for the formal Q002S640 and Q005S640 routes."""
+    if getattr(args, "experiment_id", None) not in FORMAL_SPARSE_EXPERIMENT_IDS:
+        return None
+    if not getattr(args, "sparse_manifest", None):
+        raise ValueError("formal sparse execution requires an exact sparse manifest")
     expected = {
         "generator": getattr(args, "expected_sparse_generator_git_sha", None),
         "manifest": getattr(args, "expected_sparse_manifest_sha256", None),
@@ -61,14 +66,52 @@ def validate_formal_q002s640_dependencies(args: argparse.Namespace) -> None:
     }
     missing = [label for label, value in expected.items() if value is None]
     if missing:
+        raise ValueError("formal sparse execution requires explicit pins for " + ", ".join(missing))
+    for label, value in expected.items():
+        width = 40 if label == "generator" else 64
+        if not isinstance(value, str) or len(value) != width or any(char not in "0123456789abcdef" for char in value):
+            raise ValueError(f"formal sparse execution has an invalid {label} pin")
+    b6 = Path(args.b6_model)
+    decoder = Path(args.signal_simulator)
+    protocol = Path(args.protocol)
+    if not b6.is_file() or _sha256(b6) != B6_CONFIG_SOURCE_SHA256 or expected["B6 model"] != B6_CONFIG_SOURCE_SHA256:
+        raise ValueError("formal sparse execution B6 model SHA256 disagrees with the frozen contract")
+    if not decoder.is_file() or _sha256(decoder) != APPROVED_DECODER_SHA256:
+        raise ValueError("formal sparse execution decoder SHA256 is not the approved FrozenMLP")
+    if not protocol.is_file() or _sha256(protocol) != expected["protocol"]:
+        raise ValueError("formal sparse execution protocol SHA256 disagrees with the explicit admission pin")
+    profile = validate_sparse_profile_manifest(
+        args.sparse_manifest,
+        subject=args.subject_id,
+        strict=True,
+        expected_generator_git_sha=expected["generator"],
+        expected_manifest_sha256=expected["manifest"],
+    )
+    if profile.get("subject") != args.subject_id or Path(str(profile.get("prepared_root", ""))).resolve() != Path(args.cropped_prepared_root).resolve():
+        raise ValueError("formal sparse execution subject or prepared root disagrees with the sparse manifest")
+    if profile.get("_manifest_sha256") != expected["manifest"]:
+        raise ValueError("formal sparse execution manifest SHA256 disagrees with the validated manifest")
+    if Path(args.output).exists():
+        raise FileExistsError("formal sparse execution requires a fresh output root")
+    return profile
+
+
+def validate_formal_q002s640_dependencies(args: argparse.Namespace) -> None:
+    """Backward-compatible entry point for the original formal Q002S640 contract."""
+    if hasattr(args, "subject_id") and hasattr(args, "cropped_prepared_root") and hasattr(args, "output"):
+        validate_formal_sparse_reconstruction_dependencies(args)
+        return
+    if not (getattr(args, "sparse_manifest", None) and args.experiment_id == Q002S640_EXPERIMENT_ID):
+        return
+    expected = {"generator": getattr(args, "expected_sparse_generator_git_sha", None), "manifest": getattr(args, "expected_sparse_manifest_sha256", None), "B6 model": getattr(args, "expected_b6_model_sha256", None), "protocol": getattr(args, "expected_protocol_sha256", None)}
+    missing = [label for label, value in expected.items() if value is None]
+    if missing:
         raise ValueError("Q002S640 sparse execution requires explicit pins for " + ", ".join(missing))
     for label, value in expected.items():
         width = 40 if label == "generator" else 64
         if not isinstance(value, str) or len(value) != width or any(char not in "0123456789abcdef" for char in value):
             raise ValueError(f"Q002S640 sparse execution has an invalid {label} pin")
-    b6 = Path(args.b6_model)
-    decoder = Path(args.signal_simulator)
-    protocol = Path(args.protocol)
+    b6, decoder, protocol = Path(args.b6_model), Path(args.signal_simulator), Path(args.protocol)
     if not b6.is_file() or _sha256(b6) != B6_CONFIG_SOURCE_SHA256 or expected["B6 model"] != B6_CONFIG_SOURCE_SHA256:
         raise ValueError("Q002S640 sparse execution B6 model SHA256 disagrees with the frozen contract")
     if not decoder.is_file() or _sha256(decoder) != APPROVED_DECODER_SHA256:
@@ -78,13 +121,13 @@ def validate_formal_q002s640_dependencies(args: argparse.Namespace) -> None:
 
 
 def run(args: argparse.Namespace) -> Path:
-    validate_formal_q002s640_dependencies(args)
+    formal_profile = validate_formal_sparse_reconstruction_dependencies(args)
     sparse_manifest = getattr(args, "sparse_manifest", None)
     expected_sparse_generator_sha = getattr(args, "expected_sparse_generator_git_sha", None)
     expected_sparse_manifest_sha = getattr(args, "expected_sparse_manifest_sha256", None)
     if args.device.startswith("cpu") or not torch.cuda.is_available():
         raise RuntimeError("Formal Q002 reconstruction requires CUDA.")
-    sparse_profile = validate_sparse_profile_manifest(sparse_manifest, subject=args.subject_id, strict=expected_sparse_generator_sha is not None, expected_generator_git_sha=expected_sparse_generator_sha, expected_manifest_sha256=expected_sparse_manifest_sha) if sparse_manifest else None
+    sparse_profile = formal_profile or (validate_sparse_profile_manifest(sparse_manifest, subject=args.subject_id, strict=expected_sparse_generator_sha is not None, expected_generator_git_sha=expected_sparse_generator_sha, expected_manifest_sha256=expected_sparse_manifest_sha) if sparse_manifest else None)
     inputs = profiled_observation_paths(args.cropped_prepared_root, args.subject_id, sparse_manifest) if sparse_manifest else cropped_observation_paths(args.cropped_prepared_root, args.subject_id)
     output = Path(args.output)
     if output.exists() and any(output.iterdir()):

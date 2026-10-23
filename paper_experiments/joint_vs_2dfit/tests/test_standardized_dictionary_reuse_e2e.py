@@ -31,7 +31,7 @@ def _native(root: Path, observations: Path) -> None:
 
 
 def test_generated_standardization_manifest_validates_and_reuses_native_maps(tmp_path: Path) -> None:
-    from paper_experiments.joint_vs_2dfit.phase2_clean.reuse_standardized_native_dictionary_maps import audit_standardized_native_dictionary_maps
+    from paper_experiments.joint_vs_2dfit.phase2_clean.reuse_standardized_native_dictionary_maps import audit_standardized_native_dictionary_maps, validate_standardized_native_dictionary_reuse
     from paper_experiments.joint_vs_2dfit.phase2_clean.standardize_subject_slices import standardize_subject_slices, validate_standardization_manifest
 
     prepared, native = tmp_path / "prepared", tmp_path / "native"
@@ -43,9 +43,29 @@ def test_generated_standardization_manifest_validates_and_reuses_native_maps(tmp
     reuse = audit_standardized_native_dictionary_maps(standardized / "slice_standardization_manifest.json", native, tmp_path / "reuse")
     payload = json.loads((reuse / "reuse_manifest.json").read_text(encoding="utf-8"))
     assert payload["status"] == "REUSE_VERIFIED"
+    assert validate_standardized_native_dictionary_reuse(reuse / "reuse_manifest.json", subject="DYL_2")["subject"] == "DYL_2"
     assert payload["stacks"]["2ch"]["standardized_to_original_group_idx"][0]["original_group_idx"] == 0
     with np.load(reuse / "2ch" / "native_maps.npz") as maps:
         assert maps["group_idx"].tolist() == list(range(15))
+
+
+def test_standardized_reuse_baseline_exports_without_dictionary_refit_and_uses_sax_masks(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from paper_experiments.joint_vs_2dfit.phase2_clean import baseline
+    from paper_experiments.joint_vs_2dfit.phase2_clean.reuse_standardized_native_dictionary_maps import audit_standardized_native_dictionary_maps
+    from paper_experiments.joint_vs_2dfit.phase2_clean.standardize_subject_slices import standardize_subject_slices
+
+    prepared, native = tmp_path / "prepared", tmp_path / "native"
+    for stack, count in {"sax": 12, "2ch": 16, "4ch": 10}.items():
+        observation = prepared / "DYL_2" / stack / "observations.npz"; _observations(observation, count); _native(native / stack, observation)
+    standardized = standardize_subject_slices(prepared, "DYL_2", tmp_path / "standardized", git_sha="test")
+    reuse = audit_standardized_native_dictionary_maps(standardized / "slice_standardization_manifest.json", native, tmp_path / "reuse")
+    monkeypatch.setattr(baseline, "fit_native", lambda *_args, **_kwargs: pytest.fail("standardized reuse must not refit dictionaries"))
+
+    output, commands = baseline.build_baseline_run(prepared, "DYL_2", tmp_path / "fit_first", standardized_native_maps_root=reuse, standardized_reuse_manifest=reuse / "reuse_manifest.json")
+
+    assert all("--sample-mask" in command and "--volume-mask" not in command and "--stack-masks" not in command for command in commands)
+    manifest = json.loads((output / "input_manifest.json").read_text())
+    assert manifest["standardized_native_dictionary_reuse"]["dictionary_refit"] is False
 
 
 @pytest.mark.parametrize("mutation, message", [("dictionary", "dictionary contract"), ("geometry", "content or geometry mismatch"), ("mapping", "mapping")])

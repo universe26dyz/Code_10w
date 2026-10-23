@@ -13,10 +13,52 @@ import numpy as np
 from .contracts import sha256, write_immutable_json
 from .fit_first import NATIVE_FIT_METHOD, _dictionary_contract
 from .sparse import STACKS, _git_sha
-from .standardize_subject_slices import MAPPING_FIELD, validated_standardized_mapping
+from .standardize_subject_slices import MAPPING_FIELD, TARGET_COUNTS, validate_standardization_manifest, validated_standardized_mapping
 
 
 SCHEMA = "phase4r_standardized_native_dictionary_reuse/v1"
+
+
+def validate_standardized_native_dictionary_reuse(manifest: str | Path, *, subject: str | None = None) -> dict[str, Any]:
+    """Revalidate standardized dictionary reuse from every referenced artifact."""
+    path = Path(manifest)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if payload.get("schema") != SCHEMA or payload.get("status") != "REUSE_VERIFIED" or not isinstance(payload.get("subject"), str):
+        raise ValueError("invalid standardized native dictionary reuse schema, subject, or status")
+    if subject is not None and payload["subject"] != subject:
+        raise ValueError("standardized native dictionary reuse subject mismatch")
+    standard_record = payload.get("standardization_manifest", {})
+    standard_path = Path(str(standard_record.get("path", "")))
+    if not standard_path.is_file() or sha256(standard_path) != standard_record.get("sha256"):
+        raise ValueError("standardization manifest SHA256 mismatch")
+    standardization = validate_standardization_manifest(standard_path, subject=payload["subject"])
+    root = path.parent
+    for stack, target in TARGET_COUNTS.items():
+        record = payload.get("stacks", {}).get(stack)
+        if not isinstance(record, dict) or record.get("status") != "REUSE_VERIFIED" or int(record.get("target_count", -1)) != target:
+            raise ValueError(f"{stack}: standardized native reuse record is incomplete")
+        mapping = validated_standardized_mapping(record.get("standardized_to_original_group_idx"), target_count=target, retained_original_group_ids=[int(item["original_group_idx"]) for item in record.get("standardized_to_original_group_idx", [])] if isinstance(record.get("standardized_to_original_group_idx"), list) else [])
+        if mapping != standardization["stacks"][stack][MAPPING_FIELD]:
+            raise ValueError(f"{stack}: standardized native reuse mapping disagrees with standardization")
+        source = standardization["stacks"][stack]
+        for label, key in (("source native maps", "source_native_maps"), ("source geometry", "source_geometry"), ("source native manifest", "source_native_manifest")):
+            evidence = record.get(key, {}); artifact = Path(str(evidence.get("path", "")))
+            if not artifact.is_file() or sha256(artifact) != evidence.get("sha256"):
+                raise ValueError(f"{stack}: {label} SHA256 mismatch")
+        folder = root / stack
+        maps_path, geometry_path, output_manifest = folder / "native_maps.npz", folder / "geometry.npz", folder / "manifest.json"
+        for artifact, key, label in ((maps_path, "output_native_maps_sha256", "output native maps"), (geometry_path, "output_geometry_sha256", "output geometry"), (output_manifest, "output_manifest_sha256", "output manifest")):
+            if not artifact.is_file() or sha256(artifact) != record.get(key):
+                raise ValueError(f"{stack}: {label} SHA256 mismatch")
+        output = json.loads(output_manifest.read_text(encoding="utf-8"))
+        if output.get("method") != NATIVE_FIT_METHOD or output.get("dictionary_contract") != _dictionary_contract() or output.get("standardization_mapping") != mapping:
+            raise ValueError(f"{stack}: output native manifest does not satisfy the frozen dictionary reuse contract")
+        if output.get("source_observations", {}).get("sha256") != source["output_observation"]["sha256"]:
+            raise ValueError(f"{stack}: output native manifest source observation mismatch")
+        with np.load(maps_path, allow_pickle=False) as maps, np.load(geometry_path, allow_pickle=False) as geometry:
+            if np.asarray(maps["group_idx"]).tolist() != list(range(target)) or any(np.asarray(value).shape[0] != target for value in (maps["t1_ms"], maps["t2_ms"], maps["b1"], geometry["affine_lps_rc"], geometry["pixel_spacing_rc_mm"], geometry["slice_thickness_mm"])):
+                raise ValueError(f"{stack}: output native groups are not contiguous or artifact dimensions disagree")
+    return payload
 
 
 def _group_rows(data: np.lib.npyio.NpzFile, group: int, path: Path) -> np.ndarray:

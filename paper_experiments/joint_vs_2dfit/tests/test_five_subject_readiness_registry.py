@@ -14,8 +14,8 @@ def test_registry_uses_exact_canonical_subjects_and_keeps_gate_closed_without_se
     assert payload["all_subjects_ready_for_3d_reconstruction"] is False
     assert payload["launch_gate"]["state"] == "CLOSED"
     dyl2 = json.loads((registry / "subjects" / "DYL_2" / "subject_manifest.json").read_text(encoding="utf-8"))
-    assert dyl2["stage"] == "READY_FOR_STANDARDIZATION"
-    assert "CMRServer04 DNS" in " ".join(dyl2["blockers"])
+    assert dyl2["stage"] == "BLOCKED"
+    assert "CMRServer04 DNS" not in " ".join(dyl2["blockers"])
 
 
 def test_readiness_requires_verified_standardization_reuse_dependency_and_server(tmp_path: Path) -> None:

@@ -14,6 +14,7 @@ import numpy as np
 from .contracts import APPROVED_DECODER_SHA256, B6_CONFIG_SOURCE_SHA256, sha256, write_immutable_json
 from .sparse import _git_sha
 from .standardize_subject_slices import TARGET_COUNTS, validate_standardization_manifest
+from .reuse_standardized_native_dictionary_maps import validate_standardized_native_dictionary_reuse
 
 
 SCHEMA = "phase4r_five_subject_readiness_registry/v1"
@@ -71,11 +72,8 @@ def _reuse_evidence(evidence_root: Path, subject: str, standardization: dict[str
     if len(paths) != 1:
         return {"status": "UNKNOWN_NOT_INSPECTED", "evidence_paths": [str(path) for path in paths]}
     try:
-        payload = json.loads(paths[0].read_text(encoding="utf-8"))
-        valid = payload.get("schema") == "phase4r_standardized_native_dictionary_reuse/v1" and payload.get("subject") == subject and payload.get("status") == "REUSE_VERIFIED"
-        valid = valid and all(payload.get("stacks", {}).get(stack, {}).get("status") == "REUSE_VERIFIED" for stack in TARGET_COUNTS)
-        standard = standardization.get("manifest", {})
-        valid = valid and payload.get("standardization_manifest", {}).get("sha256") == standard.get("sha256")
+        payload = validate_standardized_native_dictionary_reuse(paths[0], subject=subject)
+        valid = payload.get("standardization_manifest", {}).get("sha256") == standardization.get("manifest", {}).get("sha256")
     except (OSError, ValueError, TypeError):
         valid = False
     return {"status": "REUSE_VERIFIED" if valid else "BLOCKED", "manifest": _artifact(paths[0])}
@@ -106,10 +104,7 @@ def _subject_evidence(subject: str, evidence_root: Path) -> dict[str, Any]:
 
 def _manifest(subject: str, evidence: dict[str, Any]) -> dict[str, Any]:
     evaluated = readiness_from_evidence(subject, evidence)
-    if subject == "DYL_2" and evidence["standardization"]["status"] == "PROPOSED_NOT_APPLIED":
-        stage, blockers = "READY_FOR_STANDARDIZATION", ["standardization and dictionary-map reuse audit have not been applied", "CMRServer04 DNS blocked target-server verification"]
-    else:
-        stage, blockers = evaluated["stage"], evaluated["blockers"]
+    stage, blockers = evaluated["stage"], evaluated["blockers"]
     return {"schema": SCHEMA, "subject": subject, "stage": stage, "raw_audit": evidence["raw_audit"], "protocol_admission": evidence["protocol_admission"], "prepared": evidence["prepared"], "native_dictionary_full": evidence["native_dictionary_full"], "standardization": evidence["standardization"], "dictionary_map_reuse": evidence["dictionary_reuse"], "frozen_dependencies": evidence["frozen_dependencies"], "transfer_server": evidence["server"], "artifacts": {stage_name: {"status": "UNKNOWN_NOT_INSPECTED"} for stage_name in ARTIFACT_STAGES}, "code_sha": _git_sha(), "inspection_time_utc": datetime.now(timezone.utc).isoformat(), "blockers": blockers, "next_action": "run read-only manifest audit" if stage == "BLOCKED" else "run approved standardization dry-run"}
 
 

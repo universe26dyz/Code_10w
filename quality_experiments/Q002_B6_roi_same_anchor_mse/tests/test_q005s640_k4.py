@@ -1,6 +1,11 @@
 """K4 must be a distinct route with no hidden scientific control drift."""
 from __future__ import annotations
 
+from argparse import Namespace
+from pathlib import Path
+
+import pytest
+
 
 def test_q005_k4_differs_from_q002_k8_only_by_training_psf_derived_locations() -> None:
     from quality_experiments.Q002_B6_roi_same_anchor_mse.contracts import Q002S640_EXPERIMENT_ID, Q005S640_K4_EXPERIMENT_ID, build_q002_route_config
@@ -39,3 +44,33 @@ def test_q005_k4_cpu_forward_uses_exactly_2560_locations_and_chunk_four() -> Non
     assert prediction.shape == (640, 10)
     assert psf.requested == [4]
     assert inr.calls == [(2560, 3)]
+
+
+@pytest.mark.parametrize("experiment_id", ("Q002S640_B6_roi_same_anchor_mse", "Q005S640_K4_B6_roi_same_anchor_mse"))
+def test_formal_sparse_routes_require_matching_manifest_and_frozen_dependency_pins(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, experiment_id: str) -> None:
+    from quality_experiments.Q002_B6_roi_same_anchor_mse import run_q002_reconstruction as route
+
+    b6, decoder, protocol = (tmp_path / name for name in ("b6.json", "decoder.pt", "protocol.yaml"))
+    b6.write_text("b6", encoding="utf-8"); decoder.write_text("decoder", encoding="utf-8"); protocol.write_text("protocol", encoding="utf-8")
+    monkeypatch.setattr(route, "B6_CONFIG_SOURCE_SHA256", route._sha256(b6))
+    monkeypatch.setattr(route, "APPROVED_DECODER_SHA256", route._sha256(decoder))
+    manifest = {"subject": "CYJ", "prepared_root": str((tmp_path / "prepared").resolve()), "_manifest_sha256": "a" * 64}
+    seen: list[dict] = []
+    monkeypatch.setattr(route, "validate_sparse_profile_manifest", lambda *_args, **kwargs: seen.append(kwargs) or manifest)
+    args = Namespace(experiment_id=experiment_id, sparse_manifest=str(tmp_path / "sparse.json"), expected_sparse_generator_git_sha="b" * 40, expected_sparse_manifest_sha256="a" * 64, expected_b6_model_sha256=route._sha256(b6), expected_protocol_sha256=route._sha256(protocol), b6_model=str(b6), signal_simulator=str(decoder), protocol=str(protocol), subject_id="CYJ", cropped_prepared_root=str(tmp_path / "prepared"), output=str(tmp_path / "fresh"))
+
+    route.validate_formal_sparse_reconstruction_dependencies(args)
+
+    assert seen == [{"subject": "CYJ", "strict": True, "expected_generator_git_sha": "b" * 40, "expected_manifest_sha256": "a" * 64}]
+    args.expected_sparse_generator_git_sha = None
+    with pytest.raises(ValueError, match="generator"):
+        route.validate_formal_sparse_reconstruction_dependencies(args)
+    args.expected_sparse_generator_git_sha = "b" * 40; args.expected_sparse_manifest_sha256 = "0" * 64
+    with pytest.raises(ValueError, match="manifest SHA256"):
+        route.validate_formal_sparse_reconstruction_dependencies(args)
+    args.expected_sparse_manifest_sha256 = "a" * 64; args.expected_b6_model_sha256 = "0" * 64
+    with pytest.raises(ValueError, match="B6 model SHA256"):
+        route.validate_formal_sparse_reconstruction_dependencies(args)
+    args.expected_b6_model_sha256 = route._sha256(b6); args.expected_protocol_sha256 = "0" * 64
+    with pytest.raises(ValueError, match="protocol SHA256"):
+        route.validate_formal_sparse_reconstruction_dependencies(args)
