@@ -24,6 +24,7 @@ from .fit_first_mask_audit import (
     checkpoint_mask_export_command,
     sample_volume_runtime_command,
 )
+from .fit_first_route_contract import FitFirstFormalRoute, resolve_fit_first_route
 
 
 ENDPOINTS: dict[str, dict[str, Any]] = {
@@ -125,10 +126,11 @@ def fixed_l100_export_manifest(
     *, subject: str, condition: str, endpoint: str, sparse_manifest: str | Path,
     r0_native_maps_root: str | Path, sparse_checkpoint: str | Path, l100_mask: str | Path,
     training_route: str, training_psf: Mapping[str, Any], runtime: Mapping[str, Any] | None = None,
+    l100_route: FitFirstFormalRoute | None = None, sparse_route: FitFirstFormalRoute | None = None,
 ) -> dict[str, Any]:
     """Build the public provenance contract for one Fit-first endpoint export."""
     contract = endpoint_contract(endpoint)
-    return {
+    result = {
         "schema": "phase4r_fixed_l100_fit_first_export/v1",
         "subject": subject,
         "condition": condition,
@@ -149,6 +151,9 @@ def fixed_l100_export_manifest(
         "no_refitting": True,
         "no_reconstruction": True,
     }
+    if l100_route is not None and sparse_route is not None:
+        result["fit_first_routes"] = {"l100": l100_route.provenance(), "sparse": sparse_route.provenance()}
+    return result
 
 
 def _proposed_training_metadata(source_root: Path) -> dict[str, Any]:
@@ -240,13 +245,14 @@ def export_fixed_l100_fit_first(*, subject: str, condition: str, l100_fit_first_
     nesvor_python = nesvor.with_name("python")
     if not nesvor_python.is_file():
         raise FileNotFoundError(f"NeSVoR Python adjacent to executable is unavailable: {nesvor_python}")
+    l100_route, sparse_route = resolve_fit_first_route(l100_root), resolve_fit_first_route(sparse_root)
     output.parent.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(prefix=f".{output.name}.staging-", dir=output.parent))
     try:
         manifests: dict[str, Any] = {}
         for parameter, scale in NORMALIZATION_SCALES.items():
-            l100_checkpoint = l100_root / "nesvor" / parameter / "model.pt"
-            sparse_checkpoint = sparse_root / "nesvor" / parameter / "model.pt"
+            l100_checkpoint = l100_route.models[parameter]
+            sparse_checkpoint = sparse_route.models[parameter]
             for path in (l100_checkpoint, sparse_checkpoint):
                 if not path.is_file():
                     raise FileNotFoundError(path)
@@ -264,6 +270,7 @@ def export_fixed_l100_fit_first(*, subject: str, condition: str, l100_fit_first_
                 subject=subject, condition=condition, endpoint=endpoint, sparse_manifest=sparse_manifest,
                 r0_native_maps_root=r0_cache, sparse_checkpoint=sparse_checkpoint, l100_mask=l100_mask,
                 training_route="Fit-first sparse checkpoint query", training_psf=_training_psf_from_manifest(sparse_payload), runtime=runtime,
+                l100_route=l100_route, sparse_route=sparse_route,
             )
             manifest.update({
                 "parameter": parameter,

@@ -180,7 +180,10 @@ def test_final_audit_rejects_missing_stage2_freeze_evidence(tmp_path: Path, fiel
         audit_intensity_preserving_final_pose(root=root)
 
 
-def test_final_audit_requires_stage2_final_affines_to_equal_frozen_inputs(tmp_path: Path) -> None:
+@pytest.mark.parametrize("translation_shift_mm", [2e-3, 1e-2])
+def test_final_audit_rejects_true_stage2_geometry_drift(
+    tmp_path: Path, translation_shift_mm: float
+) -> None:
     root = tmp_path / "route"; root.mkdir()
     (root / "manifest.json").write_text(json.dumps({"schema": "phase4r_intensity_preserving_fit_first/v1"}))
     (root / "registered_quantitative_inputs_gate.json").write_text(json.dumps({"status": "REGISTERED_QUANTITATIVE_INPUTS_VALID"}))
@@ -189,11 +192,31 @@ def test_final_audit_requires_stage2_final_affines_to_equal_frozen_inputs(tmp_pa
         input_folder.mkdir(parents=True); output_folder.mkdir(parents=True)
         affine = np.eye(4); affine[0, 3] = 3 if parameter == "t1" else 7
         nib.save(nib.Nifti1Image(np.zeros((2, 2, 1)), affine), input_folder / "0.nii.gz")
-        altered = affine.copy(); altered[0, 3] += .01
+        altered = affine.copy(); altered[0, 3] += translation_shift_mm
         nib.save(nib.Nifti1Image(np.zeros((2, 2, 1)), altered), output_folder / "0.nii.gz")
         stage1 = root / f"stage1_registration/{parameter}"; stage1.mkdir(parents=True)
         (stage1 / "result.json").write_text(json.dumps({"registration": "stack"}))
         result = {"input_slices": str(input_folder.resolve()), "input_stacks": None, "output_slices": str(output_folder.resolve()), "no_transformation_optimization": True, "no_slice_scale": True}
         (root / f"stage2_reconstruction/{parameter}/result.json").write_text(json.dumps(result))
-    with pytest.raises(ValueError, match="final affine"):
+    with pytest.raises(ValueError, match="final geometry"):
         audit_intensity_preserving_final_pose(root=root)
+
+
+def test_final_audit_accepts_realistic_float32_affine_round_trip_error(tmp_path: Path) -> None:
+    root = tmp_path / "route"; root.mkdir()
+    (root / "manifest.json").write_text(json.dumps({"schema": "phase4r_intensity_preserving_fit_first/v1"}))
+    (root / "registered_quantitative_inputs_gate.json").write_text(json.dumps({"status": "REGISTERED_QUANTITATIVE_INPUTS_VALID"}))
+    for parameter in ("t1", "t2"):
+        input_folder = root / f"registered_quantitative_inputs/{parameter}/slices"; output_folder = root / f"stage2_reconstruction/{parameter}/slices"
+        input_folder.mkdir(parents=True); output_folder.mkdir(parents=True)
+        affine = np.eye(4); affine[0, 3] = 3 if parameter == "t1" else 7
+        nib.save(nib.Nifti1Image(np.zeros((2, 2, 1)), affine), input_folder / "0.nii.gz")
+        rounded = affine.copy(); rounded[0, 3] += 5e-5
+        nib.save(nib.Nifti1Image(np.zeros((2, 2, 1)), rounded), output_folder / "0.nii.gz")
+        stage1 = root / f"stage1_registration/{parameter}"; stage1.mkdir(parents=True)
+        (stage1 / "result.json").write_text(json.dumps({"registration": "stack"}))
+        result = {"input_slices": str(input_folder.resolve()), "input_stacks": None, "output_slices": str(output_folder.resolve()), "no_transformation_optimization": True, "no_slice_scale": True}
+        (root / f"stage2_reconstruction/{parameter}/result.json").write_text(json.dumps(result))
+    audit = json.loads(audit_intensity_preserving_final_pose(root=root).read_text())
+    assert audit["parameters"]["t1"]["stage2_input_vs_final"]["status"] == "PASS_GEOMETRY_EQUIVALENT"
+    assert audit["parameters"]["t1"]["stage2_input_vs_final"]["raw_affine_max_abs_error"] > VALUE_TOLERANCE

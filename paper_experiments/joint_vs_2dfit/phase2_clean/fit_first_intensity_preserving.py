@@ -21,12 +21,13 @@ import numpy as np
 
 from .contracts import HISTORICAL_NESVOR_EXECUTABLE_DEFAULT, sha256, write_immutable_json
 from .fit_first import STACKS, export_nesvor_native_inputs
+from .fit_first_native_pose_audit import _GEOMETRY_EQUIVALENCE_TOL_MM, _VALUE_CORRESPONDENCE_TOL
 from .reuse_standardized_native_dictionary_maps import validate_standardized_native_dictionary_reuse
 from .sparse_profile_manifest import validate_sparse_profile_manifest
 
 PARAMETERS = ("t1", "t2")
 SCALES = {"t1": 2500.0, "t2": 200.0}
-VALUE_TOLERANCE = 1.0e-5
+VALUE_TOLERANCE = _VALUE_CORRESPONDENCE_TOL
 REGISTRATION_SCHEMA = "phase4r_fit_first_registration_stage/v1"
 INPUT_SCHEMA = "phase4r_fit_first_registered_quantitative_inputs/v1"
 ROUTE_SCHEMA = "phase4r_intensity_preserving_fit_first/v1"
@@ -63,6 +64,22 @@ def _slice_paths(folder: Path) -> list[Path]:
 
 def _flip_for_affine(affine: np.ndarray) -> bool:
     return bool(np.linalg.det(np.asarray(affine, float)[:3, :3]) < 0)
+
+
+def _physical_slice_geometry_equivalence(initial_path: Path, final_path: Path) -> dict[str, Any]:
+    """Compare NIfTI slice geometry in physical RAS space, not raw floats."""
+    import nibabel as nib
+
+    initial, final = nib.load(str(initial_path)), nib.load(str(final_path))
+    if initial.shape != final.shape or len(initial.shape) != 3 or initial.shape[2] != 1:
+        raise ValueError(f"{final_path}: Stage-2 final slice shape differs from frozen input")
+    shape = initial.shape
+    points = np.asarray(((0., 0., 0., 1.), (shape[0] - 1., 0., 0., 1.), (0., shape[1] - 1., 0., 1.), (shape[0] - 1., shape[1] - 1., 0., 1.), ((shape[0] - 1.) / 2., (shape[1] - 1.) / 2., 0., 1.)))
+    initial_world, final_world = (np.asarray(initial.affine, float) @ points.T).T[:, :3], (np.asarray(final.affine, float) @ points.T).T[:, :3]
+    errors = np.linalg.norm(initial_world - final_world, axis=1)
+    spacing_error = float(max(abs(np.linalg.norm(initial.affine[:3, axis]) - np.linalg.norm(final.affine[:3, axis])) for axis in (0, 1)))
+    raw = float(np.max(np.abs(np.asarray(initial.affine, float) - np.asarray(final.affine, float))))
+    return {"max_world_error_mm": float(errors.max()), "corner_max_error_mm": float(errors[:4].max()), "center_error_mm": float(errors[4]), "spacing_error_mm": spacing_error, "raw_affine_max_abs_error": raw, "geometry_equivalence_tolerance_mm": _GEOMETRY_EQUIVALENCE_TOL_MM, "status": "PASS_GEOMETRY_EQUIVALENT" if max(float(errors.max()), spacing_error) <= _GEOMETRY_EQUIVALENCE_TOL_MM else "FAIL_GEOMETRY_MISMATCH"}
 
 
 def _validate_prepared_root(prepared_root: str | Path | None, sparse: dict[str, Any] | None) -> Path | None:
@@ -262,21 +279,19 @@ def audit_intensity_preserving_final_pose(*, root: str | Path) -> Path:
         expected_output = str((base / "stage2_reconstruction" / parameter / "slices").resolve())
         if str(stage2_args.get("output_slices", "")) != expected_output:
             raise ValueError(f"{parameter}: Stage 2 output_slices provenance mismatch")
-        # For individual --input-slices, NeSVoR load_slices/save_slices uses
-        # affine2transformation/transformation2affine.  With rigid updates
-        # disabled this is a direct affine round-trip, so raw RAS affine
-        # equality is the applicable semantic geometry gate.
-        import nibabel as nib
+        # NeSVoR's float32 load/save can perturb raw NIfTI affine elements.
+        # Formal admission therefore compares physical sampled points and
+        # spacing, matching the historical native-pose geometry contract.
         inputs, outputs = _slice_paths(Path(expected)), _slice_paths(Path(expected_output))
         if len(inputs) != len(outputs):
             raise ValueError(f"{parameter}: Stage-2 input/output slice count mismatch")
-        affine_error = 0.0
+        geometry_records = []
         for initial, final in zip(inputs, outputs):
-            error = float(np.max(np.abs(np.asarray(nib.load(str(initial)).affine, float) - np.asarray(nib.load(str(final)).affine, float))))
-            if error > VALUE_TOLERANCE:
-                raise ValueError(f"{parameter}: Stage-2 final affine differs from frozen registered input")
-            affine_error = max(affine_error, error)
-        records[parameter] = {"stage1_registration": _record(stage1_result), "stage2_reconstruction": _record(stage2_result), "stage1_pose_semantics": "authoritative final rigid pose; optimisation enabled", "stage2_pose_semantics": "no registration and no transformation optimisation; frozen Stage-1 affine is consumed through --input-slices", "stage2_input_slices": expected, "stage2_final_affine_max_abs_error": affine_error, "no_transformation_optimization": True, "no_slice_scale": True}
+            geometry = _physical_slice_geometry_equivalence(initial, final)
+            if geometry["status"] != "PASS_GEOMETRY_EQUIVALENT":
+                raise ValueError(f"{parameter}: Stage-2 final geometry differs from frozen registered input")
+            geometry_records.append(geometry)
+        records[parameter] = {"stage1_registration": _record(stage1_result), "stage2_reconstruction": _record(stage2_result), "stage1_pose_semantics": "authoritative final rigid pose; optimisation enabled", "stage2_pose_semantics": "no registration and no transformation optimisation; frozen Stage-1 affine is consumed through --input-slices", "stage2_input_slices": expected, "stage2_input_vs_final": {"geometry_equivalence_tolerance_mm": _GEOMETRY_EQUIVALENCE_TOL_MM, "max_world_error_mm": max(item["max_world_error_mm"] for item in geometry_records), "corner_max_error_mm": max(item["corner_max_error_mm"] for item in geometry_records), "center_error_mm": max(item["center_error_mm"] for item in geometry_records), "spacing_error_mm": max(item["spacing_error_mm"] for item in geometry_records), "raw_affine_max_abs_error": max(item["raw_affine_max_abs_error"] for item in geometry_records), "status": "PASS_GEOMETRY_EQUIVALENT"}, "no_transformation_optimization": True, "no_slice_scale": True}
     output = base / "final_pose_audit.json"
     write_immutable_json(output, {"schema": "fit_first_intensity_preserving_final_pose_audit/v1", "status": "POSE_STAGE1_AND_QUANTITATIVE_STAGE2_VALID", "route_manifest": _record(base / "manifest.json"), "quantitative_input_gate": _record(gate_path), "pose_authority": "Stage-1 final registered slices", "quantitative_value_authority": "standardized native dictionary maps", "parameters": records, "stage2_registration_assertion": "Stage-2 receives --input-slices, bypasses Reconstruct._register, and result.json proves no_transformation_optimization=true", "immutable": True})
     return output

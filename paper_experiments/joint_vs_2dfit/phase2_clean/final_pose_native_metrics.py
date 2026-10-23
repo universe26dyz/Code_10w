@@ -32,7 +32,7 @@ def build_final_pose_native_metrics(*, direct_bundle_root: str | Path, fit_first
     sparse_payload = json.loads(Path(sparse_manifest).read_text(encoding="utf-8"))
     if direct_manifest.get("schema") != "direct_native_prediction_bundle/v1":
         raise ValueError("direct bundle schema mismatch")
-    if fit_manifest.get("schema") != "fit_first_native_prediction_bundle/v2":
+    if fit_manifest.get("schema") not in ("fit_first_native_prediction_bundle/v2", "fit_first_native_prediction_bundle/v3"):
         raise ValueError("Fit-first bundle schema mismatch")
     if direct_manifest.get("endpoint") != fit_manifest.get("endpoint"):
         raise ValueError("endpoint mismatch: direct and Fit-first final-pose bundles must match")
