@@ -73,7 +73,9 @@ def test_central_only_keeps_k8_training_and_writes_only_central_endpoint(monkeyp
     assert ("psf128", "called") not in calls
     assert manifest["endpoint_policy"] == "central_only"
     assert manifest["formal_endpoint"] == "central"
-    assert manifest["output_sampling_psf_samples"] == 1
+    assert manifest["training_psf_samples"] == 8
+    assert manifest["central_output_sampling_psf_samples"] == 1
+    assert "output_sampling_psf_samples" not in manifest
     assert manifest["psf128_export_generated"] is False
     assert manifest["signal_psf_k8_generated"] is False
     assert "psf128_contract" not in manifest
@@ -91,8 +93,11 @@ def test_legacy_policy_is_default_and_retains_psf128_and_k8_signal(monkeypatch: 
     assert any("signal_psf_K8" in target for name, target in calls if name == "native")
     assert ("psf128", "called") in calls
     assert manifest["endpoint_policy"] == "legacy"
+    assert manifest["central_output_sampling_psf_samples"] == 1
+    assert "output_sampling_psf_samples" not in manifest
     assert manifest["psf128_export_generated"] is True
     assert manifest["signal_psf_k8_generated"] is True
+    assert manifest["psf128_contract"] == {"resolution_mm": 1.0, "factor": 1.0, "samples": 128, "seed": 20260911}
 
 
 def test_central_only_cannot_change_historical_k4_route(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

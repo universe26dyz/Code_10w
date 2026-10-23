@@ -518,12 +518,16 @@ def _plot_native_mosaic(path: Path, rows: list[Any], *, title: str, component_di
             if column == 0:
                 axis.set_ylabel(group_label, fontsize=8)
             axis.set_xticks([]); axis.set_yticks([])
-            if not panel["label"].startswith("|"):
+            panel_kind = str(panel.get("kind", "map_ms"))
+            if panel_kind != "absolute_error_ms":
                 map_handle = image
             if component_directory is not None:
                 component_path = _component_path(component_directory, row=row_index, column=column, label=str(panel["label"]))
                 _save_text_free_image_component(component_path, shown, extent=extent, cmap=panel["cmap"], limits=panel["range_ms"], contour=contour)
-                assets["components"].append({"file": _component_record_path(component_directory, component_path), "kind": "absolute_error_ms" if str(panel["label"]).startswith("|") else "map_ms", "row": row_index, "column": column, "original_group_idx": group, "group_label": group_label, "label": panel["label"], "cmap": panel["cmap"].name, "range_ms": list(panel["range_ms"]), "extent_mm": list(extent), "contour_overlay": bool(contour is not None and np.any(contour)), "text_free": True, "derived_from_same_render_data": True})
+                component = {"file": _component_record_path(component_directory, component_path), "kind": panel_kind, "row": row_index, "column": column, "original_group_idx": group, "group_label": group_label, "label": panel["label"], "displayed_quantity": panel.get("displayed_quantity", "quantitative_map_ms"), "cmap": panel["cmap"].name, "range_ms": list(panel["range_ms"]), "extent_mm": list(extent), "contour_overlay": bool(contour is not None and np.any(contour)), "text_free": True, "derived_from_same_render_data": True}
+                if panel.get("method") is not None:
+                    component["method"] = panel["method"]
+                assets["components"].append(component)
     map_colorbar_axis = figure.add_subplot(grid[:, panel_count])
     if map_handle is None:
         raise ValueError("native mosaic needs a quantitative-map panel")
@@ -952,7 +956,7 @@ def _render_native_stack(config: Mapping[str, Any], output: Path, inputs: dict[s
             masks, mask_provenance = load_validated_current_native_mask_plane(formal_mask_root, parameter=parameter, stack=stack, original_group_idx=group, shape_rc=tuple(reference.shape), source_support=source_support)
             support = np.asarray(masks["primary_native_mask"], bool)
             mask_artifacts.append(mask_provenance)
-            panels = [{"label": "Native reference", "values": reference, "support": support & np.isfinite(reference), "cmap": cmap, "range_ms": limits}]
+            panels = [{"label": "Native reference", "kind": "reference_ms", "displayed_quantity": "quantitative_map_ms", "values": reference, "support": support & np.isfinite(reference), "cmap": cmap, "range_ms": limits}]
             method_panels: list[tuple[str, np.ndarray, np.ndarray]] = []
             for method, (kind, source) in method_sources.items():
                 if kind == "direct_native_bundle":
@@ -978,8 +982,8 @@ def _render_native_stack(config: Mapping[str, Any], output: Path, inputs: dict[s
                     values, valid = reproject_volume_to_native_plane(image.get_fdata(), image.affine, affine, source_support.shape)
                 available = support & valid & np.isfinite(reference) & np.isfinite(values)
                 method_panels.append((method, values, available))
-            panels.extend({"label": method, "values": values, "support": available, "cmap": cmap, "range_ms": limits} for method, values, available in method_panels)
-            panels.extend({"label": f"|{method} − Native|", "values": np.abs(values - reference), "support": available, "cmap": cmap, "range_ms": limits} for method, values, available in method_panels)
+            panels.extend({"label": method, "kind": "map_ms", "method": method, "displayed_quantity": "quantitative_map_ms", "values": values, "support": available, "cmap": cmap, "range_ms": limits} for method, values, available in method_panels)
+            panels.extend({"label": f"|{method} − Native|", "kind": "absolute_error_ms", "method": method, "displayed_quantity": "absolute_error_ms", "values": np.abs(values - reference), "support": available, "cmap": cmap, "range_ms": limits} for method, values, available in method_panels)
             spacing = np.asarray(selected["pixel_spacing_rc_mm"][index], float)
             extent = [0.0, float(source_support.shape[0] - 1) * spacing[0], 0.0, float(source_support.shape[1] - 1) * spacing[1]]
             mosaic_rows.append({"group_idx": group, "group_label": native_group_label(group, group_statuses[group]), "panels": panels, "extent": extent, "contour": contour})
@@ -987,7 +991,7 @@ def _render_native_stack(config: Mapping[str, Any], output: Path, inputs: dict[s
         filename = f"native_{stack}_group{display_groups[0]}_{display_parameter}.png" if mode == "single" else f"native_{stack}_{mode}_{display_parameter}.png"
         assets = _plot_native_mosaic(output / filename, mosaic_rows, title=f"{config['subject']} {config['condition']} {config['endpoint']} — {stack} native {mode} {display_parameter}", component_directory=output / "components" / Path(filename).stem)
         inputs.setdefault("native_mask_manifest", _file_record(formal_mask_root / "manifest.json"))
-        records.append({"parameter": display_parameter, "file": filename, "component_directory": f"components/{Path(filename).stem}", "components": [{**component, "parameter": display_parameter, "displayed_quantity": component["kind"], "stack": stack, "support_semantics": "primary_native_mask AND finite(reference); per-method panels additionally require endpoint-valid AND finite(prediction)"} for component in assets["components"]], "colorbar_component": assets["colorbar"], "stack": stack, "mode": mode, "original_group_idx": display_groups[0] if mode == "single" else None, "original_group_ids": display_groups, "displayed_groups": [{"group_idx": group, "status": group_statuses[group], "label": native_group_label(group, group_statuses[group])} for group in display_groups], "native_reference": provenance, "primary_native_mask": "primary_native_mask", "mask_artifacts": mask_artifacts, "plane_shapes_rc": shapes, "display_support": "primary_native_mask AND finite(reference); per-method panels additionally require endpoint-valid AND finite(prediction)", "interpolation": {"map": "linear", "mask": "artifact-defined native-plane support"}, "no_auto_crop": True, "physical_aspect_ratio_preserved": True, "colorbars": {"shared_parameter": "dedicated_axis", "range_ms": list(limits), "colormap": "same_parameter_map_lut"}, "error_display": {"quantity": "absolute_error_ms", "colormap": "same_parameter_map_lut", "range_ms": list(limits), "no_residual_colorbar": True}})
+        records.append({"parameter": display_parameter, "file": filename, "component_directory": f"components/{Path(filename).stem}", "components": [{**component, "parameter": display_parameter, "stack": stack, "support_semantics": "primary_native_mask AND finite(reference); per-method panels additionally require endpoint-valid AND finite(prediction)"} for component in assets["components"]], "colorbar_component": assets["colorbar"], "stack": stack, "mode": mode, "original_group_idx": display_groups[0] if mode == "single" else None, "original_group_ids": display_groups, "displayed_groups": [{"group_idx": group, "status": group_statuses[group], "label": native_group_label(group, group_statuses[group])} for group in display_groups], "native_reference": provenance, "primary_native_mask": "primary_native_mask", "mask_artifacts": mask_artifacts, "plane_shapes_rc": shapes, "display_support": "primary_native_mask AND finite(reference); per-method panels additionally require endpoint-valid AND finite(prediction)", "interpolation": {"map": "linear", "mask": "artifact-defined native-plane support"}, "no_auto_crop": True, "physical_aspect_ratio_preserved": True, "colorbars": {"shared_parameter": "dedicated_axis", "range_ms": list(limits), "colormap": "same_parameter_map_lut"}, "error_display": {"quantity": "absolute_error_ms", "colormap": "same_parameter_map_lut", "range_ms": list(limits), "no_residual_colorbar": True}})
     return records
 
 

@@ -274,16 +274,26 @@ def test_native_mosaic_writes_one_text_free_component_per_cell_without_name_coll
     from paper_experiments.joint_vs_2dfit.phase2_clean import final_cyj_reporting as reporting
 
     values = np.full((2, 3), 1000.0)
-    panel = lambda label: {"label": label, "values": values, "support": np.ones_like(values, bool), "cmap": reporting.colorbars().mapping["T1"], "range_ms": (0.0, 2500.0)}
+    def panel(label: str, kind: str, method: str | None = None) -> dict[str, object]:
+        record: dict[str, object] = {"label": label, "kind": kind, "displayed_quantity": "absolute_error_ms" if kind == "absolute_error_ms" else "quantitative_map_ms", "values": values, "support": np.ones_like(values, bool), "cmap": reporting.colorbars().mapping["T1"], "range_ms": (0.0, 2500.0)}
+        if method is not None:
+            record["method"] = method
+        return record
     rows = [
-        {"group_idx": 3, "group_label": "group 03 [held-out]", "panels": [panel("Native reference"), panel("Fit-first"), panel("|Fit-first − Native|")], "extent": [0.0, 2.0, 0.0, 6.0], "contour": values > 0},
-        {"group_idx": 8, "group_label": "group 08 [held-out]", "panels": [panel("Native reference"), panel("Fit-first"), panel("|Fit-first − Native|")], "extent": [0.0, 2.0, 0.0, 6.0], "contour": values > 0},
+        {"group_idx": 3, "group_label": "group 03 [held-out]", "panels": [panel("Native reference", "reference_ms"), panel("Fit-first", "map_ms", "Fit-first"), panel("Q002S640", "map_ms", "Q002S640"), panel("|Fit-first − Native|", "absolute_error_ms", "Fit-first"), panel("|Q002S640 − Native|", "absolute_error_ms", "Q002S640")], "extent": [0.0, 2.0, 0.0, 6.0], "contour": values > 0},
+        {"group_idx": 8, "group_label": "group 08 [held-out]", "panels": [panel("Native reference", "reference_ms"), panel("Fit-first", "map_ms", "Fit-first"), panel("Q002S640", "map_ms", "Q002S640"), panel("|Fit-first − Native|", "absolute_error_ms", "Fit-first"), panel("|Q002S640 − Native|", "absolute_error_ms", "Q002S640")], "extent": [0.0, 2.0, 0.0, 6.0], "contour": values > 0},
     ]
     assets = reporting._plot_native_mosaic(tmp_path / "mosaic.png", rows, title="composite", component_directory=tmp_path / "components" / "mosaic")
 
-    assert (tmp_path / "mosaic.png").is_file() and len(assets["components"]) == 6
-    assert len({record["file"] for record in assets["components"]}) == 6
-    assert {(record["row"], record["column"], record["original_group_idx"]) for record in assets["components"]} == {(row, column, group) for row, group in enumerate((3, 8)) for column in range(3)}
+    assert (tmp_path / "mosaic.png").is_file() and len(assets["components"]) == 10
+    assert len({record["file"] for record in assets["components"]}) == 10
+    assert {(record["row"], record["column"], record["original_group_idx"]) for record in assets["components"]} == {(row, column, group) for row, group in enumerate((3, 8)) for column in range(5)}
+    reference, fit, q002, fit_error, q002_error = assets["components"][:5]
+    assert reference["kind"] == "reference_ms" and "method" not in reference and reference["displayed_quantity"] == "quantitative_map_ms"
+    assert (fit["kind"], fit["method"], fit["displayed_quantity"]) == ("map_ms", "Fit-first", "quantitative_map_ms")
+    assert (q002["kind"], q002["method"]) == ("map_ms", "Q002S640")
+    assert (fit_error["kind"], fit_error["method"], fit_error["displayed_quantity"]) == ("absolute_error_ms", "Fit-first", "absolute_error_ms")
+    assert (q002_error["kind"], q002_error["method"]) == ("absolute_error_ms", "Q002S640")
     assert all(record["text_free"] and record["contour_overlay"] for record in assets["components"])
     assert (tmp_path / assets["colorbar"]["file"]).is_file()
 
@@ -358,6 +368,14 @@ def test_all_groups_native_render_uses_every_heldout_group_and_records_mode(monk
     assert [panel["label"] for panel in rendered[0][0]["panels"]] == expected_columns
     assert all(panel["cmap"].name == rendered[0][0]["panels"][0]["cmap"].name and panel["range_ms"] == rendered[0][0]["panels"][0]["range_ms"] for panel in rendered[0][0]["panels"])
     assert all((tmp_path / record["file"]).is_file() for record in records)
+    components = records[0]["components"]
+    assert next(component for component in components if component["label"] == "Native reference")["kind"] == "reference_ms"
+    assert "method" not in next(component for component in components if component["label"] == "Native reference")
+    assert next(component for component in components if component["label"] == "Fit-first")["method"] == "Fit-first"
+    assert next(component for component in components if component["label"] == "Q002S640")["method"] == "Q002S640"
+    assert next(component for component in components if component["label"] == "|Fit-first − Native|")["method"] == "Fit-first"
+    assert next(component for component in components if component["label"] == "|Q002S640 − Native|")["method"] == "Q002S640"
+    assert all((tmp_path / component["file"]).is_file() for component in components)
 
 
 def test_formal_native_mosaic_fails_closed_on_missing_current_mask_plane(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

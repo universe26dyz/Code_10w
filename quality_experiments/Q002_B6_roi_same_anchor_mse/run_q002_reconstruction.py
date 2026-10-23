@@ -215,7 +215,7 @@ def run(args: argparse.Namespace) -> Path:
         "endpoint_policy": endpoint_policy,
         "formal_endpoint": "central" if endpoint_policy == "central_only" else "central_and_posthoc_psf128",
         "training_psf_samples": int(route["route"]["sampling"]["shared_training_psf_samples"]),
-        "output_sampling_psf_samples": 1,
+        "central_output_sampling_psf_samples": 1,
         "central_output_semantics": "local central coordinate; no post-hoc map-domain PSF",
         "signal_psf_k8_generated": endpoint_policy == "legacy" and args.experiment_id != Q002S640_K256_EXPERIMENT_ID,
         "psf128_export_generated": endpoint_policy == "legacy",
