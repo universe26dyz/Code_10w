@@ -27,6 +27,7 @@ PROFILE_ID = "S2CH100_4CH50"
 Q002_ROUTE = "Q002S640_B6_roi_same_anchor_mse"
 Q005_ROUTE = "Q005S640_K4_B6_roi_same_anchor_mse"
 METHODS = ("Q002S640", "Q005S640_K4", "Fit-first")
+FIT_FIRST_TRAINING_ROUTES = frozenset(("Fit-first sparse checkpoint query",))
 
 
 def _metrics(reference: np.ndarray, prediction: np.ndarray, support: np.ndarray) -> dict[str, float]:
@@ -106,9 +107,33 @@ def _validate_fit_first_identity(root: str | Path) -> tuple[Path, dict[str, Any]
     path, manifest = _manifest(root)
     if manifest.get("schema") != "phase4r_fixed_l100_fit_first_export_bundle/v1" or manifest.get("method") != "Fit-first":
         raise ValueError("Fit-first endpoint identity is invalid")
-    route = manifest.get("training_route")
-    if not isinstance(route, str) or not route.startswith("Fit-first"):
-        raise ValueError("Fit-first endpoint training route identity is invalid")
+    parameters = manifest.get("parameters")
+    if not isinstance(parameters, Mapping):
+        raise ValueError("Fit-first endpoint bundle lacks parameter manifests")
+    for parameter in ("t1", "t2"):
+        embedded = parameters.get(parameter)
+        parameter_path = Path(root) / parameter / "manifest.json"
+        if not isinstance(embedded, Mapping):
+            raise ValueError(f"Fit-first endpoint bundle lacks embedded {parameter} manifest")
+        if not parameter_path.is_file():
+            raise FileNotFoundError(parameter_path)
+        parameter_manifest = json.loads(parameter_path.read_text(encoding="utf-8"))
+        if embedded != parameter_manifest:
+            raise ValueError(f"Fit-first embedded {parameter} manifest disagrees with disk manifest")
+        if parameter_manifest.get("schema") != "phase4r_fixed_l100_fit_first_export/v1" or parameter_manifest.get("method") != "Fit-first" or parameter_manifest.get("parameter") != parameter:
+            raise ValueError(f"Fit-first {parameter} parameter manifest identity is invalid")
+        for field in ("subject", "condition", "endpoint"):
+            if parameter_manifest.get(field) != manifest.get(field):
+                raise ValueError(f"Fit-first {parameter} parameter manifest {field} disagrees with bundle")
+        if parameter_manifest.get("training_route") not in FIT_FIRST_TRAINING_ROUTES:
+            raise ValueError(f"Fit-first {parameter} parameter manifest training route identity is invalid")
+        volume = Path(root) / parameter / "volume_ms.nii.gz"
+        if not volume.is_file():
+            raise FileNotFoundError(volume)
+        provenance = parameter_manifest.get("output_volume_ms")
+        if provenance is not None:
+            if not isinstance(provenance, Mapping) or not isinstance(provenance.get("path"), str) or not isinstance(provenance.get("sha256"), str) or sha256(volume) != provenance["sha256"]:
+                raise ValueError(f"Fit-first {parameter} output_volume_ms provenance mismatch")
     return path, manifest
 
 

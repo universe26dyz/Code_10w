@@ -16,12 +16,17 @@ CASE = "S2CH100_4CH50_fold0"
 
 def _endpoint(root: Path, *, method: str, endpoint: str = "central", condition: str = CASE, samples: int | None = None) -> Path:
     root.mkdir(parents=True)
+    fit_parameters = {}
     for parameter, value in (("t1", 900.0), ("t2", 70.0)):
         path = root / (f"{parameter.upper()}_3D.nii.gz" if method != "Fit-first" else f"{parameter}/volume_ms.nii.gz")
         path.parent.mkdir(parents=True, exist_ok=True)
         nib.save(nib.Nifti1Image(np.full((4, 4, 4), value, np.float32), np.eye(4)), str(path))
+        if method == "Fit-first":
+            parameter_manifest = {"schema": "phase4r_fixed_l100_fit_first_export/v1", "subject": "CYJ", "condition": condition, "endpoint": endpoint, "method": "Fit-first", "parameter": parameter, "training_route": "Fit-first sparse checkpoint query", "output_volume_ms": {"path": str(path.resolve()), "sha256": sha256(path)}}
+            (path.parent / "manifest.json").write_text(json.dumps(parameter_manifest), encoding="utf-8")
+            fit_parameters[parameter] = parameter_manifest
     if method == "Fit-first":
-        manifest = {"schema": "phase4r_fixed_l100_fit_first_export_bundle/v1", "subject": "CYJ", "condition": condition, "endpoint": endpoint, "method": "Fit-first", "training_route": "Fit-first sparse checkpoint query"}
+        manifest = {"schema": "phase4r_fixed_l100_fit_first_export_bundle/v1", "subject": "CYJ", "condition": condition, "endpoint": endpoint, "method": "Fit-first", "parameters": fit_parameters, "no_training": True, "no_refitting": True, "no_reconstruction": True}
     else:
         route = "Q002S640_B6_roi_same_anchor_mse" if method == "Q002S640" else "Q005S640_K4_B6_roi_same_anchor_mse"
         manifest = {"schema": "phase4r_formal_proposed_export/v1", "subject": "CYJ", "condition": condition, "endpoint": endpoint, "method": "Proposed", "training_route": route, "training_psf": {"training_psf_samples": samples}}
@@ -114,3 +119,39 @@ def test_low_level_empty_common_support_fails_closed(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="common support is empty"):
         evaluate_method_selection_common_support(reference=np.array([1.0]), q002=np.array([np.nan]), q005=np.array([1.0]), fit_first=np.array([1.0]), primary_native_mask=np.ones(1, bool), q002_endpoint_valid=np.ones(1, bool), q005_endpoint_valid=np.ones(1, bool), fit_first_endpoint_valid=np.ones(1, bool), endpoint="central", parameter="t1_ms", output=tmp_path / "empty.json")
+
+
+def test_fit_first_identity_reads_route_from_parameter_manifests_not_bundle_root(tmp_path: Path) -> None:
+    from paper_experiments.joint_vs_2dfit.phase2_clean.final_method_selection_metrics import _validate_fit_first_identity
+
+    root = _endpoint(tmp_path / "fit", method="Fit-first")
+    _validate_fit_first_identity(root)
+    bundle = json.loads((root / "manifest.json").read_text(encoding="utf-8")); bundle["training_route"] = "not used by the bundle contract"
+    (root / "manifest.json").write_text(json.dumps(bundle), encoding="utf-8")
+    _validate_fit_first_identity(root)
+
+
+@pytest.mark.parametrize(("target", "error"), (("missing_t1", "t1"), ("missing_t2", "t2"), ("bad_route", "training route"), ("bad_endpoint", "endpoint"), ("bad_condition", "condition"), ("bad_subject", "subject"), ("embedded_mismatch", "embedded"), ("missing_volume", "volume_ms"), ("volume_hash", "output_volume_ms")))
+def test_fit_first_identity_rejects_invalid_parameter_artifacts(tmp_path: Path, target: str, error: str) -> None:
+    from paper_experiments.joint_vs_2dfit.phase2_clean.final_method_selection_metrics import _validate_fit_first_identity
+
+    root = _endpoint(tmp_path / "fit", method="Fit-first")
+    if target == "missing_t1":
+        (root / "t1" / "manifest.json").unlink()
+    elif target == "missing_t2":
+        (root / "t2" / "manifest.json").unlink()
+    elif target == "bad_route":
+        key, value = "training_route", "other"
+        path = root / "t1" / "manifest.json"; payload = json.loads(path.read_text(encoding="utf-8")); payload[key] = value; path.write_text(json.dumps(payload), encoding="utf-8")
+        bundle_path = root / "manifest.json"; bundle = json.loads(bundle_path.read_text(encoding="utf-8")); bundle["parameters"]["t1"][key] = value; bundle_path.write_text(json.dumps(bundle), encoding="utf-8")
+    elif target in {"bad_endpoint", "bad_condition", "bad_subject"}:
+        key = target.removeprefix("bad_"); path = root / "t1" / "manifest.json"; payload = json.loads(path.read_text(encoding="utf-8")); payload[key] = "other"; path.write_text(json.dumps(payload), encoding="utf-8")
+        bundle_path = root / "manifest.json"; bundle = json.loads(bundle_path.read_text(encoding="utf-8")); bundle["parameters"]["t1"][key] = "other"; bundle_path.write_text(json.dumps(bundle), encoding="utf-8")
+    elif target == "embedded_mismatch":
+        path = root / "manifest.json"; payload = json.loads(path.read_text(encoding="utf-8")); payload["parameters"]["t1"]["training_route"] = "other"; path.write_text(json.dumps(payload), encoding="utf-8")
+    elif target == "missing_volume":
+        (root / "t1" / "volume_ms.nii.gz").unlink()
+    elif target == "volume_hash":
+        (root / "t1" / "volume_ms.nii.gz").write_bytes(b"changed")
+    with pytest.raises((FileNotFoundError, ValueError), match=error):
+        _validate_fit_first_identity(root)
