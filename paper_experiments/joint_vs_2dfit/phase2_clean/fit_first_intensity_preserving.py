@@ -32,9 +32,11 @@ INPUT_SCHEMA = "phase4r_fit_first_registered_quantitative_inputs/v1"
 ROUTE_SCHEMA = "phase4r_intensity_preserving_fit_first/v1"
 
 
-def q99_normalisation_multiplier(values: np.ndarray) -> float:
+def q99_normalisation_multiplier(values: np.ndarray, foreground: np.ndarray | None = None) -> float:
     """Expose the Stage-1 q99 effect for regression evidence, not correction."""
-    finite = np.asarray(values, float)[np.isfinite(values)]
+    value_array = np.asarray(values, float)
+    support = np.isfinite(value_array) if foreground is None else (np.isfinite(value_array) & np.asarray(foreground, bool))
+    finite = value_array[support]
     if not finite.size:
         raise ValueError("q99 normalisation requires finite foreground")
     q99 = float(np.quantile(finite, 0.99))
@@ -63,8 +65,24 @@ def _flip_for_affine(affine: np.ndarray) -> bool:
     return bool(np.linalg.det(np.asarray(affine, float)[:3, :3]) < 0)
 
 
+def _validate_prepared_root(prepared_root: str | Path | None, sparse: dict[str, Any] | None) -> Path | None:
+    """Admit the wrapper's prepared root only when it is manifest evidence."""
+    if prepared_root is None:
+        return None
+    if sparse is None or not isinstance(sparse.get("prepared_root"), str):
+        raise ValueError("prepared_root requires a validated sparse-profile prepared_root")
+    supplied, expected = Path(prepared_root).resolve(), Path(sparse["prepared_root"]).resolve()
+    if supplied != expected:
+        raise ValueError(f"prepared_root {supplied} does not match validated sparse manifest {expected}")
+    return supplied
+
+
 def _selected_standardized_maps(*, standardized_root: Path, reuse: dict[str, Any], sparse: dict[str, Any] | None, output: Path) -> tuple[Path, list[str], dict[str, Any]]:
-    """Materialise only active manifest groups, retaining physical group identity."""
+    """Materialise active groups in *standardized* group-ID space.
+
+    Pre-standardization IDs are audit provenance only; sparse selection is
+    entirely over the IDs present in standardized observations/native maps.
+    """
     native = output / "native_maps"
     native.mkdir(parents=True)
     records: dict[str, Any] = {}
@@ -72,34 +90,40 @@ def _selected_standardized_maps(*, standardized_root: Path, reuse: dict[str, Any
     standardization = json.loads(Path(reuse["standardization_manifest"]["path"]).read_text(encoding="utf-8"))
     for stack in STACKS:
         mapping = reuse["stacks"][stack]["standardized_to_original_group_idx"]
-        original_ids = [int(item["original_group_idx"]) for item in mapping]
+        standardized_ids = [int(item["derived_group_idx"]) for item in mapping]
+        prestandardized_by_standardized = {int(item["derived_group_idx"]): int(item["original_group_idx"]) for item in mapping}
         if sparse is None:
-            retained = original_ids
+            retained = standardized_ids
             present = True
         else:
             item = sparse["stacks"][stack]
-            if item["source_observation"]["sha256"] != standardization["stacks"][stack]["source_observation"]["sha256"]:
-                raise ValueError(f"{stack}: sparse source identity does not match standardized dictionary source")
+            output_observation = standardization["stacks"][stack]["output_observation"]
+            sparse_source = item["source_observation"]
+            if sparse_source["sha256"] != output_observation["sha256"] or Path(sparse_source["path"]).resolve() != Path(output_observation["path"]).resolve():
+                raise ValueError(f"{stack}: sparse source identity must match standardized output observation")
             retained = [int(x) for x in item["retained_original_group_ids"]]
             present = bool(item["training_stack_present"])
             if present != bool(retained):
                 raise ValueError(f"{stack}: sparse training_stack_present disagrees with retained groups")
-        if any(group not in original_ids for group in retained) or retained != [group for group in original_ids if group in retained]:
+        if any(group not in standardized_ids for group in retained) or retained != [group for group in standardized_ids if group in retained]:
             raise ValueError(f"{stack}: retained groups are not the standardized physical source order")
         if not present:
             records[stack] = {"training_stack_present": False, "original_group_ids": []}
             continue
-        positions = [original_ids.index(group) for group in retained]
         source = standardized_root / stack
         with np.load(source / "native_maps.npz", allow_pickle=False) as maps, np.load(source / "geometry.npz", allow_pickle=False) as geometry:
+            source_groups = [int(value) for value in maps["group_idx"]]
+            if source_groups != standardized_ids:
+                raise ValueError(f"{stack}: standardized native-map group IDs disagree with standardization mapping")
+            positions = [source_groups.index(group) for group in retained]
             target = native / stack; target.mkdir()
             np.savez_compressed(target / "native_maps.npz", t1_ms=np.asarray(maps["t1_ms"])[positions], t2_ms=np.asarray(maps["t2_ms"])[positions], b1=np.asarray(maps["b1"])[positions], group_idx=np.asarray(retained, dtype=np.int64))
             np.savez_compressed(target / "geometry.npz", affine_lps_rc=np.asarray(geometry["affine_lps_rc"])[positions], pixel_spacing_rc_mm=np.asarray(geometry["pixel_spacing_rc_mm"])[positions], slice_thickness_mm=np.asarray(geometry["slice_thickness_mm"])[positions])
-        records[stack] = {"training_stack_present": True, "original_group_ids": retained, "source_maps": _record(source / "native_maps.npz"), "output_maps": _record(target / "native_maps.npz"), "output_geometry": _record(target / "geometry.npz")}
+        records[stack] = {"training_stack_present": True, "standardized_group_ids": retained, "group_identity": [{"standardized_group_idx": group, "original_prestandardization_group_idx": prestandardized_by_standardized[group]} for group in retained], "source_maps": _record(source / "native_maps.npz"), "output_maps": _record(target / "native_maps.npz"), "output_geometry": _record(target / "geometry.npz")}
         active.append(stack)
     if not active:
         raise ValueError("Fit-first profile has no active training stack")
-    write_immutable_json(native / "manifest.json", {"schema": "phase4r_fit_first_selected_standardized_native_maps/v1", "stacks": records, "standardized_reuse_manifest": _record(Path(reuse["_manifest_path"])), "sparse_manifest": None if sparse is None else _record(Path(sparse["_manifest_path"])), "immutable": True})
+    write_immutable_json(native / "manifest.json", {"schema": "phase4r_fit_first_selected_standardized_native_maps/v1", "reconstruction_identity_space": "standardized_group_idx (standardized observation/native-map group_idx)", "prestandardization_identity_role": "per-group provenance only; never sparse selection", "stacks": records, "standardized_reuse_manifest": _record(Path(reuse["_manifest_path"])), "sparse_manifest": None if sparse is None else _record(Path(sparse["_manifest_path"])), "immutable": True})
     return native, active, records
 
 
@@ -112,8 +136,9 @@ def build_registration_commands(nesvor_inputs: Path, active_stacks: list[str], r
     return commands
 
 
-def _reconstruct_args(input_slices: Path, target: Path, parameter: str, *, nesvor_executable: str | Path, device: str) -> list[str]:
-    return [str(nesvor_executable), "reconstruct", "--input-slices", str(input_slices), "--output-volume", str(target / "volume_normalized.nii.gz"), "--output-model", str(target / "model.pt"), "--output-json", str(target / "result.json"), "--output-log", str(target / "nesvor.log"), "--output-slices", str(target / "slices"), "--output-intensity-mean", "0", "--output-resolution", "1.0", "--output-psf-factor", "1", "--no-slice-scale", "--single-precision", "--log2-hashmap-size", "19", "--batch-size", "2000", "--n-iter", "10000", "--n-samples", "256", "--n-inference-samples", "128", "--inference-batch-size", "16000", "--pixel-variance-weight", "1", "--coarsest-resolution", "16", "--finest-resolution", "0.5", "--level-scale", "1.3819", "--n-features-per-level", "2", "--depth", "1", "--width", "64", "--n-features-z", "15", "--n-features-slice", "16", "--weight-bias", "100", "--image-regularization", "edge", "--delta", "0.2", "--learning-rate", "0.005", "--gamma", "0.33", "--milestones", "0.5", "0.75", "0.9", "--seed", "20260823", "--device", str(device)]
+def _reconstruct_args(input_slices: Path, target: Path, parameter: str, *, nesvor_executable: str | Path, device: str, sample_mask: Path | None = None) -> list[str]:
+    sample_mask_args = [] if sample_mask is None else ["--sample-mask", str(sample_mask)]
+    return [str(nesvor_executable), "reconstruct", "--input-slices", str(input_slices), *sample_mask_args, "--weight-transformation", "1", "--weight-deform", "0.1", "--weight-image", "1", "--weight-pixel-var-smooth", "0", "--output-volume", str(target / "volume_normalized.nii.gz"), "--output-model", str(target / "model.pt"), "--output-json", str(target / "result.json"), "--output-log", str(target / "nesvor.log"), "--output-slices", str(target / "slices"), "--output-intensity-mean", "0", "--output-resolution", "1.0", "--output-psf-factor", "1", "--no-slice-scale", "--no-transformation-optimization", "--single-precision", "--log2-hashmap-size", "19", "--batch-size", "2000", "--n-iter", "10000", "--n-samples", "256", "--n-inference-samples", "128", "--inference-batch-size", "16000", "--pixel-variance-weight", "1", "--coarsest-resolution", "16", "--finest-resolution", "0.5", "--level-scale", "1.3819", "--n-features-per-level", "2", "--depth", "1", "--width", "64", "--n-features-z", "15", "--n-features-slice", "16", "--weight-bias", "100", "--image-regularization", "edge", "--delta", "0.2", "--learning-rate", "0.005", "--gamma", "0.33", "--milestones", "0.5", "0.75", "0.9", "--seed", "20260823", "--device", str(device)]
 
 
 def rebuild_registered_quantitative_inputs(*, native_maps_root: str | Path, registration_root: str | Path, output: str | Path, active_stacks: list[str]) -> Path:
@@ -126,25 +151,29 @@ def rebuild_registered_quantitative_inputs(*, native_maps_root: str | Path, regi
     staging = Path(tempfile.mkdtemp(prefix=f".{destination.name}.staging-", dir=destination.parent))
     try:
         records: dict[str, list[dict[str, Any]]] = {}
+        native_manifest = json.loads((native / "manifest.json").read_text(encoding="utf-8"))
         for parameter in PARAMETERS:
             final = _slice_paths(registration / parameter / "slices")
             ordered: list[tuple[str, int, np.ndarray]] = []
             for stack in active_stacks:
+                identities = {int(record["standardized_group_idx"]): int(record["original_prestandardization_group_idx"]) for record in native_manifest["stacks"][stack]["group_identity"]}
                 with np.load(native / stack / "native_maps.npz", allow_pickle=False) as maps:
                     for index, group in enumerate(np.asarray(maps["group_idx"], int)):
-                        ordered.append((stack, int(group), np.asarray(maps[f"{parameter}_ms"][index], np.float32)))
+                        if int(group) not in identities:
+                            raise ValueError(f"{stack}: standardized group lacks pre-standardization provenance")
+                        ordered.append((stack, int(group), identities[int(group)], np.asarray(maps[f"{parameter}_ms"][index], np.float32)))
             if len(final) != len(ordered):
                 raise ValueError(f"{parameter}: stage-1 output-slice count disagrees with active native groups")
             folder = staging / parameter / "slices"; folder.mkdir(parents=True)
             records[parameter] = []
-            for index, ((stack, group, values_ms), final_slice) in enumerate(zip(ordered, final)):
+            for index, ((stack, group, prestandardized_group, values_ms), final_slice) in enumerate(zip(ordered, final)):
                 image = nib.load(str(final_slice)); affine = np.asarray(image.affine, float)
                 if image.shape[:2] != values_ms.shape or image.shape[2:] != (1,):
                     raise ValueError(f"{parameter}/{stack}/{group}: Stage-1 slice shape is not source geometry")
                 expected = np.where(np.isfinite(values_ms), values_ms / SCALES[parameter], 0.0).astype(np.float32)
                 stored = expected[::-1] if _flip_for_affine(affine) else expected
                 target = folder / f"{index}.nii.gz"; nib.save(nib.Nifti1Image(stored[:, :, None], affine), str(target))
-                records[parameter].append({"index": index, "stack": stack, "original_group_idx": group, "stage1_final_slice": _record(final_slice), "registered_input_slice": _record(target), "affine_ras": affine.tolist(), "flip_original_row": _flip_for_affine(affine), "source_support_voxels": int(np.isfinite(values_ms).sum())})
+                records[parameter].append({"index": index, "stack": stack, "standardized_group_idx": group, "original_prestandardization_group_idx": prestandardized_group, "stage1_final_slice": _record(final_slice), "registered_input_slice": _record(target), "affine_ras": affine.tolist(), "flip_original_row": _flip_for_affine(affine), "source_support_voxels": int(np.isfinite(values_ms).sum())})
         write_immutable_json(staging / "manifest.json", {"schema": INPUT_SCHEMA, "native_maps_root": str(native.resolve()), "registration_stage": str(registration.resolve()), "parameters": records, "value_policy": "finite dictionary ms / parameter scale; nonfinite dictionary background is exactly zero", "geometry_policy": "each Stage-2 affine is copied from its corresponding Stage-1 final registered slice", "immutable": True})
         staging.rename(destination)
     except BaseException:
@@ -166,21 +195,22 @@ def validate_registered_quantitative_inputs(*, native_maps_root: str | Path, reg
         raise ValueError("selected native-map provenance schema mismatch")
     result: dict[str, Any] = {"schema": INPUT_SCHEMA, "status": "REGISTERED_QUANTITATIVE_INPUTS_VALID", "parameters": {}}
     for parameter in PARAMETERS:
-        expected: list[tuple[str, int, np.ndarray]] = []
+        expected: list[tuple[str, int, int, np.ndarray]] = []
         for stack in active_stacks:
             stack_record = native_manifest.get("stacks", {}).get(stack, {})
             if stack_record.get("training_stack_present") is not True or stack_record.get("output_maps", {}).get("sha256") != sha256(native / stack / "native_maps.npz"):
                 raise ValueError(f"{stack}: selected native-map provenance mismatch")
+            identities = {int(record["standardized_group_idx"]): int(record["original_prestandardization_group_idx"]) for record in stack_record.get("group_identity", [])}
             with np.load(native / stack / "native_maps.npz", allow_pickle=False) as maps:
-                expected.extend((stack, int(group), np.asarray(maps[f"{parameter}_ms"][i], np.float32)) for i, group in enumerate(np.asarray(maps["group_idx"], int)))
+                expected.extend((stack, int(group), identities[int(group)], np.asarray(maps[f"{parameter}_ms"][i], np.float32)) for i, group in enumerate(np.asarray(maps["group_idx"], int)))
         records = manifest.get("parameters", {}).get(parameter)
         slices = _slice_paths(inputs / parameter / "slices")
         stage1 = _slice_paths(registration / parameter / "slices")
         if not isinstance(records, list) or len(records) != len(expected) or len(slices) != len(expected) or len(stage1) != len(expected):
             raise ValueError(f"{parameter}: identity/order/count gate failed")
         max_error = 0.0
-        for index, ((stack, group, values_ms), record, path, registered) in enumerate(zip(expected, records, slices, stage1)):
-            if (record.get("index"), record.get("stack"), record.get("original_group_idx")) != (index, stack, group):
+        for index, ((stack, group, prestandardized_group, values_ms), record, path, registered) in enumerate(zip(expected, records, slices, stage1)):
+            if (record.get("index"), record.get("stack"), record.get("standardized_group_idx"), record.get("original_prestandardization_group_idx")) != (index, stack, group, prestandardized_group):
                 raise ValueError(f"{parameter}: stack/group order gate failed")
             if record.get("registered_input_slice", {}).get("sha256") != sha256(path) or record.get("stage1_final_slice", {}).get("sha256") != sha256(registered):
                 raise ValueError(f"{parameter}/{stack}/{group}: immutable slice provenance mismatch")
@@ -224,9 +254,31 @@ def audit_intensity_preserving_final_pose(*, root: str | Path) -> Path:
         expected = str((base / "registered_quantitative_inputs" / parameter / "slices").resolve())
         if str(stage2_args.get("input_slices", "")) != expected:
             raise ValueError(f"{parameter}: Stage 2 was not run from the gated registered quantitative slices")
-        records[parameter] = {"stage1_registration": _record(stage1_result), "stage2_reconstruction": _record(stage2_result), "stage1_pose_semantics": "authoritative final rigid pose", "stage2_pose_semantics": "no registration; frozen Stage-1 affine is consumed through --input-slices", "stage2_input_slices": expected}
+        if stage2_args.get("input_stacks") is not None:
+            raise ValueError(f"{parameter}: Stage 2 must not consume input_stacks")
+        for field in ("no_transformation_optimization", "no_slice_scale"):
+            if stage2_args.get(field) is not True:
+                raise ValueError(f"{parameter}: Stage 2 result does not prove {field}=true")
+        expected_output = str((base / "stage2_reconstruction" / parameter / "slices").resolve())
+        if str(stage2_args.get("output_slices", "")) != expected_output:
+            raise ValueError(f"{parameter}: Stage 2 output_slices provenance mismatch")
+        # For individual --input-slices, NeSVoR load_slices/save_slices uses
+        # affine2transformation/transformation2affine.  With rigid updates
+        # disabled this is a direct affine round-trip, so raw RAS affine
+        # equality is the applicable semantic geometry gate.
+        import nibabel as nib
+        inputs, outputs = _slice_paths(Path(expected)), _slice_paths(Path(expected_output))
+        if len(inputs) != len(outputs):
+            raise ValueError(f"{parameter}: Stage-2 input/output slice count mismatch")
+        affine_error = 0.0
+        for initial, final in zip(inputs, outputs):
+            error = float(np.max(np.abs(np.asarray(nib.load(str(initial)).affine, float) - np.asarray(nib.load(str(final)).affine, float))))
+            if error > VALUE_TOLERANCE:
+                raise ValueError(f"{parameter}: Stage-2 final affine differs from frozen registered input")
+            affine_error = max(affine_error, error)
+        records[parameter] = {"stage1_registration": _record(stage1_result), "stage2_reconstruction": _record(stage2_result), "stage1_pose_semantics": "authoritative final rigid pose; optimisation enabled", "stage2_pose_semantics": "no registration and no transformation optimisation; frozen Stage-1 affine is consumed through --input-slices", "stage2_input_slices": expected, "stage2_final_affine_max_abs_error": affine_error, "no_transformation_optimization": True, "no_slice_scale": True}
     output = base / "final_pose_audit.json"
-    write_immutable_json(output, {"schema": "fit_first_intensity_preserving_final_pose_audit/v1", "status": "POSE_STAGE1_AND_QUANTITATIVE_STAGE2_VALID", "route_manifest": _record(base / "manifest.json"), "quantitative_input_gate": _record(gate_path), "parameters": records, "stage2_registration_assertion": "not required and not interpreted: Stage-2 receives --input-slices and therefore bypasses Reconstruct._register", "immutable": True})
+    write_immutable_json(output, {"schema": "fit_first_intensity_preserving_final_pose_audit/v1", "status": "POSE_STAGE1_AND_QUANTITATIVE_STAGE2_VALID", "route_manifest": _record(base / "manifest.json"), "quantitative_input_gate": _record(gate_path), "pose_authority": "Stage-1 final registered slices", "quantitative_value_authority": "standardized native dictionary maps", "parameters": records, "stage2_registration_assertion": "Stage-2 receives --input-slices, bypasses Reconstruct._register, and result.json proves no_transformation_optimization=true", "immutable": True})
     return output
 
 
@@ -239,6 +291,7 @@ def prepare_intensity_preserving_fit_first(*, subject_id: str, standardized_nati
     if sparse_manifest is not None and not expected_generator_git_sha:
         raise ValueError("intensity-preserving sparse Fit-first requires exact generator and manifest SHA256 pins")
     sparse = validate_sparse_profile_manifest(sparse_manifest, subject=subject_id, strict=True, expected_generator_git_sha=expected_generator_git_sha, expected_manifest_sha256=expected_manifest_sha256) if sparse_manifest else None
+    validated_prepared_root = _validate_prepared_root(prepared_root, sparse)
     reuse = validate_standardized_native_dictionary_reuse(standardized_reuse_manifest, subject=subject_id); reuse["_manifest_path"] = str(Path(standardized_reuse_manifest).resolve())
     if Path(standardized_native_maps_root).resolve() != Path(standardized_reuse_manifest).resolve().parent:
         raise ValueError("standardized native maps root must be the validated reuse-manifest parent")
@@ -250,7 +303,10 @@ def prepare_intensity_preserving_fit_first(*, subject_id: str, standardized_nati
         commands = build_registration_commands(destination / "nesvor_inputs", active, destination / "stage1_registration", nesvor_executable=nesvor_executable, device=device)
         (destination / "stage1_registration_commands.sh").write_text("#!/usr/bin/env bash\nset -euo pipefail\n" + "\n".join(commands) + "\n", encoding="utf-8")
         write_immutable_json(destination / "stage1_registration_manifest.json", {"schema": REGISTRATION_SCHEMA, "subject_id": subject_id, "active_stacks": active, "commands": _record(destination / "stage1_registration_commands.sh"), "registration": "stack", "t1_t2_independent": True, "value_role": "pose estimation only; q99-normalised registration pixels are never Stage-2 values", "immutable": True})
-        write_immutable_json(destination / "manifest.json", {"schema": ROUTE_SCHEMA, "subject_id": subject_id, "prepared_root": None if prepared_root is None else str(Path(prepared_root).resolve()), "sparse_manifest": None if sparse is None else _record(Path(sparse["_manifest_path"])), "standardized_reuse_manifest": _record(Path(standardized_reuse_manifest)), "active_stacks": active, "selected_native_maps": selected, "stage1": _record(destination / "stage1_registration_manifest.json"), "stage2": {"schema": INPUT_SCHEMA, "purpose": "frozen Stage-1 affines plus authoritative dictionary values", "registration": "none; reconstruct --input-slices"}, "no_dictionary_refit": True, "no_pose_copying": True, "code_git_sha": _git_sha(), "immutable": True})
+        sample_masks = {parameter: destination / "nesvor_inputs" / "sax" / parameter / "stack.nii.gz" for parameter in PARAMETERS}
+        if "sax" not in active or any(not path.is_file() for path in sample_masks.values()):
+            raise ValueError("intensity-preserving sparse route requires active SAX parameter-matched sample masks")
+        write_immutable_json(destination / "manifest.json", {"schema": ROUTE_SCHEMA, "subject_id": subject_id, "prepared_root": None if validated_prepared_root is None else str(validated_prepared_root), "sparse_manifest": None if sparse is None else _record(Path(sparse["_manifest_path"])), "standardized_reuse_manifest": _record(Path(standardized_reuse_manifest)), "active_stacks": active, "selected_native_maps": selected, "stage1": _record(destination / "stage1_registration_manifest.json"), "stage2": {"schema": INPUT_SCHEMA, "purpose": "frozen Stage-1 affines plus authoritative dictionary values", "registration": "none; reconstruct --input-slices; --no-transformation-optimization", "raw_output_sampling_mask": {"policy": "explicit_parameter_matched_sax_native_support", "scope": "post_training_raw_volume_sampling_only", "training_affected": False, "registration_affected": False, "pose_optimization_affected": False, "formal_endpoint_affected": False, "sample_masks": {parameter: _record(path) for parameter, path in sample_masks.items()}}}, "no_dictionary_refit": True, "no_pose_copying": True, "code_git_sha": _git_sha(), "immutable": True})
     except BaseException:
         shutil.rmtree(destination, ignore_errors=True); raise
     return destination, commands
@@ -267,7 +323,8 @@ def execute_intensity_preserving_fit_first(**kwargs: Any) -> Path:
     commands = []
     for parameter in PARAMETERS:
         target = root / "stage2_reconstruction" / parameter; target.mkdir(parents=True)
-        args = _reconstruct_args(registered / parameter / "slices", target, parameter, nesvor_executable=kwargs.get("nesvor_executable", HISTORICAL_NESVOR_EXECUTABLE_DEFAULT), device=kwargs.get("device", "-1"))
+        sample_mask = root / "nesvor_inputs" / "sax" / parameter / "stack.nii.gz"
+        args = _reconstruct_args(registered / parameter / "slices", target, parameter, nesvor_executable=kwargs.get("nesvor_executable", HISTORICAL_NESVOR_EXECUTABLE_DEFAULT), device=kwargs.get("device", "-1"), sample_mask=sample_mask)
         commands.append(" ".join(shlex.quote(value) for value in args) + f" && {shlex.quote(sys.executable)} -m paper_experiments.joint_vs_2dfit.phase2_clean.fit_first_denormalize --input {shlex.quote(str(target / 'volume_normalized.nii.gz'))} --scale {SCALES[parameter]} --output {shlex.quote(str(target / 'volume_ms.nii.gz'))}")
     (root / "stage2_reconstruction_commands.sh").write_text("#!/usr/bin/env bash\nset -euo pipefail\n" + "\n".join(commands) + "\n", encoding="utf-8")
     for command in commands:
