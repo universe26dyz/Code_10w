@@ -160,8 +160,18 @@ def test_fit_first_commands_disable_default_700_rescaling_and_save_models() -> N
         assert "--output-intensity-mean 0" in command
         assert f"--output-model /output/{parameter}/model.pt" in command
         assert "--output-intensity-mean 700" not in command
+        assert "--sample-mask" not in command
         assert f"--scale {scale}" in command
         assert "--registration stack" in command and "--n-iter 10000" in command
+
+
+def test_fit_first_explicit_output_sample_masks_fail_closed_when_missing(tmp_path: Path) -> None:
+    with pytest.raises(FileNotFoundError, match="t1: explicit sample mask is missing"):
+        build_independent_nesvor_commands(
+            "/inputs",
+            tmp_path / "output",
+            sample_masks={"t1": tmp_path / "missing_t1.nii.gz", "t2": tmp_path / "missing_t2.nii.gz"},
+        )
 
 
 def _fake_dictionary(*_args: object) -> dict[str, np.ndarray]:

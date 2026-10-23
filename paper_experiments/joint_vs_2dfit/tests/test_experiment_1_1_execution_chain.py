@@ -155,7 +155,7 @@ def test_fit_first_sparse_dry_run_validates_pins_without_writing(tmp_path: Path,
     assert seen == [{"subject": "CYJ", "strict": True, "expected_generator_git_sha": "b" * 40, "expected_manifest_sha256": "c" * 64}]
 
 
-@pytest.mark.parametrize("none_stacks", [("2ch",), ("4ch",), ("2ch", "4ch")])
+@pytest.mark.parametrize("none_stacks", [(), ("2ch",), ("4ch",), ("2ch", "4ch")])
 def test_profile_validator_and_k8_launcher_preserve_empty_stack_contract(tmp_path: Path, none_stacks: tuple[str, ...]) -> None:
     from paper_experiments.joint_vs_2dfit.phase2_clean.experiment_1_1 import build_experiment_1_1_command
     from paper_experiments.joint_vs_2dfit.phase2_clean.sparse_profile_manifest import validate_sparse_profile_manifest
@@ -189,7 +189,23 @@ def test_profile_validator_and_k8_launcher_preserve_empty_stack_contract(tmp_pat
         assert not (fit_first / "native_maps" / stack).exists()
         assert reuse["stacks"][stack]["heldout_native_geometry_evaluation"].startswith("preserved")
         assert str(fit_first / "nesvor_inputs" / stack) not in "\n".join(commands)
-    assert json.loads((fit_first / "input_manifest.json").read_text())["case_id"] == "CYJ_test"
+    for parameter, command in zip(("t1", "t2"), commands):
+        sax_mask = fit_first / "nesvor_inputs" / "sax" / parameter / "stack.nii.gz"
+        assert f"--sample-mask {sax_mask}" in command
+        assert "--volume-mask" not in command and "--stack-masks" not in command
+        assert str(fit_first / "nesvor_inputs" / "sax" / ("t2" if parameter == "t1" else "t1") / "stack.nii.gz") not in command
+    input_manifest = json.loads((fit_first / "input_manifest.json").read_text())
+    assert input_manifest["case_id"] == "CYJ_test"
+    assert input_manifest["raw_output_sampling_mask"] == {
+        "policy": "explicit_parameter_matched_sax_native_support",
+        "scope": "post_training_raw_volume_sampling_only",
+        "training_affected": False,
+        "registration_affected": False,
+        "pose_optimization_affected": False,
+        "formal_endpoint_affected": False,
+        "sample_masks": {parameter: {"path": str((fit_first / "nesvor_inputs" / "sax" / parameter / "stack.nii.gz").resolve()), "sha256": sha256(fit_first / "nesvor_inputs" / "sax" / parameter / "stack.nii.gz")} for parameter in ("t1", "t2")},
+        "formal_endpoint_statement": "This mask is used only to make the immediate raw NeSVoR volume export well-defined. The formal central/psf128 matched endpoints remain separate fixed-L100 checkpoint queries.",
+    }
     provenance = sparse_profile_provenance(validated, [derived / stack / "observations.npz" for stack in ("sax", "2ch", "4ch") if stack not in none_stacks])
     assert provenance["case_id"] == "CYJ_test" and provenance["sparse_manifest"]["sha256"] == sha256(manifest)
 
@@ -198,7 +214,8 @@ def test_profile_validator_and_k8_launcher_preserve_empty_stack_contract(tmp_pat
     manifest.write_text(json.dumps(corrupted), encoding="utf-8")
     with pytest.raises(ValueError, match="derived_to_original"):
         validate_sparse_profile_manifest(manifest, subject="CYJ")
-    manifest.write_text(json.dumps({key: value for key, value in validated.items() if not key.startswith("_")}), encoding="utf-8")
-    fake_empty = derived / none_stacks[0] / "observations.npz"; _obs(fake_empty, [0])
-    with pytest.raises(ValueError, match="empty training stack"):
-        validate_sparse_profile_manifest(manifest, subject="CYJ")
+    if none_stacks:
+        manifest.write_text(json.dumps({key: value for key, value in validated.items() if not key.startswith("_")}), encoding="utf-8")
+        fake_empty = derived / none_stacks[0] / "observations.npz"; _obs(fake_empty, [0])
+        with pytest.raises(ValueError, match="empty training stack"):
+            validate_sparse_profile_manifest(manifest, subject="CYJ")
