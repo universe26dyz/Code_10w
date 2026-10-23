@@ -69,6 +69,31 @@ def test_commands_are_serial_gpu_and_sparse_fit_uses_subject_l100_mask(tmp_path:
     assert commands["proposed_reconstruction"][commands["proposed_reconstruction"].index("--device") + 1] == "cuda:0"
     assert commands["fit_first_reconstruction"]["env"]["DEVICE"] == "0"
     assert "central_only" in commands["proposed_reconstruction"]
-    assert commands["fit_first_endpoint"]["l100_fit_first_root"].endswith("fit_first_intensity_preserving/DYL_2/L100")
-    assert commands["fit_first_endpoint"]["sparse_fit_first_root"].endswith("fit_first_intensity_preserving/DYL_2/L50_fold0")
+    assert set(commands) == {"proposed_reconstruction", "fit_first_reconstruction"}
     assert runner.MAX_GPU_JOBS == 1
+
+
+def test_l100_dispatch_uses_subprocess_only_for_reconstructions(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    record = runner.CaseRecord("CYJ", "L100", "L100", None, 1, tmp_path / "sparse.json", "a" * 64, "b" * 40, tmp_path)
+    stages = ("proposed_reconstruction", "fit_first_reconstruction", "proposed_endpoint", "fit_first_endpoint", "proposed_native_bundle", "fit_first_native_bundle", "l100_native_support", "current_native_mask", "l100_metrics")
+    monkeypatch.setattr(runner, "load_final5_registry", lambda _registry: [record])
+    monkeypatch.setattr(runner, "case_commands", lambda *_args, **_kwargs: {"proposed_reconstruction": ["proposed"], "fit_first_reconstruction": {"argv": ["fit"], "env": {}}})
+    monkeypatch.setattr(runner, "build_batch_plan", lambda *_args, **_kwargs: {"cases": {"CYJ/L100": {"stages": {stage: {"state": "READY"} for stage in stages}}}})
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(runner, "_run_stage", lambda stage, *_args: calls.append(("subprocess", stage)) or 0)
+    monkeypatch.setattr(runner, "_run_direct_stage", lambda stage, *_args, **_kwargs: calls.append(("direct", stage)))
+    runner.execute_batch(tmp_path / "registry.json", tmp_path / "final", device="0", python="python", nesvor="nesvor", subject="CYJ", case="L100")
+    assert calls == [("subprocess", "proposed_reconstruction"), ("subprocess", "fit_first_reconstruction"), *(("direct", stage) for stage in stages[2:])]
+
+
+def test_sparse_fit_first_endpoint_is_direct_dispatch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    record = runner.CaseRecord("CYJ", "L50_fold0", "L50", 0, 2, tmp_path / "sparse.json", "a" * 64, "b" * 40, tmp_path)
+    stages = ("proposed_reconstruction", "fit_first_reconstruction", "proposed_endpoint", "fit_first_endpoint", "sparse_metrics")
+    monkeypatch.setattr(runner, "load_final5_registry", lambda _registry: [record])
+    monkeypatch.setattr(runner, "case_commands", lambda *_args, **_kwargs: {"proposed_reconstruction": ["proposed"], "fit_first_reconstruction": {"argv": ["fit"], "env": {}}})
+    monkeypatch.setattr(runner, "build_batch_plan", lambda *_args, **_kwargs: {"cases": {"CYJ/L50_fold0": {"stages": {stage: {"state": "READY"} for stage in stages}}}})
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(runner, "_run_stage", lambda stage, *_args: calls.append(("subprocess", stage)) or 0)
+    monkeypatch.setattr(runner, "_run_direct_stage", lambda stage, *_args, **_kwargs: calls.append(("direct", stage)))
+    runner.execute_batch(tmp_path / "registry.json", tmp_path / "final", device="0", python="python", nesvor="nesvor", subject="CYJ", case="L50_fold0")
+    assert ("direct", "fit_first_endpoint") in calls and ("subprocess", "fit_first_endpoint") not in calls
