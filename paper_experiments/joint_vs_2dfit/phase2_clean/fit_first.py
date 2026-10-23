@@ -213,7 +213,7 @@ def _reuse_native_maps_into(source_root: Path, manifest_path: Path, target: Path
                 raise ValueError(f'{stack}: each cached original group must exist exactly once')
             if any(array.shape[0] != len(cached_groups) for array in (maps['t1_ms'], maps['t2_ms'], maps['b1'], geometry['affine_lps_rc'], geometry['pixel_spacing_rc_mm'], geometry['slice_thickness_mm'])):
                 raise ValueError(f'{stack}: cached map/geometry group dimensions disagree')
-            if stack == 'sax' and (retained != cached_groups or heldout):
+            if stack == 'sax' and (heldout or len(retained) != len(cached_groups) or set(retained) != set(cached_groups)):
                 raise ValueError('sax: R1 reuse requires every full-data SAX group and no held-out SAX group')
             if set(retained).intersection(heldout):
                 raise ValueError(f'{stack}: retained and held-out original groups overlap')
@@ -225,13 +225,9 @@ def _reuse_native_maps_into(source_root: Path, manifest_path: Path, target: Path
                 positions.append(cached_groups.index(group))
             stack_target = target / stack
             stack_target.mkdir()
-            if stack == 'sax':
-                shutil.copy2(maps_path, stack_target/'native_maps.npz')
-                shutil.copy2(geometry_path, stack_target/'geometry.npz')
-            else:
-                np.savez_compressed(stack_target/'native_maps.npz', t1_ms=maps['t1_ms'][positions], t2_ms=maps['t2_ms'][positions], b1=maps['b1'][positions], group_idx=np.asarray(retained, dtype=maps['group_idx'].dtype))
-                np.savez_compressed(stack_target/'geometry.npz', affine_lps_rc=geometry['affine_lps_rc'][positions], pixel_spacing_rc_mm=geometry['pixel_spacing_rc_mm'][positions], slice_thickness_mm=geometry['slice_thickness_mm'][positions])
-        records[stack] = {'training_stack_present': True, 'retained_original_group_ids': retained, 'heldout_original_group_ids': heldout, 'nesvor_input_original_group_ids': retained, 'reused_source_map_sha256': sha256(maps_path), 'reused_source_geometry_sha256': sha256(geometry_path), 'subset_output_map_sha256': sha256(stack_target/'native_maps.npz'), 'subset_output_geometry_sha256': sha256(stack_target/'geometry.npz')}
+            np.savez_compressed(stack_target/'native_maps.npz', t1_ms=maps['t1_ms'][positions], t2_ms=maps['t2_ms'][positions], b1=maps['b1'][positions], group_idx=np.asarray(retained, dtype=maps['group_idx'].dtype))
+            np.savez_compressed(stack_target/'geometry.npz', affine_lps_rc=geometry['affine_lps_rc'][positions], pixel_spacing_rc_mm=geometry['pixel_spacing_rc_mm'][positions], slice_thickness_mm=geometry['slice_thickness_mm'][positions])
+        records[stack] = {'training_stack_present': True, 'cached_original_group_ids': cached_groups, 'retained_original_group_ids': retained, 'heldout_original_group_ids': heldout, 'output_original_group_ids': retained, 'output_order_semantics': 'manifest_retained_original_group_ids_physical_order' if profile_v2 else 'manifest_retained_original_group_ids', 'nesvor_input_original_group_ids': retained, 'reused_source_map_sha256': sha256(maps_path), 'reused_source_geometry_sha256': sha256(geometry_path), 'subset_output_map_sha256': sha256(stack_target/'native_maps.npz'), 'subset_output_geometry_sha256': sha256(stack_target/'geometry.npz')}
     reuse_manifest = {'method': 'fit_first_native_map_group_local_reuse', 'sparse_manifest': {'path': str(manifest_path.resolve()), 'sha256': sha256(manifest_path)}, 'full_native_maps_root': str(source_root.resolve()), 'native_fit_reuse_is_group_local': True, 'heldout_groups_never_passed_to_nesvor': True, 'stacks': records}
     if profile_v2:
         reuse_manifest.update({'subject_id': sparse['subject'], 'profile_id': sparse['profile_id'], 'case_id': sparse['case_id'], 'sparse_generator_git_sha': sparse['git_sha'], 'endpoint_contract': {'central': 'central/no map-domain PSF post-hoc endpoint', 'psf128': 'PSF128 downstream endpoint uses the same case identity'}})

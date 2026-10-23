@@ -14,7 +14,7 @@ from paper_experiments.joint_vs_2dfit.phase2_clean.aggregate_real import (
     bland_altman, load_r0_paired_records, paired_r0_comparison, pooled_r1_fold_metrics, summarize_r1_subjects,
 )
 from paper_experiments.joint_vs_2dfit.phase2_clean.evaluation import heldout_quantitative_metrics, paired_per_plane_records, real_native_agreement, real_native_paired_agreement
-from paper_experiments.joint_vs_2dfit.phase2_clean.sparse import build_sparse_condition
+from paper_experiments.joint_vs_2dfit.phase2_clean.sparse import build_sparse_condition, build_sparse_profile_condition
 from paper_experiments.joint_vs_2dfit.phase2_clean import proposed
 from paper_experiments.joint_vs_2dfit.phase2_clean.contracts import APPROVED_DECODER_SHA256
 from paper_experiments.joint_vs_2dfit.phase2_clean import fit_first
@@ -197,6 +197,68 @@ def test_r1_reuses_exact_retained_native_groups_without_heldout_leakage(tmp_path
     assert provenance["stacks"]["2ch"]["retained_original_group_ids"] == [4, 6]
     assert provenance["stacks"]["2ch"]["heldout_original_group_ids"] == [5, 7]
     assert provenance["stacks"]["2ch"]["nesvor_input_original_group_ids"] == [4, 6]
+
+
+def test_r1_custom_profile_reorders_complete_sax_cache_to_physical_manifest_order(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    source = _prepared(tmp_path / "prepared")
+    sax_source = source / "CYJ" / "sax" / "observations.npz"
+    with np.load(sax_source) as original:
+        observations = {name: original[name].copy() for name in original.files}
+    physical_order = [10, 3, 40, 99]
+    numeric_order = [3, 10, 40, 99]
+    observations["group_idx"] = np.repeat(np.asarray(numeric_order, dtype=np.int64), 10)
+    for ordinal, group in enumerate(physical_order):
+        observations["affine_lps_rc"][observations["group_idx"] == group, 2, 3] = float(ordinal * 5)
+    np.savez_compressed(sax_source, **observations)
+    profile = tmp_path / "SAX100_2CH100_4CH100.json"
+    profile.write_text(json.dumps({"schema": "phase4r_sparse_profile/v2", "profile_id": "SAX100_2CH100_4CH100", "stacks": {stack: {"mode": "all"} for stack in ("sax", "2ch", "4ch")}}))
+    sparse = build_sparse_profile_condition(source, "CYJ", profile, None, tmp_path / "sparse", git_sha="a" * 40, audit_stack=lambda _path: {"regular_gap": True, "gap_mm": 5.0, "group_count": 4})
+    full = _full_native_maps(source, tmp_path / "r0_native", monkeypatch)
+    with np.load(full / "sax" / "native_maps.npz") as original:
+        maps = {name: original[name].copy() for name in original.files}
+    assert maps["group_idx"].tolist() == numeric_order
+    for index, group in enumerate(numeric_order):
+        maps["t1_ms"][index].fill(group)
+        maps["t2_ms"][index].fill(group + 100)
+        maps["b1"][index].fill(group + 0.5)
+    np.savez_compressed(full / "sax" / "native_maps.npz", **maps)
+    cache_manifest = json.loads((full / "sax" / "manifest.json").read_text())
+    cache_manifest["native_maps_sha256"] = fit_first.sha256(full / "sax" / "native_maps.npz")
+    (full / "sax" / "manifest.json").write_text(json.dumps(cache_manifest))
+
+    reused = reuse_native_maps(full, sparse["manifest_path"], tmp_path / "r1_native")
+
+    with np.load(reused / "sax" / "native_maps.npz") as maps, np.load(reused / "sax" / "geometry.npz") as geometry:
+        assert maps["group_idx"].tolist() == physical_order
+        for index, group in enumerate(physical_order):
+            assert np.all(maps["t1_ms"][index] == group)
+            assert np.all(maps["t2_ms"][index] == group + 100)
+            assert np.all(maps["b1"][index] == group + 0.5)
+            assert geometry["affine_lps_rc"][index, 2, 3] == index * 5
+            assert np.all(geometry["pixel_spacing_rc_mm"][index] == 1)
+            assert geometry["slice_thickness_mm"][index] == 8
+    provenance = json.loads((reused / "reuse_manifest.json").read_text())
+    sax = provenance["stacks"]["sax"]
+    assert sax["cached_original_group_ids"] == numeric_order
+    assert sax["retained_original_group_ids"] == sax["output_original_group_ids"] == physical_order
+    assert sax["output_order_semantics"] == "manifest_retained_original_group_ids_physical_order"
+
+
+@pytest.mark.parametrize(
+    ("retained", "heldout"),
+    (([4, 5, 6], []), ([4, 5, 6, 7], [7])),
+)
+def test_r1_sax_reuse_rejects_incomplete_or_heldout_groups(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, retained: list[int], heldout: list[int]) -> None:
+    source = _prepared(tmp_path / "prepared")
+    sparse = build_sparse_condition(source, "CYJ", "L50", 0, tmp_path / "sparse", git_sha="abc", audit_stack=lambda _path: {"regular_gap": True, "gap_mm": 10.0, "group_count": 2})
+    manifest = json.loads(Path(sparse["manifest_path"]).read_text())
+    manifest["stacks"]["sax"]["retained_original_group_ids"] = retained
+    manifest["stacks"]["sax"]["heldout_original_group_ids"] = heldout
+    invalid = tmp_path / "invalid_sax.json"
+    invalid.write_text(json.dumps(manifest))
+
+    with pytest.raises(ValueError, match="sax: R1 reuse requires every full-data SAX group and no held-out SAX group"):
+        reuse_native_maps(_full_native_maps(source, tmp_path / "r0_native", monkeypatch), invalid, tmp_path / "r1_native")
 
 
 def test_r1_native_reuse_rejects_hash_ineligible_and_duplicate_group_gates(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
