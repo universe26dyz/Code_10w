@@ -34,7 +34,7 @@ def test_final_metrics_freeze_current_native_primary_on_single_common_support(mo
         np.savez_compressed(target / "group003.npz", prediction_ms=np.full((2, 2), value), valid=np.ones((2, 2), bool))
     cache = {"group_idx": np.array([3]), "source_support": np.ones((1, 2, 2), bool), "t1_ms": np.full((1, 2, 2), 1000.0), "t2_ms": np.full((1, 2, 2), 80.0)}
     monkeypatch.setattr(metrics, "_load_all_verified_native_cache_groups", lambda *args: cache)
-    sparse = tmp_path / "sparse.json"; sparse.write_text(json.dumps({"subject": "DYL_2", "condition": "L100"}), encoding="utf-8")
+    sparse = tmp_path / "sparse.json"; sparse.write_text(json.dumps({"schema_version": "phase4r_sparse_v1", "subject": "DYL_2", "condition": "L100"}), encoding="utf-8")
     output = metrics.build_final_pose_native_metrics(direct_bundle_root=direct, fit_first_bundle_root=fit, r0_native_maps_root=tmp_path, sparse_manifest=sparse, mask_root=_mask_root(tmp_path), output=tmp_path / "out")
     aggregate = json.loads((output / "aggregate_metrics.json").read_text(encoding="utf-8"))
     manifest = json.loads((output / "manifest.json").read_text(encoding="utf-8"))

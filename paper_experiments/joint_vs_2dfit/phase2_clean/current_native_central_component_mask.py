@@ -17,6 +17,7 @@ import numpy as np
 from scipy import ndimage
 
 from .contracts import sha256, write_immutable_json
+from .formal_l100_sparse_manifest import validate_formal_l100_sparse_manifest
 
 STACKS = ("sax", "2ch", "4ch")
 PARAMETERS = ("t1", "t2")
@@ -113,10 +114,8 @@ def build_current_native_central_component_mask(*, r0_native_maps_root: str | Pa
     output = Path(output)
     if output.exists():
         raise FileExistsError(f"refusing overwrite: {output}")
-    sparse = json.loads(Path(sparse_manifest).read_text(encoding="utf-8"))
-    subject = sparse.get("subject")
-    if not isinstance(subject, str) or not subject or sparse.get("condition") != "L100":
-        raise ValueError("formal current-native mask requires a named L100 sparse manifest")
+    sparse_identity = validate_formal_l100_sparse_manifest(sparse_manifest)
+    subject = sparse_identity["subject"]
     l100 = _l100_records(l100_native_support_root)
     current = {stack: _load_all_verified_native_cache_groups(r0_native_maps_root, sparse_manifest, stack) for stack in STACKS}
     group_counts = {stack: len(current[stack]["group_idx"]) for stack in STACKS}
@@ -148,7 +147,7 @@ def build_current_native_central_component_mask(*, r0_native_maps_root: str | Pa
         expected_planes = len(PARAMETERS) * sum(group_counts.values())
         if len(planes) != expected_planes:
             raise ValueError(f"expected {expected_planes} current-native mask planes, got {len(planes)}")
-        write_immutable_json(staging / "manifest.json", {"schema": "phase4r_current_native_central_component_mask/v1", "subject": subject, "condition": "L100_fold0", "r0_native_root": {"path": str(Path(r0_native_maps_root).resolve()), "provenance": {stack: current[stack]["provenance"] for stack in STACKS}}, "sparse_manifest": _record(sparse_manifest), "frozen_l100_native_support_manifest": _record(Path(l100_native_support_root) / "manifest.json"), "observed_group_counts": group_counts, "planes": planes, "primary_mask": "primary_native_mask", "base_support_equation": "source_support AND phase4r_l100", "selection_rule": "SCMR-style central/largest 8-connected component", "minimum_ratio": float(minimum_ratio), "no_interpolation": True, "no_resampling": True, "no_training": True, "no_reconstruction": True})
+        write_immutable_json(staging / "manifest.json", {"schema": "phase4r_current_native_central_component_mask/v1", "subject": subject, "condition": "L100_fold0", "r0_native_root": {"path": str(Path(r0_native_maps_root).resolve()), "provenance": {stack: current[stack]["provenance"] for stack in STACKS}}, "sparse_manifest": _record(sparse_manifest), "sparse_manifest_schema": sparse_identity["sparse_manifest_schema"], "sparse_identity": sparse_identity["sparse_identity"], "frozen_l100_native_support_manifest": _record(Path(l100_native_support_root) / "manifest.json"), "observed_group_counts": group_counts, "planes": planes, "primary_mask": "primary_native_mask", "base_support_equation": "source_support AND phase4r_l100", "selection_rule": "SCMR-style central/largest 8-connected component", "minimum_ratio": float(minimum_ratio), "no_interpolation": True, "no_resampling": True, "no_training": True, "no_reconstruction": True})
         staging.rename(output)
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True); raise
