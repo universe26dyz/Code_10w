@@ -19,6 +19,13 @@ from typing import Any
 from .contracts import sha256, write_immutable_json
 from .fit_first_intensity_preserving import audit_intensity_preserving_final_pose
 from .fit_first_route_contract import resolve_fit_first_route
+from .matched_output import formalize_proposed_export, export_fixed_l100_fit_first
+from .direct_native_bundles import build_direct_native_prediction_bundle
+from .fit_first_native_bundles import build_fit_first_native_prediction_bundle
+from .direct_native_endpoint_audit import run_direct_native_endpoint_audit
+from .current_native_central_component_mask import build_current_native_central_component_mask
+from .final_pose_native_metrics import build_final_pose_native_metrics
+from .final_sparse_native_metrics import build_final_sparse_native_metrics
 from .sparse_profile_manifest import validate_sparse_profile_manifest
 
 SUBJECTS = ("CYJ", "DYL_2", "DYZ", "HHZ", "HJL")
@@ -54,6 +61,21 @@ class ValidationResult:
     valid: bool
     state: str
     reason: str
+
+
+@dataclass(frozen=True)
+class DeviceSpec:
+    gpu_index: str
+    torch_device: str
+    nesvor_device: str
+
+
+def normalize_device(value: str) -> DeviceSpec:
+    value = str(value)
+    index = value[5:] if value.startswith("cuda:") else value
+    if not index.isdigit():
+        raise ValueError("formal final5 batch device must be GPU index N or cuda:N")
+    return DeviceSpec(index, f"cuda:{index}", index)
 
 
 def _utc() -> str:
@@ -200,8 +222,9 @@ def build_batch_plan(registry: str | Path, final_root: str | Path, *, device: st
 
 def case_commands(record: CaseRecord, final_root: str | Path, *, device: str, python: str, nesvor: str) -> dict[str, Any]:
     root, paths = Path(final_root), _paths(Path(final_root), record)
-    proposed = [python, "-m", "quality_experiments.Q002_B6_roi_same_anchor_mse.run_q002_reconstruction", "--cropped-prepared-root", str(record.prepared_root), "--subject-id", record.subject, "--b6-model", PROPOSED_B6, "--expected-b6-model-sha256", PROPOSED_B6_SHA256, "--signal-simulator", DECODER, "--expected-decoder-sha256", DECODER_SHA256, "--protocol", PROTOCOL, "--expected-protocol-sha256", PROTOCOL_SHA256, "--sparse-manifest", str(record.sparse_manifest), "--expected-sparse-generator-git-sha", record.generator_git_sha, "--expected-sparse-manifest-sha256", record.sparse_manifest_sha256, "--endpoint-policy", "central_only", "--output", str(paths["proposed"]), "--device", str(device), "--experiment-id", "Q002S640_B6_roi_same_anchor_mse", "--anchor-batch-size", "640"]
-    fit_env = {"SUBJECT": record.subject, "PREPARED_ROOT": str(record.prepared_root), "STANDARDIZED_NATIVE_DICTIONARY_ROOT": str(root / "02_standardized_12_15_10" / "native_dictionary" / record.subject), "STANDARDIZED_REUSE_MANIFEST": str(root / "02_standardized_12_15_10" / "native_dictionary" / record.subject / "reuse_manifest.json"), "SPARSE_MANIFEST": str(record.sparse_manifest), "EXPECTED_GENERATOR_GIT_SHA": record.generator_git_sha, "EXPECTED_MANIFEST_SHA256": record.sparse_manifest_sha256, "NESVOR": nesvor, "OUTPUT": str(paths["fit_first"]), "DEVICE": str(device), "PYTHON": python}
+    devices = normalize_device(device)
+    proposed = [python, "-m", "quality_experiments.Q002_B6_roi_same_anchor_mse.run_q002_reconstruction", "--cropped-prepared-root", str(record.prepared_root), "--subject-id", record.subject, "--b6-model", PROPOSED_B6, "--expected-b6-model-sha256", PROPOSED_B6_SHA256, "--signal-simulator", DECODER, "--expected-decoder-sha256", DECODER_SHA256, "--protocol", PROTOCOL, "--expected-protocol-sha256", PROTOCOL_SHA256, "--sparse-manifest", str(record.sparse_manifest), "--expected-sparse-generator-git-sha", record.generator_git_sha, "--expected-sparse-manifest-sha256", record.sparse_manifest_sha256, "--endpoint-policy", "central_only", "--output", str(paths["proposed"]), "--device", devices.torch_device, "--experiment-id", "Q002S640_B6_roi_same_anchor_mse", "--anchor-batch-size", "640"]
+    fit_env = {"SUBJECT": record.subject, "PREPARED_ROOT": str(record.prepared_root), "STANDARDIZED_NATIVE_DICTIONARY_ROOT": str(root / "02_standardized_12_15_10" / "native_dictionary" / record.subject), "STANDARDIZED_REUSE_MANIFEST": str(root / "02_standardized_12_15_10" / "native_dictionary" / record.subject / "reuse_manifest.json"), "SPARSE_MANIFEST": str(record.sparse_manifest), "EXPECTED_GENERATOR_GIT_SHA": record.generator_git_sha, "EXPECTED_MANIFEST_SHA256": record.sparse_manifest_sha256, "NESVOR": nesvor, "OUTPUT": str(paths["fit_first"]), "DEVICE": devices.nesvor_device, "PYTHON": python}
     return {"proposed_reconstruction": proposed, "fit_first_reconstruction": {"argv": ["bash", str(Path(__file__).with_name("server_commands") / "run_intensity_preserving_fit_first.sh")], "env": fit_env}, "fit_first_endpoint": {"l100_fit_first_root": str(_paths(root, CaseRecord(record.subject, "L100", "L100", None, 1, record.sparse_manifest, record.sparse_manifest_sha256, record.generator_git_sha, record.prepared_root))["fit_first"]), "sparse_fit_first_root": str(paths["fit_first"]), "endpoint": "central"}}
 
 
@@ -228,6 +251,29 @@ def _run_stage(stage: str, record: CaseRecord, command: Any, log: Path) -> int:
     return result.returncode
 
 
+def _run_direct_stage(stage: str, record: CaseRecord, root: Path, *, device: str, nesvor: str) -> None:
+    """Invoke existing immutable downstream builders; no scientific arguments live here."""
+    paths = _paths(root, record); l100 = next(item for item in load_final5_registry(root / "00_inventory" / "sparse_case_registry.json") if item.subject == record.subject and item.case_id == "L100") if False else record
+    native = root / "02_standardized_12_15_10" / "native_dictionary" / record.subject
+    if stage == "proposed_endpoint":
+        formalize_proposed_export(subject=record.subject, condition=record.case_id, source_root=paths["proposed"], endpoint="central", output=paths["proposed_endpoint"])
+    elif stage == "fit_first_endpoint":
+        l100_fit = _paths(root, CaseRecord(record.subject, "L100", "L100", None, 1, record.sparse_manifest, record.sparse_manifest_sha256, record.generator_git_sha, record.prepared_root))["fit_first"]
+        export_fixed_l100_fit_first(subject=record.subject, condition=record.case_id, l100_fit_first_root=l100_fit, sparse_fit_first_root=paths["fit_first"], sparse_manifest=record.sparse_manifest, r0_native_maps_root=native, nesvor_executable=nesvor, endpoint="central", output=paths["fit_endpoint"], device=normalize_device(device).nesvor_device)
+    elif stage == "proposed_native_bundle":
+        build_direct_native_prediction_bundle(checkpoint=paths["proposed"] / "model.pt", prepared_root=record.prepared_root, endpoint="central", output=paths["direct_bundle"], device=normalize_device(device).torch_device)
+    elif stage == "fit_first_native_bundle":
+        build_fit_first_native_prediction_bundle(baseline_root=paths["fit_first"], r0_native_maps_root=native, endpoint="central", endpoint_source_root=paths["fit_endpoint"], output=paths["fit_bundle"])
+    elif stage == "l100_native_support":
+        run_direct_native_endpoint_audit(checkpoint=paths["proposed"] / "model.pt", prepared_root=record.prepared_root, r0_native_maps_root=native, sparse_manifest=record.sparse_manifest, central_t1=paths["proposed_endpoint"] / "T1_3D.nii.gz", central_t2=paths["proposed_endpoint"] / "T2_3D.nii.gz", l100_t1=paths["proposed"] / "support_mask_3D.nii.gz", l100_t2=paths["proposed"] / "support_mask_3D.nii.gz", output=paths["native_support"], device=normalize_device(device).torch_device)
+    elif stage == "current_native_mask":
+        build_current_native_central_component_mask(r0_native_maps_root=native, sparse_manifest=record.sparse_manifest, l100_native_support_root=paths["native_support"], output=paths["native_mask"])
+    elif stage == "l100_metrics":
+        build_final_pose_native_metrics(direct_bundle_root=paths["direct_bundle"], fit_first_bundle_root=paths["fit_bundle"], r0_native_maps_root=native, sparse_manifest=record.sparse_manifest, mask_root=paths["native_mask"], output=paths["l100_metrics"])
+    elif stage == "sparse_metrics":
+        build_final_sparse_native_metrics(proposed_endpoint_root=paths["proposed_endpoint"], fit_first_endpoint_root=paths["fit_endpoint"], native_mask_root=paths["native_mask"], r0_native_maps_root=native, sparse_manifest=record.sparse_manifest, output=paths["sparse_metrics"])
+
+
 def execute_batch(registry: str | Path, final_root: str | Path, *, device: str, python: str, nesvor: str, subject: str | None = None, case: str | None = None) -> dict[str, Any]:
     """Run only READY reconstruction stages serially; never delete partial roots."""
     records = load_final5_registry(registry)
@@ -236,22 +282,29 @@ def execute_batch(registry: str | Path, final_root: str | Path, *, device: str, 
     if case is not None:
         records = [item for item in records if item.case_id == case]
     root = Path(final_root)
-    plan = build_batch_plan(registry, root, device=device)
     events = _state_root(root) / "events.jsonl"; events.parent.mkdir(parents=True, exist_ok=True)
     try:
         for record in records:
-            case_plan = plan["cases"][f"{record.subject}/{record.case_id}"]
             commands = case_commands(record, root, device=device, python=python, nesvor=nesvor)
-            for stage in ("proposed_reconstruction", "fit_first_reconstruction"):
+            stages = ("proposed_reconstruction", "fit_first_reconstruction", "proposed_endpoint", "fit_first_endpoint", "proposed_native_bundle", "fit_first_native_bundle", "l100_native_support", "current_native_mask", "l100_metrics") if record.case_id == "L100" else ("proposed_reconstruction", "fit_first_reconstruction", "proposed_endpoint", "fit_first_endpoint", "sparse_metrics")
+            for stage in stages:
+                case_plan = build_batch_plan(registry, root, device=device)["cases"][f"{record.subject}/{record.case_id}"]
                 state = case_plan["stages"][stage]["state"]
                 if state == "AUDIT_ONLY" and stage == "fit_first_reconstruction":
                     audit_intensity_preserving_final_pose(root=_paths(root, record)["fit_first"])
                     continue
                 if state != "READY":
                     continue
-                command = commands[stage]
                 log = _state_root(root) / "logs" / record.subject / record.case_id / f"{stage}.log"
-                code = _run_stage(stage, record, command, log)
+                if stage in commands:
+                    code = _run_stage(stage, record, commands[stage], log)
+                else:
+                    try:
+                        _run_direct_stage(stage, record, root, device=device, nesvor=nesvor)
+                        code = 0
+                    except Exception as exc:
+                        log.parent.mkdir(parents=True, exist_ok=True); log.write_text(f"{type(exc).__name__}: {exc}\n", encoding="utf-8")
+                        code = 1
                 with events.open("a", encoding="utf-8") as handle:
                     handle.write(json.dumps({"stage": stage, "subject": record.subject, "case_id": record.case_id, "return_code": code, "log_path": str(log), "finished_utc": _utc()}) + "\n")
     except KeyboardInterrupt:

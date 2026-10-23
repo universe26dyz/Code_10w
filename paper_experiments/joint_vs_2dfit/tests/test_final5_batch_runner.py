@@ -66,6 +66,8 @@ def test_commands_are_serial_gpu_and_sparse_fit_uses_subject_l100_mask(tmp_path:
     sparse = next(item for item in cases if item.subject == "DYL_2" and item.case_id == "L50_fold0")
     commands = runner.case_commands(sparse, tmp_path / "final", device="0", python="python", nesvor="nesvor")
     assert commands["proposed_reconstruction"][0] == "python"
+    assert commands["proposed_reconstruction"][commands["proposed_reconstruction"].index("--device") + 1] == "cuda:0"
+    assert commands["fit_first_reconstruction"]["env"]["DEVICE"] == "0"
     assert "central_only" in commands["proposed_reconstruction"]
     assert commands["fit_first_endpoint"]["l100_fit_first_root"].endswith("fit_first_intensity_preserving/DYL_2/L100")
     assert commands["fit_first_endpoint"]["sparse_fit_first_root"].endswith("fit_first_intensity_preserving/DYL_2/L50_fold0")
