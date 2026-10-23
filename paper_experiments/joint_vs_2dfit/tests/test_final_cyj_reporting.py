@@ -206,7 +206,7 @@ def test_longitudinal_uses_the_joint_valid_support_for_every_comparison_method(m
     monkeypatch.setattr(reporting, "meaningful_longitudinal_index", lambda *_args, **_kwargs: (0, "fixture"))
     monkeypatch.setattr(reporting, "longitudinal_plane", lambda *_args, **_kwargs: {"world": np.zeros((4, 2, 2)), "extent_mm": [0.0, 1.0, 0.0, 1.0], "axis": 0, "index": 0, "in_plane_axes": [1, 2], "shape": [2, 2]})
     captured: list[list[dict[str, object]]] = []
-    monkeypatch.setattr(reporting, "_plot_panels", lambda _path, panels, **_kwargs: captured.append(panels))
+    monkeypatch.setattr(reporting, "_plot_panels", lambda _path, panels, **_kwargs: captured.append(panels) or {"components": [], "colorbar": None})
     config = {"subject": "DYL_2", "condition": "L50_fold0", "endpoint": "central", "l100_masks": {"t1": str(paths["mask"]), "t2": str(paths["mask"])}, "longitudinal": {"axis": 0}, "methods": {"Fit-first": {"t1": str(paths["fit"]), "t2": str(paths["fit"])}, "Q002S640": {"t1": str(paths["q002"]), "t2": str(paths["q002"])}, "Q004S640": {"t1": str(paths["q004"]), "t2": str(paths["q004"])}}}
     records = reporting._render_longitudinal(config, tmp_path, {})
     expected = np.array([[True, False], [False, False]])
@@ -250,6 +250,79 @@ def test_native_mosaic_uses_one_shared_parameter_colorbar_axis(monkeypatch: pyte
     assert calls[0] is not None
 
 
+def test_text_free_panel_components_match_composite_display_contract(tmp_path: Path) -> None:
+    from paper_experiments.joint_vs_2dfit.phase2_clean import final_cyj_reporting as reporting
+
+    values = np.arange(12, dtype=float).reshape(3, 4)
+    contour = values > 4
+    panels = [
+        {"label": "Fit-first", "values": values, "support": np.ones_like(values, bool), "cmap": reporting.colorbars().mapping["T1"], "range_ms": (0.0, 2500.0)},
+        {"label": "Q002S640", "values": values + 2, "support": values > 0, "cmap": reporting.colorbars().mapping["T1"], "range_ms": (0.0, 2500.0)},
+    ]
+    composite = tmp_path / "longitudinal_T1.png"
+    assets = reporting._plot_panels(composite, panels, extent=[0.0, 6.0, 0.0, 12.0], title="composite", contour=contour, component_directory=tmp_path / "components" / "longitudinal_T1")
+
+    assert composite.is_file()
+    assert len(assets["components"]) == 2 and assets["colorbar"]["orientation"] == "vertical"
+    assert all((tmp_path / record["file"]).is_file() for record in assets["components"])
+    assert (tmp_path / assets["colorbar"]["file"]).is_file()
+    assert all(record["text_free"] and record["cmap"] == panels[0]["cmap"].name and record["range_ms"] == [0.0, 2500.0] for record in assets["components"])
+    assert all(record["derived_from_same_render_data"] and record["extent_mm"] == [0.0, 6.0, 0.0, 12.0] and record["contour_overlay"] for record in assets["components"])
+
+
+def test_native_mosaic_writes_one_text_free_component_per_cell_without_name_collisions(tmp_path: Path) -> None:
+    from paper_experiments.joint_vs_2dfit.phase2_clean import final_cyj_reporting as reporting
+
+    values = np.full((2, 3), 1000.0)
+    panel = lambda label: {"label": label, "values": values, "support": np.ones_like(values, bool), "cmap": reporting.colorbars().mapping["T1"], "range_ms": (0.0, 2500.0)}
+    rows = [
+        {"group_idx": 3, "group_label": "group 03 [held-out]", "panels": [panel("Native reference"), panel("Fit-first"), panel("|Fit-first − Native|")], "extent": [0.0, 2.0, 0.0, 6.0], "contour": values > 0},
+        {"group_idx": 8, "group_label": "group 08 [held-out]", "panels": [panel("Native reference"), panel("Fit-first"), panel("|Fit-first − Native|")], "extent": [0.0, 2.0, 0.0, 6.0], "contour": values > 0},
+    ]
+    assets = reporting._plot_native_mosaic(tmp_path / "mosaic.png", rows, title="composite", component_directory=tmp_path / "components" / "mosaic")
+
+    assert (tmp_path / "mosaic.png").is_file() and len(assets["components"]) == 6
+    assert len({record["file"] for record in assets["components"]}) == 6
+    assert {(record["row"], record["column"], record["original_group_idx"]) for record in assets["components"]} == {(row, column, group) for row, group in enumerate((3, 8)) for column in range(3)}
+    assert all(record["text_free"] and record["contour_overlay"] for record in assets["components"])
+    assert (tmp_path / assets["colorbar"]["file"]).is_file()
+
+
+def test_scmr_longitudinal_writes_text_free_source_and_reformat_components(tmp_path: Path) -> None:
+    from paper_experiments.joint_vs_2dfit.phase2_clean import final_cyj_reporting as reporting
+
+    values = np.full((2, 3), 1000.0)
+    rows = [
+        {"cut": "center_row", "source": {"values": values, "support": np.ones_like(values, bool), "extent_mm": [0.0, 2.0, 0.0, 3.0]}, "source_line_coordinate_mm": 1.0, "longitudinal": [{"label": "Original SAX-stack longitudinal reformatting", "values": values, "support": np.ones_like(values, bool)}, {"label": "Fit-first", "values": values, "support": np.ones_like(values, bool)}], "extent_mm": [0.0, 2.0, 0.0, 3.0]},
+        {"cut": "center_column", "source": {"values": values, "support": np.ones_like(values, bool), "extent_mm": [0.0, 2.0, 0.0, 3.0]}, "source_line_coordinate_mm": 1.0, "longitudinal": [{"label": "Original SAX-stack longitudinal reformatting", "values": values, "support": np.ones_like(values, bool)}, {"label": "Fit-first", "values": values, "support": np.ones_like(values, bool)}], "extent_mm": [0.0, 2.0, 0.0, 3.0]},
+    ]
+    assets = reporting._plot_scmr_longitudinal(tmp_path / "scmr.png", rows, title="composite", limits=(0.0, 2500.0), cmap=reporting.colorbars().mapping["T1"], column_labels=("SAX source + centerline overlay", "Original SAX-stack longitudinal reformatting", "Fit-first"), component_directory=tmp_path / "components" / "scmr")
+
+    assert (tmp_path / "scmr.png").is_file() and len(assets["components"]) == 6
+    assert {record["kind"] for record in assets["components"]} == {"source_with_centerline", "longitudinal_reformat"}
+    assert all(record["text_free"] and record["derived_from_same_render_data"] for record in assets["components"])
+    assert (tmp_path / assets["colorbar"]["file"]).is_file()
+
+
+def test_final_figure_manifest_records_existing_component_files(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from paper_experiments.joint_vs_2dfit.phase2_clean import final_cyj_reporting as reporting
+
+    affine = np.eye(4)
+    mask = _nifti(tmp_path / "mask.nii.gz", np.ones((2, 3, 2)), affine)
+    maps = {parameter: _nifti(tmp_path / f"{parameter}.nii.gz", np.full((2, 3, 2), value), affine) for parameter, value in (("t1", 1000.0), ("t2", 80.0))}
+    config = tmp_path / "config.json"
+    config.write_text(json.dumps({"subject": "CYJ", "condition": "L100_fold0", "endpoint": "central", "methods": {"Q002S640": {parameter: str(path) for parameter, path in maps.items()}}, "l100_masks": {"t1": str(mask), "t2": str(mask)}, "longitudinal": {"axis": 0}, "native": {}}), encoding="utf-8")
+    monkeypatch.setattr(reporting, "_render_native", lambda *_args: [])
+    output = reporting.render_final_figures(config, tmp_path / "figures")
+    manifest = json.loads((output / "figure_manifest.json").read_text(encoding="utf-8"))
+
+    for record in manifest["longitudinal_figures"]:
+        assert record["component_directory"].startswith("components/")
+        assert (output / record["component_directory"]).is_dir()
+        assert all((output / component["file"]).is_file() for component in record["components"])
+        assert (output / record["colorbar_component"]["file"]).is_file()
+
+
 def test_all_groups_native_render_uses_every_heldout_group_and_records_mode(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     from paper_experiments.joint_vs_2dfit.phase2_clean import final_cyj_reporting as reporting
 
@@ -273,7 +346,7 @@ def test_all_groups_native_render_uses_every_heldout_group_and_records_mode(monk
     monkeypatch.setattr(reporting, "reproject_volume_to_native_plane", lambda values, affine, plane, shape: (np.full(shape, 900.0), np.ones(shape, bool)))
     rendered: list[object] = []
     original_plot = reporting._plot_native_mosaic
-    monkeypatch.setattr(reporting, "_plot_native_mosaic", lambda path, rows, *, title: (rendered.append(rows), original_plot(path, rows, title=title))[1])
+    monkeypatch.setattr(reporting, "_plot_native_mosaic", lambda path, rows, **kwargs: (rendered.append(rows), original_plot(path, rows, **kwargs))[1])
     config = {"subject": "CYJ", "condition": "L25_fold0", "endpoint": "central", "methods": maps, "l100_masks": {"t1": str(mask), "t2": str(mask)}, "native_mask_root": str(native_masks), "native": {"mode": "all_groups", "stack": "2ch", "sparse_manifest": str(sparse_manifest), "r0_native_maps_root": str(tmp_path / "cache")}}
     records = reporting._render_native(config, tmp_path, {})
     assert requested == [[3, 8]]
@@ -322,7 +395,7 @@ def test_native_mosaic_reads_proposed_direct_native_bundle_without_volume_reproj
     calls: list[str] = []
     monkeypatch.setattr(reporting, "reproject_volume_to_native_plane", lambda *args: (calls.append("fit") or np.full((2, 3), 900.0), np.ones((2, 3), bool)))
     rendered: list[object] = []
-    monkeypatch.setattr(reporting, "_plot_native_mosaic", lambda path, rows, *, title: rendered.append(rows))
+    monkeypatch.setattr(reporting, "_plot_native_mosaic", lambda path, rows, **_kwargs: rendered.append(rows) or {"components": [], "colorbar": None})
     config = {"subject": "CYJ", "condition": "L100_fold0", "endpoint": "central", "methods": {"Fit-first": fit, "Q004S640": {"native_bundle": str(bundle)}}, "l100_masks": {"t1": str(mask), "t2": str(mask)}, "native_mask_root": str(native_masks), "native": {"mode": "all_groups", "stack": "2ch", "sparse_manifest": str(sparse_manifest), "r0_native_maps_root": str(tmp_path)}}
     reporting._render_native(config, tmp_path, {})
     q004 = next(panel for panel in rendered[0][0]["panels"] if panel["label"] == "Q004S640")
@@ -347,7 +420,7 @@ def test_native_mosaic_reads_fit_first_final_pose_bundle_without_r0_reprojection
     selected = {"group_idx": np.array([3]), "source_support": np.ones((1, 2, 3), bool), "affine_lps_rc": np.eye(4)[None], "pixel_spacing_rc_mm": np.ones((1, 2)), "t1_ms": np.full((1, 2, 3), 1000.0), "t2_ms": np.full((1, 2, 3), 80.0), "provenance": dict(zip(("native_maps_path", "geometry_path", "manifest_path"), map(str, cache_files)))}
     monkeypatch.setattr(reporting, "_heldout_ids", lambda sparse, stack: [3]); monkeypatch.setattr(reporting, "select_verified_native_cache_groups", lambda *args: selected)
     monkeypatch.setattr(reporting, "reproject_volume_to_native_plane", lambda *args: pytest.fail("formal Fit-first endpoint must not reproject R0 affine"))
-    rendered: list[object] = []; monkeypatch.setattr(reporting, "_plot_native_mosaic", lambda path, rows, *, title: rendered.append(rows))
+    rendered: list[object] = []; monkeypatch.setattr(reporting, "_plot_native_mosaic", lambda path, rows, **_kwargs: rendered.append(rows) or {"components": [], "colorbar": None})
     config = {"subject": "CYJ", "condition": "L100_fold0", "endpoint": "central", "methods": {"Fit-first": {"fit_first_native_bundle": str(fit)}}, "l100_masks": {"t1": str(mask), "t2": str(mask)}, "native_mask_root": str(native_masks), "native": {"mode": "all_groups", "stack": "2ch", "sparse_manifest": str(sparse_manifest), "r0_native_maps_root": str(tmp_path)}}
     reporting._render_native(config, tmp_path, {})
     assert next(panel for panel in rendered[0][0]["panels"] if panel["label"] == "Fit-first")["values"][0, 0] == 777.0
@@ -371,7 +444,7 @@ def test_longitudinal_render_uses_one_full_world_extent_for_every_method_without
     config = {"subject": "CYJ", "condition": "L50_fold0", "endpoint": "psf128", "methods": methods,
               "l100_masks": {"t1": str(mask), "t2": str(mask)}, "longitudinal": {"axis": 1, "index": 2}}
     captured: list[tuple[list[float], int]] = []
-    monkeypatch.setattr(reporting, "_plot_panels", lambda path, panels, *, extent, title, contour=None: captured.append((extent, len(panels))))
+    monkeypatch.setattr(reporting, "_plot_panels", lambda path, panels, **kwargs: captured.append((kwargs["extent"], len(panels))) or {"components": [], "colorbar": None})
     records = reporting._render_longitudinal(config, tmp_path / "out", {})
     assert [item[0] for item in captured] == [[0.0, 4.0, 0.0, 16.0], [0.0, 4.0, 0.0, 16.0]]
     assert [item[1] for item in captured] == [2, 2]

@@ -395,7 +395,52 @@ def _image(path: str | Path) -> Any:
     return nib.load(str(path))
 
 
-def _plot_panels(path: Path, panels: list[dict[str, Any]], *, extent: list[float], title: str, contour: np.ndarray | None = None) -> None:
+def _component_path(component_directory: Path, *, row: int, column: int, label: str) -> Path:
+    safe_label = "".join(character.lower() if character.isalnum() else "_" for character in label).strip("_")
+    return component_directory / f"r{row:02d}_c{column:02d}_{safe_label}.png"
+
+
+def _component_record_path(component_directory: Path, path: Path) -> str:
+    """Return an output-root-relative component path for the fixed components/<stem>/ layout."""
+    return path.relative_to(component_directory.parents[1]).as_posix()
+
+
+def _save_text_free_image_component(path: Path, shown: np.ndarray, *, extent: list[float], cmap: Any, limits: tuple[float, float], contour: np.ndarray | None = None, centerline: tuple[str, float] | None = None) -> None:
+    import matplotlib.pyplot as plt
+
+    figure = plt.figure(figsize=(3.0, 3.0))
+    axis = figure.add_axes([0.0, 0.0, 1.0, 1.0])
+    axis.imshow(shown.T, origin="lower", extent=extent, cmap=cmap, vmin=limits[0], vmax=limits[1], interpolation="none", aspect="equal")
+    if contour is not None and np.any(contour):
+        axis.contour(contour.T.astype(float), levels=[.5], colors="white", linewidths=.55, origin="lower", extent=extent)
+    if centerline is not None:
+        direction, coordinate = centerline
+        (axis.axvline if direction == "vertical" else axis.axhline)(coordinate, color="cyan", linewidth=1.2)
+    axis.set_axis_off()
+    figure.savefig(path, dpi=220, bbox_inches="tight", pad_inches=0)
+    plt.close(figure)
+
+
+def _save_text_free_colorbar(path: Path, *, cmap: Any, limits: tuple[float, float]) -> None:
+    import matplotlib.pyplot as plt
+    from matplotlib.colorbar import ColorbarBase
+    from matplotlib.colors import Normalize
+
+    figure = plt.figure(figsize=(.24, 3.0))
+    axis = figure.add_axes([0.0, 0.0, 1.0, 1.0])
+    colorbar = ColorbarBase(axis, cmap=cmap, norm=Normalize(vmin=limits[0], vmax=limits[1]), orientation="vertical")
+    colorbar.set_ticks([])
+    colorbar.set_label("")
+    axis.set_axis_off()
+    figure.savefig(path, dpi=220, bbox_inches="tight", pad_inches=0)
+    plt.close(figure)
+
+
+def _empty_component_assets() -> dict[str, Any]:
+    return {"components": [], "colorbar": None}
+
+
+def _plot_panels(path: Path, panels: list[dict[str, Any]], *, extent: list[float], title: str, contour: np.ndarray | None = None, component_directory: Path | None = None) -> dict[str, Any]:
     """Render full supplied plane bounds; only masks, never crop, hide background."""
     import matplotlib.pyplot as plt
 
@@ -403,18 +448,30 @@ def _plot_panels(path: Path, panels: list[dict[str, Any]], *, extent: list[float
     grid = figure.add_gridspec(1, len(panels) + 1, width_ratios=[1.0] * len(panels) + [.055], wspace=.12)
     axes = [figure.add_subplot(grid[0, index]) for index in range(len(panels))]
     colorbar_axis = figure.add_subplot(grid[0, -1])
-    for axis, panel in zip(axes, panels):
+    assets = _empty_component_assets()
+    if component_directory is not None:
+        component_directory.mkdir(parents=True, exist_ok=True)
+    for column, (axis, panel) in enumerate(zip(axes, panels)):
         shown = np.ma.masked_invalid(np.where(panel["support"], panel["values"], np.nan))
         image = axis.imshow(shown.T, origin="lower", extent=extent, cmap=panel["cmap"], vmin=panel["range_ms"][0], vmax=panel["range_ms"][1], interpolation="none", aspect="equal")
         if contour is not None and np.any(contour):
             axis.contour(contour.T.astype(float), levels=[0.5], colors="white", linewidths=.55, origin="lower", extent=extent)
         axis.set_title(panel["label"], fontsize=8)
         axis.set_xticks([]); axis.set_yticks([])
+        if component_directory is not None:
+            component_path = _component_path(component_directory, row=0, column=column, label=str(panel["label"]))
+            _save_text_free_image_component(component_path, shown, extent=extent, cmap=panel["cmap"], limits=panel["range_ms"], contour=contour)
+            assets["components"].append({"file": _component_record_path(component_directory, component_path), "kind": "panel", "row": 0, "column": column, "label": panel["label"], "cmap": panel["cmap"].name, "range_ms": list(panel["range_ms"]), "extent_mm": list(extent), "contour_overlay": bool(contour is not None and np.any(contour)), "text_free": True, "derived_from_same_render_data": True})
     figure.suptitle(title, fontsize=10)
     figure.colorbar(image, cax=colorbar_axis, label="ms; shared parameter map scale")
     figure.subplots_adjust(top=.83, bottom=.04, left=.02, right=.98)
     figure.savefig(path, dpi=220, bbox_inches="tight")
     plt.close(figure)
+    if component_directory is not None:
+        colorbar_path = component_directory / "colorbar.png"
+        _save_text_free_colorbar(colorbar_path, cmap=panels[-1]["cmap"], limits=panels[-1]["range_ms"])
+        assets["colorbar"] = {"file": _component_record_path(component_directory, colorbar_path), "cmap": panels[-1]["cmap"].name, "range_ms": list(panels[-1]["range_ms"]), "orientation": "vertical", "text_free": True, "derived_from_same_render_data": True}
+    return assets
 
 
 def _native_mosaic_row(row: Any) -> tuple[int, str, list[dict[str, Any]], list[float], np.ndarray | None]:
@@ -433,7 +490,7 @@ def _native_mosaic_row(row: Any) -> tuple[int, str, list[dict[str, Any]], list[f
     return group, label, panels, list(extent), None if contour is None else np.asarray(contour, bool)
 
 
-def _plot_native_mosaic(path: Path, rows: list[Any], *, title: str) -> None:
+def _plot_native_mosaic(path: Path, rows: list[Any], *, title: str, component_directory: Path | None = None) -> dict[str, Any]:
     """Render all requested native planes with one shared parameter colorbar."""
     import matplotlib.pyplot as plt
 
@@ -446,7 +503,10 @@ def _plot_native_mosaic(path: Path, rows: list[Any], *, title: str) -> None:
     figure = plt.figure(figsize=(2.5 * panel_count + .65, max(3.2, 2.55 * len(normalized) + .5)))
     grid = figure.add_gridspec(len(normalized), panel_count + 1, width_ratios=[1.0] * panel_count + [.06], wspace=.12, hspace=.12)
     map_handle = None
-    for row_index, (_, group_label, panels, extent, contour) in enumerate(normalized):
+    assets = _empty_component_assets()
+    if component_directory is not None:
+        component_directory.mkdir(parents=True, exist_ok=True)
+    for row_index, (group, group_label, panels, extent, contour) in enumerate(normalized):
         for column, panel in enumerate(panels):
             axis = figure.add_subplot(grid[row_index, column])
             shown = np.ma.masked_invalid(np.where(panel["support"], panel["values"], np.nan))
@@ -460,6 +520,10 @@ def _plot_native_mosaic(path: Path, rows: list[Any], *, title: str) -> None:
             axis.set_xticks([]); axis.set_yticks([])
             if not panel["label"].startswith("|"):
                 map_handle = image
+            if component_directory is not None:
+                component_path = _component_path(component_directory, row=row_index, column=column, label=str(panel["label"]))
+                _save_text_free_image_component(component_path, shown, extent=extent, cmap=panel["cmap"], limits=panel["range_ms"], contour=contour)
+                assets["components"].append({"file": _component_record_path(component_directory, component_path), "kind": "absolute_error_ms" if str(panel["label"]).startswith("|") else "map_ms", "row": row_index, "column": column, "original_group_idx": group, "group_label": group_label, "label": panel["label"], "cmap": panel["cmap"].name, "range_ms": list(panel["range_ms"]), "extent_mm": list(extent), "contour_overlay": bool(contour is not None and np.any(contour)), "text_free": True, "derived_from_same_render_data": True})
     map_colorbar_axis = figure.add_subplot(grid[:, panel_count])
     if map_handle is None:
         raise ValueError("native mosaic needs a quantitative-map panel")
@@ -468,6 +532,11 @@ def _plot_native_mosaic(path: Path, rows: list[Any], *, title: str) -> None:
     figure.subplots_adjust(top=.9, bottom=.03, left=.03, right=.98)
     figure.savefig(path, dpi=220, bbox_inches="tight")
     plt.close(figure)
+    if component_directory is not None:
+        colorbar_path = component_directory / "colorbar.png"
+        _save_text_free_colorbar(colorbar_path, cmap=map_handle.get_cmap(), limits=(map_handle.norm.vmin, map_handle.norm.vmax))
+        assets["colorbar"] = {"file": _component_record_path(component_directory, colorbar_path), "cmap": map_handle.get_cmap().name, "range_ms": [map_handle.norm.vmin, map_handle.norm.vmax], "orientation": "vertical", "text_free": True, "derived_from_same_render_data": True}
+    return assets
 
 
 def native_preview_groups(native: Mapping[str, Any], sparse: Mapping[str, Any], *, source_groups: list[int] | None = None) -> tuple[str, list[int]]:
@@ -643,10 +712,10 @@ def _render_longitudinal(config: Mapping[str, Any], output: Path, inputs: dict[s
             shared_support &= valid & np.isfinite(values)
         panels = [{"label": method, "values": values, "support": shared_support, "cmap": cmap, "range_ms": limits} for method, (values, _valid) in sampled_methods.items()]
         filename = f"longitudinal_{display_parameter}.png"
-        _plot_panels(output / filename, panels, extent=plane["extent_mm"], title=f"{config['subject']} {config['condition']} {config['endpoint']} — frozen L100 longitudinal {display_parameter}")
+        assets = _plot_panels(output / filename, panels, extent=plane["extent_mm"], title=f"{config['subject']} {config['condition']} {config['endpoint']} — frozen L100 longitudinal {display_parameter}", component_directory=output / "components" / Path(filename).stem)
         inputs[f"l100_mask_{parameter}"] = _file_record(mask_path)
         inputs.update({f"{method}_{parameter}": value for method, value in method_inputs.items()})
-        records.append({"parameter": display_parameter, "file": filename, "frozen_l100_source": _file_record(mask_path), "plane": {key: value for key, value in plane.items() if key != "world"}, "plane_selection": selection_mode, "world_coordinate_sampling": True, "comparison_support_contract": "frozen_L100_display_mask AND in_volume(all configured comparison methods) AND finite(all configured comparison methods)", "common_support_voxels": int(shared_support.sum()), "all_methods_share_identical_support": True, "interpolation": {"map": "linear", "mask": "nearest-neighbor"}, "no_auto_crop": True, "lut_range_ms": list(limits)})
+        records.append({"parameter": display_parameter, "file": filename, "component_directory": f"components/{Path(filename).stem}", "components": [{**component, "parameter": display_parameter, "displayed_quantity": "parameter_map_ms", "method": component["label"], "support_semantics": "frozen_L100_display_mask AND in_volume(all configured comparison methods) AND finite(all configured comparison methods)"} for component in assets["components"]], "colorbar_component": assets["colorbar"], "frozen_l100_source": _file_record(mask_path), "plane": {key: value for key, value in plane.items() if key != "world"}, "plane_selection": selection_mode, "world_coordinate_sampling": True, "comparison_support_contract": "frozen_L100_display_mask AND in_volume(all configured comparison methods) AND finite(all configured comparison methods)", "common_support_voxels": int(shared_support.sum()), "all_methods_share_identical_support": True, "interpolation": {"map": "linear", "mask": "nearest-neighbor"}, "no_auto_crop": True, "lut_range_ms": list(limits)})
     return records
 
 
@@ -707,7 +776,7 @@ def _dense_physical_plane(source_plane: Mapping[str, Any], *, spacing_mm: float 
     return {"world": world, "extent_mm": [0.0, first_length, 0.0, second_length], "shape": [first_count, second_count], "requested_spacing_mm": float(spacing_mm), "actual_spacing_mm": [first_length / (first_count - 1), second_length / (second_count - 1)], "same_physical_plane_as_source": True}
 
 
-def _plot_scmr_longitudinal(path: Path, rows: list[dict[str, Any]], *, title: str, limits: tuple[float, float], cmap: Any, column_labels: tuple[str, ...]) -> None:
+def _plot_scmr_longitudinal(path: Path, rows: list[dict[str, Any]], *, title: str, limits: tuple[float, float], cmap: Any, column_labels: tuple[str, ...], component_directory: Path | None = None) -> dict[str, Any]:
     """Two physical SAX centre-line cuts with one parameter colorbar."""
     import matplotlib.pyplot as plt
 
@@ -715,6 +784,9 @@ def _plot_scmr_longitudinal(path: Path, rows: list[dict[str, Any]], *, title: st
     figure = plt.figure(figsize=(3.0 * comparison_columns + .65, 6.1))
     grid = figure.add_gridspec(2, comparison_columns + 1, width_ratios=[1.0] * comparison_columns + [.06], wspace=.12, hspace=.20)
     handle = None
+    assets = _empty_component_assets()
+    if component_directory is not None:
+        component_directory.mkdir(parents=True, exist_ok=True)
     for row_index, row in enumerate(rows):
         source = row["source"]
         source_axis = figure.add_subplot(grid[row_index, 0])
@@ -727,6 +799,11 @@ def _plot_scmr_longitudinal(path: Path, rows: list[dict[str, Any]], *, title: st
         source_axis.set_ylabel(row["cut"].replace("_", " "), fontsize=8)
         source_axis.set_title(column_labels[0], fontsize=8)
         source_axis.set_xticks([]); source_axis.set_yticks([])
+        if component_directory is not None:
+            component_path = _component_path(component_directory, row=row_index, column=0, label=column_labels[0])
+            centerline = ("vertical", row["source_line_coordinate_mm"]) if row["cut"] == "center_row" else ("horizontal", row["source_line_coordinate_mm"])
+            _save_text_free_image_component(component_path, shown, extent=source["extent_mm"], cmap=cmap, limits=limits, centerline=centerline)
+            assets["components"].append({"file": _component_record_path(component_directory, component_path), "kind": "source_with_centerline", "row": row_index, "column": 0, "cut": row["cut"], "label": column_labels[0], "cmap": cmap.name, "range_ms": list(limits), "extent_mm": list(source["extent_mm"]), "centerline_overlay": True, "text_free": True, "derived_from_same_render_data": True})
         for column, panel in enumerate(row["longitudinal"], start=1):
             axis = figure.add_subplot(grid[row_index, column])
             shown = np.ma.masked_invalid(np.where(panel["support"], panel["values"], np.nan))
@@ -734,12 +811,21 @@ def _plot_scmr_longitudinal(path: Path, rows: list[dict[str, Any]], *, title: st
             if row_index == 0:
                 axis.set_title(column_labels[column], fontsize=8)
             axis.set_xticks([]); axis.set_yticks([])
+            if component_directory is not None:
+                component_path = _component_path(component_directory, row=row_index, column=column, label=column_labels[column])
+                _save_text_free_image_component(component_path, shown, extent=row["extent_mm"], cmap=cmap, limits=limits)
+                assets["components"].append({"file": _component_record_path(component_directory, component_path), "kind": "longitudinal_reformat", "row": row_index, "column": column, "cut": row["cut"], "label": column_labels[column], "method": panel.get("label"), "cmap": cmap.name, "range_ms": list(limits), "extent_mm": list(row["extent_mm"]), "text_free": True, "derived_from_same_render_data": True})
     colorbar_axis = figure.add_subplot(grid[:, -1])
     figure.colorbar(handle, cax=colorbar_axis, label="ms; shared parameter map scale")
     figure.suptitle(title, fontsize=10)
     figure.subplots_adjust(top=.91, bottom=.04, left=.03, right=.98)
     figure.savefig(path, dpi=220, bbox_inches="tight")
     plt.close(figure)
+    if component_directory is not None:
+        colorbar_path = component_directory / "colorbar.png"
+        _save_text_free_colorbar(colorbar_path, cmap=cmap, limits=limits)
+        assets["colorbar"] = {"file": _component_record_path(component_directory, colorbar_path), "cmap": cmap.name, "range_ms": list(limits), "orientation": "vertical", "text_free": True, "derived_from_same_render_data": True}
+    return assets
 
 
 def _render_scmr_style_longitudinal(config: Mapping[str, Any], output: Path, inputs: dict[str, Any]) -> list[dict[str, Any]]:
@@ -793,8 +879,8 @@ def _render_scmr_style_longitudinal(config: Mapping[str, Any], output: Path, inp
             cut_records.append({"cut": cut, "source_line_index": index, "source_line_coordinate_mm": line_coordinate, "source_plane_group_idx": reference_group, "line_origin_world_ras_mm": [float(value) for value in plane["world"][:3, 0, 0]], "source_plane": {key: value for key, value in plane.items() if key != "world"}, "reconstruction_plane": {key: value for key, value in dense_plane.items() if key != "world"}, "comparison_support_contract": "source comparison domain AND in_volume(all configured comparison methods) AND finite(all configured comparison methods)", "common_support_voxels": int(shared_support.sum()), "all_methods_share_identical_support": True})
         cmap, limits = colorbars().mapping[display_parameter], DISPLAY_RANGES_MS[display_parameter]
         filename = f"longitudinal_sax_centerline_{display_parameter}.png"
-        _plot_scmr_longitudinal(output / filename, rows, title=f"{config['subject']} {config['condition']} {config['endpoint']} — SAX centre-line longitudinal {display_parameter}", limits=limits, cmap=cmap, column_labels=column_labels)
-        records.append({"parameter": display_parameter, "file": filename, "layout": {"rows": 2, "columns": len(column_labels), "column_labels": list(column_labels), "configured_comparison_methods": list(methods)}, "sax_reference_group_idx": reference_group, "sax_reference_group_selection": selection_rule, "cuts": cut_records, "sampling": {"source": "nearest-neighbor on source-stack grid", "reconstruction": "linear on shared approximately-1-mm physical plane", "same_physical_plane_for_source_reformat_and_all_reconstructions": True, "reconstruction_support": "source comparison domain AND in_volume(all configured comparison methods) AND finite(all configured comparison methods)", "optional_reconstruction_display_roi": bool(section.get("reconstruction_display_roi", False))}, "all_methods_share_identical_support": True, "no_auto_crop": True, "physical_aspect_ratio_preserved": True, "colorbars": {"shared_parameter": "dedicated_axis", "range_ms": list(limits), "colormap": "same_parameter_map_lut"}, "native_source": sax["provenance"]})
+        assets = _plot_scmr_longitudinal(output / filename, rows, title=f"{config['subject']} {config['condition']} {config['endpoint']} — SAX centre-line longitudinal {display_parameter}", limits=limits, cmap=cmap, column_labels=column_labels, component_directory=output / "components" / Path(filename).stem)
+        records.append({"parameter": display_parameter, "file": filename, "component_directory": f"components/{Path(filename).stem}", "components": [{**component, "parameter": display_parameter, "displayed_quantity": "parameter_map_ms", "support_semantics": "source comparison domain AND in_volume(all configured comparison methods) AND finite(all configured comparison methods)"} for component in assets["components"]], "colorbar_component": assets["colorbar"], "layout": {"rows": 2, "columns": len(column_labels), "column_labels": list(column_labels), "configured_comparison_methods": list(methods)}, "sax_reference_group_idx": reference_group, "sax_reference_group_selection": selection_rule, "cuts": cut_records, "sampling": {"source": "nearest-neighbor on source-stack grid", "reconstruction": "linear on shared approximately-1-mm physical plane", "same_physical_plane_for_source_reformat_and_all_reconstructions": True, "reconstruction_support": "source comparison domain AND in_volume(all configured comparison methods) AND finite(all configured comparison methods)", "optional_reconstruction_display_roi": bool(section.get("reconstruction_display_roi", False))}, "all_methods_share_identical_support": True, "no_auto_crop": True, "physical_aspect_ratio_preserved": True, "colorbars": {"shared_parameter": "dedicated_axis", "range_ms": list(limits), "colormap": "same_parameter_map_lut"}, "native_source": sax["provenance"]})
     for key in ("native_maps_path", "geometry_path", "manifest_path"):
         inputs[f"scmr_sax_{key}"] = _file_record(sax["provenance"][key])
     return records
@@ -899,9 +985,9 @@ def _render_native_stack(config: Mapping[str, Any], output: Path, inputs: dict[s
             mosaic_rows.append({"group_idx": group, "group_label": native_group_label(group, group_statuses[group]), "panels": panels, "extent": extent, "contour": contour})
             shapes[str(group)] = list(source_support.shape)
         filename = f"native_{stack}_group{display_groups[0]}_{display_parameter}.png" if mode == "single" else f"native_{stack}_{mode}_{display_parameter}.png"
-        _plot_native_mosaic(output / filename, mosaic_rows, title=f"{config['subject']} {config['condition']} {config['endpoint']} — {stack} native {mode} {display_parameter}")
+        assets = _plot_native_mosaic(output / filename, mosaic_rows, title=f"{config['subject']} {config['condition']} {config['endpoint']} — {stack} native {mode} {display_parameter}", component_directory=output / "components" / Path(filename).stem)
         inputs.setdefault("native_mask_manifest", _file_record(formal_mask_root / "manifest.json"))
-        records.append({"parameter": display_parameter, "file": filename, "stack": stack, "mode": mode, "original_group_idx": display_groups[0] if mode == "single" else None, "original_group_ids": display_groups, "displayed_groups": [{"group_idx": group, "status": group_statuses[group], "label": native_group_label(group, group_statuses[group])} for group in display_groups], "native_reference": provenance, "primary_native_mask": "primary_native_mask", "mask_artifacts": mask_artifacts, "plane_shapes_rc": shapes, "display_support": "primary_native_mask AND finite(reference); per-method panels additionally require endpoint-valid AND finite(prediction)", "interpolation": {"map": "linear", "mask": "artifact-defined native-plane support"}, "no_auto_crop": True, "physical_aspect_ratio_preserved": True, "colorbars": {"shared_parameter": "dedicated_axis", "range_ms": list(limits), "colormap": "same_parameter_map_lut"}, "error_display": {"quantity": "absolute_error_ms", "colormap": "same_parameter_map_lut", "range_ms": list(limits), "no_residual_colorbar": True}})
+        records.append({"parameter": display_parameter, "file": filename, "component_directory": f"components/{Path(filename).stem}", "components": [{**component, "parameter": display_parameter, "displayed_quantity": component["kind"], "stack": stack, "support_semantics": "primary_native_mask AND finite(reference); per-method panels additionally require endpoint-valid AND finite(prediction)"} for component in assets["components"]], "colorbar_component": assets["colorbar"], "stack": stack, "mode": mode, "original_group_idx": display_groups[0] if mode == "single" else None, "original_group_ids": display_groups, "displayed_groups": [{"group_idx": group, "status": group_statuses[group], "label": native_group_label(group, group_statuses[group])} for group in display_groups], "native_reference": provenance, "primary_native_mask": "primary_native_mask", "mask_artifacts": mask_artifacts, "plane_shapes_rc": shapes, "display_support": "primary_native_mask AND finite(reference); per-method panels additionally require endpoint-valid AND finite(prediction)", "interpolation": {"map": "linear", "mask": "artifact-defined native-plane support"}, "no_auto_crop": True, "physical_aspect_ratio_preserved": True, "colorbars": {"shared_parameter": "dedicated_axis", "range_ms": list(limits), "colormap": "same_parameter_map_lut"}, "error_display": {"quantity": "absolute_error_ms", "colormap": "same_parameter_map_lut", "range_ms": list(limits), "no_residual_colorbar": True}})
     return records
 
 

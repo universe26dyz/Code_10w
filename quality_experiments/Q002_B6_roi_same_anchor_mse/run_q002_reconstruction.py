@@ -121,6 +121,11 @@ def validate_formal_q002s640_dependencies(args: argparse.Namespace) -> None:
 
 
 def run(args: argparse.Namespace) -> Path:
+    endpoint_policy = getattr(args, "endpoint_policy", "legacy")
+    if endpoint_policy not in ("legacy", "central_only"):
+        raise ValueError("endpoint_policy must be 'legacy' or 'central_only'")
+    if endpoint_policy == "central_only" and args.experiment_id != Q002S640_EXPERIMENT_ID:
+        raise ValueError("central_only endpoint policy is only valid for the Q002S640/K8 route")
     formal_profile = validate_formal_sparse_reconstruction_dependencies(args)
     sparse_manifest = getattr(args, "sparse_manifest", None)
     expected_sparse_generator_sha = getattr(args, "expected_sparse_generator_git_sha", None)
@@ -163,7 +168,7 @@ def run(args: argparse.Namespace) -> Path:
     raw_paths = export_quantitative_outputs(result["model"], result["training_space"], output, float(export["output_resolution_mm"]), int(export["output_batch_size"]), dataset=scalar, export_config=export_config)
     required_raw = ("t1_ms", "t2_ms", "b1", "amplitude", "poses")
     if any(name not in raw_paths or not Path(raw_paths[name]).is_file() for name in required_raw):
-        raise RuntimeError("Q002 raw export must write volumes and final_rigid_poses.json before PSF128 export.")
+        raise RuntimeError("Q002 raw export must write volumes and final_rigid_poses.json before endpoint-specific exports.")
     git_sha = __import__("subprocess").check_output(["git", "rev-parse", "HEAD"], text=True).strip()
     if args.experiment_id == Q003S640_10K_EXPERIMENT_ID:
         primary_checkpoint = result["primary_checkpoint"]
@@ -186,8 +191,10 @@ def run(args: argparse.Namespace) -> Path:
         export_native_plane_reprojections(result["model"], result["training_space"], inputs, output / "evaluation/mapping_central_no_psf", output_psf={"enabled": False}, export_parameter_maps=True)
     else:
         export_native_plane_reprojections(result["model"], result["training_space"], inputs, output / "evaluation/mapping_central_no_psf", output_psf={"enabled": False}, export_parameter_maps=True)
-        export_native_plane_reprojections(result["model"], result["training_space"], inputs, output / "evaluation/signal_psf_K8", output_psf={"enabled": True, "n_samples": 8}, evaluation_seed=20260911, export_parameter_maps=False)
-    export_quantitative_outputs_psf128(result["model"], result["training_space"], output, dataset=scalar, export_config=export_config, batch_size=int(export["output_batch_size"]), experiment_id=args.experiment_id, subject_id=args.subject_id, source_checkpoint=output / "model.pt", reconstruction_code_git_commit=git_sha)
+        if endpoint_policy == "legacy":
+            export_native_plane_reprojections(result["model"], result["training_space"], inputs, output / "evaluation/signal_psf_K8", output_psf={"enabled": True, "n_samples": 8}, evaluation_seed=20260911, export_parameter_maps=False)
+    if endpoint_policy == "legacy":
+        export_quantitative_outputs_psf128(result["model"], result["training_space"], output, dataset=scalar, export_config=export_config, batch_size=int(export["output_batch_size"]), experiment_id=args.experiment_id, subject_id=args.subject_id, source_checkpoint=output / "model.pt", reconstruction_code_git_commit=git_sha)
     protocol_path = Path(args.protocol)
     protocol_provenance = {"protocol_path": str(protocol_path), "protocol_sha256": _sha256(protocol_path)} if protocol_path.is_file() else {}
     common = {"experiment_id": args.experiment_id, "subject_id": args.subject_id, "route": route["route"], "reconstruction_git_sha": git_sha, "git_dirty": bool(__import__("subprocess").check_output(["git", "status", "--porcelain"], text=True).strip()), "B6_model_path": str(Path(args.b6_model)), "b6_model_sha256": _sha256(Path(args.b6_model)), "decoder_relocation":{"b6_resolved_config_path":source_decoder_path,"runtime_decoder_path":str(Path(args.signal_simulator)),"approved_decoder_sha256":_sha256(Path(args.signal_simulator)),"scientific_config_changed":False}, "approved_decoder_path": str(Path(args.signal_simulator)), "approved_decoder_sha256": _sha256(Path(args.signal_simulator)), "dependency_sha256": {"B6_model": _sha256(Path(args.b6_model)), "frozen_decoder": _sha256(Path(args.signal_simulator)), **({"protocol": _sha256(protocol_path)} if protocol_path.is_file() else {})}, **protocol_provenance, "prepared_inputs_sha256": {str(path): _sha256(path) for path in inputs}, "joint_dataset_qc": joint.qc, "controls": result["controls"], "intensity_normalization": result["intensity_normalization"], "stack_weights": result["stack_weights"], "fixed_monitor": {"seed": result["fixed_monitor"]["seed"], "anchor_identity_sha256": result["fixed_monitor"]["anchor_identity_sha256"]}, "q002_checkpoint_sha256": _sha256(output / "model.pt"), "psf128_contract": {"resolution_mm": 1.0, "factor": 1.0, "samples": 128, "seed": 20260911}}
@@ -204,6 +211,18 @@ def run(args: argparse.Namespace) -> Path:
         common.update({"parent_experiment": Q002S640_EXPERIMENT_ID, "scientific_change": "training_psf_samples_8_to_4_only", "loss": "MSE_only", "fingerprint_cosine_enabled": False, "anchor_batch_size": 640, "weights_per_anchor": 10, "signal_residual_count": 6400, "training_psf_samples": 4, "data_psf_inr_location_count": 2560, "psf_forward_chunk_size": 4, "stage_a_iterations": 2000, "stage_b_iterations": 4000, "seed": 20260911, "regularization_candidate_count": 640, "regularization_effective_point_count": 256, "regularization_sampling_source": "B6 scalar cropped support", "regularization_application_count_per_optimizer_step": 1, "endpoint_semantics": route["route"]["endpoint_semantics"]})
     if args.experiment_id == Q002S640_K256_EXPERIMENT_ID:
         common.update({"parent_experiment": Q002S640_EXPERIMENT_ID, "scientific_change": "training_psf_samples_8_to_256_only", "loss": "MSE_only", "fingerprint_cosine_enabled": False, "anchor_batch_size": 640, "weights_per_anchor": 10, "signal_residual_count": 6400, "training_psf_samples": 256, "training_psf_semantics": "same-anchor local PSF neighbourhood samples averaged before the 10-weight joint-vector MSE", "data_psf_inr_location_count": 163840, "psf_forward_chunk_size": 32, "stage_a_iterations": 2000, "stage_b_iterations": 4000, "seed": 20260911, "regularization_candidate_count": 640, "regularization_effective_point_count": 256, "regularization_sampling_source": "B6 scalar cropped support", "regularization_application_count_per_optimizer_step": 1, "checkpoint_path": "model.pt", "checkpoint_sha256": common["q002_checkpoint_sha256"], "fit_first_n_samples_semantics": route["route"]["fit_first_n_samples_semantics"], "endpoint_semantics": {"central": "central/no map-domain PSF post-hoc endpoint", "psf128": "post-hoc map-domain PSF128 endpoint, distinct from training K256"}})
+    common.update({
+        "endpoint_policy": endpoint_policy,
+        "formal_endpoint": "central" if endpoint_policy == "central_only" else "central_and_posthoc_psf128",
+        "training_psf_samples": int(route["route"]["sampling"]["shared_training_psf_samples"]),
+        "output_sampling_psf_samples": 1,
+        "central_output_semantics": "local central coordinate; no post-hoc map-domain PSF",
+        "signal_psf_k8_generated": endpoint_policy == "legacy" and args.experiment_id != Q002S640_K256_EXPERIMENT_ID,
+        "psf128_export_generated": endpoint_policy == "legacy",
+    })
+    if endpoint_policy == "central_only":
+        common.pop("psf128_contract")
+        common["psf128_export"] = {"generated": False, "formal_endpoint": False}
     (output / "q002_route_manifest.json").write_text(json.dumps(common, indent=2) + "\n")
     (output / "experiment_manifest.json").write_text(json.dumps(common, indent=2) + "\n")
     summary = f"# {args.experiment_id} B6 ROI same-anchor MSE\n\nCode run completed; formal evaluation must be invoked separately.\n"
@@ -227,6 +246,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--cropped-prepared-root", required=True); parser.add_argument("--subject-id", default="CYJ"); parser.add_argument("--sparse-manifest"); parser.add_argument("--expected-sparse-generator-git-sha"); parser.add_argument("--expected-sparse-manifest-sha256"); parser.add_argument("--b6-model", required=True); parser.add_argument("--expected-b6-model-sha256"); parser.add_argument("--signal-simulator", required=True); parser.add_argument("--protocol", default="trad/configs/protocol_hhz_v1.yaml"); parser.add_argument("--expected-protocol-sha256"); parser.add_argument("--output", required=True); parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--experiment-id", choices=(Q002_EXPERIMENT_ID, Q002S640_EXPERIMENT_ID, Q002S640_K256_EXPERIMENT_ID, Q003S640_EXPERIMENT_ID, Q003S640_10K_EXPERIMENT_ID, Q004S640_K1_EXPERIMENT_ID, Q005S640_K4_EXPERIMENT_ID), default=Q002_EXPERIMENT_ID)
     parser.add_argument("--anchor-batch-size", type=int, default=64)
+    parser.add_argument("--endpoint-policy", choices=("legacy", "central_only"), default="legacy")
     return parser
 
 
