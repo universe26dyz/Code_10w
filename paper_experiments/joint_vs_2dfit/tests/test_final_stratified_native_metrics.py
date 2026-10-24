@@ -22,8 +22,11 @@ def _endpoint(root: Path, method: str) -> Path:
             query_mask = path.parent / "query_effective_mask.nii.gz"
             nib.save(nib.Nifti1Image(np.ones((4, 4, 4), np.uint8), np.eye(4)), str(query_mask))
             parameters[parameter] = {"effective_query_mask": {"path": str(query_mask.resolve()), "sha256": sha256(query_mask)}}
-    schema = "phase4r_formal_proposed_export/v1" if method == "Proposed" else "phase4r_fixed_l100_fit_first_export_bundle/v1"
-    (root / "manifest.json").write_text(json.dumps({"schema": schema, "subject": "DYL_2", "condition": "L50_fold0", "endpoint": "central", "parameters": parameters}), encoding="utf-8")
+    schema = "phase4r_formal_proposed_export/v1" if method == "Proposed" else "phase4r_fixed_l100_fit_first_export_bundle/v2"
+    manifest = {"schema": schema, "subject": "DYL_2", "condition": "L50_fold0", "endpoint": "central", "parameters": parameters}
+    if method == "Fit-first":
+        manifest["fit_first_routes"] = {name: {"route_schema": "phase4r_intensity_preserving_fit_first/v2"} for name in ("l100", "sparse")}
+    (root / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
     return root
 
 

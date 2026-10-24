@@ -13,10 +13,9 @@ from paper_experiments.joint_vs_2dfit.phase2_clean.contracts import sha256
 
 def _route(root: Path, r0: Path, endpoint: Path) -> None:
     root.mkdir()
-    (root / "manifest.json").write_text(json.dumps({"schema": "phase4r_intensity_preserving_fit_first/v2", "no_dictionary_refit": True, "no_pose_copying": True}))
     (root / "registered_quantitative_inputs_gate.json").write_text(json.dumps({"schema": "phase4r_fit_first_registered_quantitative_inputs/v2", "status": "REGISTERED_QUANTITATIVE_INPUTS_VALID"}))
-    (root / "final_pose_audit.json").write_text(json.dumps({"schema": "fit_first_intensity_preserving_final_pose_audit/v2", "status": "POSE_STAGE1_AND_QUANTITATIVE_STAGE2_VALID"}))
     registered = {"parameters": {}}
+    stack_masks = {}
     for parameter, translation in (("t1", 1.0), ("t2", 2.0)):
         target = root / "stage2_reconstruction" / parameter; target.mkdir(parents=True)
         (target / "model.pt").write_bytes(b"stage2")
@@ -28,7 +27,15 @@ def _route(root: Path, r0: Path, endpoint: Path) -> None:
         # sample endpoint volume, never these registration pixels.
         stage1 = root / "stage1_registration" / parameter / "slices"; stage1.mkdir(parents=True)
         nib.save(nib.Nifti1Image(np.full((1, 1, 1), 999.0), affine), stage1 / "0.nii.gz")
+        stack = root / f"nesvor_inputs/sax/{parameter}/stack.nii.gz"; stack.parent.mkdir(parents=True); stack.write_bytes(b"stack")
+        mask = root / f"nesvor_inputs/sax/{parameter}/stack_mask.nii.gz"; mask.write_bytes(b"mask")
+        (stage1.parent / "result.json").write_text(json.dumps({"registration": "stack", "input_stacks": [str(stack.resolve())], "stack_masks": [str(mask.resolve())]}))
+        stack_masks[parameter] = {"sax": {"path": str(mask.resolve()), "sha256": sha256(mask)}}
         registered["parameters"][parameter] = [{"index": 0, "stack": "sax", "standardized_group_idx": 0, "original_prestandardization_group_idx": 1}]
+    stage1_manifest = root / "stage1_registration_manifest.json"
+    stage1_manifest.write_text(json.dumps({"schema": "phase4r_fit_first_registration_stage/v2", "active_stacks": ["sax"], "stack_masks": stack_masks}))
+    (root / "final_pose_audit.json").write_text(json.dumps({"schema": "fit_first_intensity_preserving_final_pose_audit/v2", "status": "POSE_STAGE1_AND_QUANTITATIVE_STAGE2_VALID", "parameters": {parameter: {"stage1_stack_masks": [stack_masks[parameter]["sax"]]} for parameter in ("t1", "t2")}}))
+    (root / "manifest.json").write_text(json.dumps({"schema": "phase4r_intensity_preserving_fit_first/v2", "no_dictionary_refit": True, "no_pose_copying": True, "active_stacks": ["sax"], "stage1": {"path": str(stage1_manifest.resolve()), "sha256": sha256(stage1_manifest)}}))
     target = root / "registered_quantitative_inputs"; target.mkdir(); (target / "manifest.json").write_text(json.dumps(registered))
     r0_stack = r0 / "sax"; r0_stack.mkdir(parents=True)
     np.savez_compressed(r0_stack / "native_maps.npz", group_idx=np.array([0]), t1_ms=np.ones((1, 1, 1)), t2_ms=np.ones((1, 1, 1)))
@@ -38,7 +45,7 @@ def _route(root: Path, r0: Path, endpoint: Path) -> None:
         nib.save(nib.Nifti1Image(volume, np.eye(4)), target / "volume_ms.nii.gz")
         nib.save(nib.Nifti1Image(np.zeros(volume.shape, np.uint8) if parameter == "t1" else np.ones(volume.shape, np.uint8), np.eye(4)), target / "query_effective_mask.nii.gz")
     parameters = {parameter: {"effective_query_mask": {"path": str((endpoint / parameter / "query_effective_mask.nii.gz").resolve()), "sha256": sha256(endpoint / parameter / "query_effective_mask.nii.gz")}} for parameter in ("t1", "t2")}
-    (endpoint / "manifest.json").write_text(json.dumps({"schema": "phase4r_fixed_l100_fit_first_export_bundle/v1", "endpoint": "central", "parameters": parameters}))
+    (endpoint / "manifest.json").write_text(json.dumps({"schema": "phase4r_fixed_l100_fit_first_export_bundle/v2", "endpoint": "central", "parameters": parameters}))
 
 
 def test_intensity_preserving_bundle_uses_stage2_pose_and_endpoint_values_not_stage1_pixels(tmp_path: Path) -> None:

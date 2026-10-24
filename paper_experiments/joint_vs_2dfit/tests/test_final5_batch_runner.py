@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -123,7 +124,7 @@ def test_sparse_metric_requires_l100_mask_and_both_case_endpoints(tmp_path: Path
     monkeypatch.setattr(runner, "validate_proposed_reconstruction", lambda path, record: runner.ValidationResult(record.case_id != "L50_fold0", "SKIP_VALID" if record.case_id != "L50_fold0" else "READY", "test"))
     monkeypatch.setattr(runner, "validate_fit_first_reconstruction", lambda _path, _record: runner.ValidationResult(True, "SKIP_VALID", "test"))
     def schema(path: Path, expected: str) -> runner.ValidationResult:
-        if expected == "final_sparse_native_bundle_metrics/v1":
+        if expected == "final_sparse_native_bundle_metrics/v2":
             return runner.ValidationResult(False, "READY", "metric absent")
         if expected == "phase4r_formal_proposed_export/v1" and "L50_fold0" in str(path):
             return runner.ValidationResult(False, "READY", "endpoint absent")
@@ -168,12 +169,64 @@ def test_sparse_runtime_validation_reads_only_explicit_dependencies(tmp_path: Pa
 
     def output(stage: str, record: runner.CaseRecord, *_args: object) -> runner.ValidationResult:
         calls.append((stage, record.case_id))
-        return runner.ValidationResult(False, "READY", "absent") if stage == "sparse_metrics" else runner.ValidationResult(True, "SKIP_VALID", "valid")
+        if stage == "fit_first_endpoint":
+            return runner.ValidationResult(False, "BLOCKED_EXISTING_INVALID", "stale endpoint")
+        return runner.ValidationResult(True, "SKIP_VALID", "valid")
 
     monkeypatch.setattr(runner, "_validate_stage_output", output)
     result = runner._validate_stage_locally("sparse_metrics", sparse, tmp_path / "final", {("CYJ", "L100"): l100, ("CYJ", "L50_fold0"): sparse})
-    assert result.state == "READY"
+    assert result.state == "BLOCKED_DEPENDENCY"
     assert calls == [("sparse_metrics", "L50_fold0"), ("current_native_mask", "L100"), ("proposed_endpoint", "L50_fold0"), ("fit_first_endpoint", "L50_fold0")]
+
+
+def test_old_fit_first_endpoint_schema_is_not_admitted(tmp_path: Path) -> None:
+    endpoint = tmp_path / "endpoint"; endpoint.mkdir()
+    (endpoint / "manifest.json").write_text(json.dumps({"schema": "phase4r_fixed_l100_fit_first_export_bundle/v1"}))
+    record = runner.CaseRecord("CYJ", "L100", "L100", None, 1, tmp_path / "sparse.json", "a" * 64, "b" * 40, tmp_path)
+    result = runner.validate_fit_first_endpoint(endpoint, record, {("CYJ", "L100"): record}, tmp_path / "final")
+    assert not result.valid and result.state == "BLOCKED_EXISTING_INVALID"
+
+
+def test_mask_aware_v2_fit_first_endpoint_is_admitted(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    record = runner.CaseRecord("CYJ", "L100", "L100", None, 1, tmp_path / "sparse.json", "a" * 64, "b" * 40, tmp_path)
+    root, paths = tmp_path / "final", runner._paths(tmp_path / "final", record)
+    source = paths["fit_first"]; source.mkdir(parents=True)
+    audit = source / "final_pose_audit.json"; audit.write_text("{}")
+    models, results = {}, {}
+    for parameter in ("t1", "t2"):
+        model = source / f"stage2_reconstruction/{parameter}/model.pt"; result = source / f"stage2_reconstruction/{parameter}/result.json"
+        model.parent.mkdir(parents=True, exist_ok=True); model.write_bytes(parameter.encode()); result.write_text("{}")
+        models[parameter], results[parameter] = model, result
+    monkeypatch.setattr(runner, "resolve_fit_first_route", lambda path: SimpleNamespace(route_kind="intensity_preserving_fit_first", route_schema="phase4r_intensity_preserving_fit_first/v2", pose_audit_path=Path(path) / "final_pose_audit.json", models=models, results=results))
+    parameters = {}
+    for parameter in ("t1", "t2"):
+        volume, mask = paths["fit_endpoint"] / parameter / "volume_ms.nii.gz", paths["fit_endpoint"] / parameter / "query_effective_mask.nii.gz"
+        volume.parent.mkdir(parents=True, exist_ok=True); volume.write_bytes(parameter.encode()); mask.write_bytes(b"mask")
+        parameters[parameter] = {"schema": "phase4r_fixed_l100_fit_first_export/v2", "subject": "CYJ", "condition": "L100", "endpoint": "central", "parameter": parameter, "output_volume_ms": {"path": str(volume.resolve()), "sha256": runner.sha256(volume)}, "effective_query_mask": {"path": str(mask.resolve()), "sha256": runner.sha256(mask)}}
+        (paths["fit_endpoint"] / parameter / "manifest.json").write_text(json.dumps(parameters[parameter]))
+    route = {"route_schema": "phase4r_intensity_preserving_fit_first/v2", "source_fit_first_root": str(source.resolve()), "final_pose_audit": {"path": str(audit.resolve()), "sha256": runner.sha256(audit)}, "formal_reconstruction_model": {parameter: {"path": str(models[parameter].resolve()), "sha256": runner.sha256(models[parameter])} for parameter in models}, "parameter_results": {parameter: {"path": str(results[parameter].resolve()), "sha256": runner.sha256(results[parameter])} for parameter in results}}
+    (paths["fit_endpoint"] / "manifest.json").write_text(json.dumps({"schema": "phase4r_fixed_l100_fit_first_export_bundle/v2", "subject": "CYJ", "condition": "L100", "method": "Fit-first", "endpoint": "central", "fit_first_routes": {"l100": route, "sparse": route}, "parameters": parameters}))
+    result = runner.validate_fit_first_endpoint(paths["fit_endpoint"], record, {("CYJ", "L100"): record}, root)
+    assert result.valid and result.state == "SKIP_VALID"
+
+
+def test_old_l100_and_sparse_metric_schemas_are_not_admitted(tmp_path: Path) -> None:
+    l100 = runner.CaseRecord("CYJ", "L100", "L100", None, 1, tmp_path / "l100.json", "a" * 64, "b" * 40, tmp_path)
+    sparse = runner.CaseRecord("CYJ", "L50_fold0", "L50", 0, 2, tmp_path / "sparse.json", "a" * 64, "b" * 40, tmp_path)
+    root = tmp_path / "final"
+    for record, path_key, schema in ((l100, "l100_metrics", "final_pose_native_bundle_metrics/v4"), (sparse, "sparse_metrics", "final_sparse_native_bundle_metrics/v1")):
+        path = runner._paths(root, record)[path_key]; path.mkdir(parents=True)
+        (path / "manifest.json").write_text(json.dumps({"schema": schema}))
+    assert runner.validate_l100_metric(runner._paths(root, l100)["l100_metrics"], l100, root).state == "BLOCKED_EXISTING_INVALID"
+    assert runner.validate_sparse_metric(runner._paths(root, sparse)["sparse_metrics"], sparse, root).state == "BLOCKED_EXISTING_INVALID"
+
+
+def test_sparse_metric_without_effective_query_mask_support_is_not_admitted(tmp_path: Path) -> None:
+    record = runner.CaseRecord("CYJ", "L50_fold0", "L50", 0, 2, tmp_path / "sparse.json", "a" * 64, "b" * 40, tmp_path)
+    root, path = tmp_path / "final", runner._paths(tmp_path / "final", record)["sparse_metrics"]
+    path.mkdir(parents=True)
+    (path / "manifest.json").write_text(json.dumps({"schema": "final_sparse_native_bundle_metrics/v2", "subject": "CYJ", "condition": "L50_fold0", "primary_support_equation": "primary_native_mask AND finite(reference)"}))
+    assert runner.validate_sparse_metric(path, record, root).state == "BLOCKED_EXISTING_INVALID"
 
 
 def test_execute_blocks_dependents_when_successful_subprocess_fails_artifact_validation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

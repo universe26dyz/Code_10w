@@ -33,7 +33,7 @@ def build_final_pose_native_metrics(*, direct_bundle_root: str | Path, fit_first
     sparse_identity = validate_formal_l100_sparse_manifest(sparse_manifest)
     if direct_manifest.get("schema") != "direct_native_prediction_bundle/v1":
         raise ValueError("direct bundle schema mismatch")
-    if fit_manifest.get("schema") not in ("fit_first_native_prediction_bundle/v2", "fit_first_native_prediction_bundle/v4"):
+    if fit_manifest.get("schema") != "fit_first_native_prediction_bundle/v4":
         raise ValueError("Fit-first bundle schema mismatch")
     if direct_manifest.get("endpoint") != fit_manifest.get("endpoint"):
         raise ValueError("endpoint mismatch: direct and Fit-first final-pose bundles must match")
@@ -60,13 +60,9 @@ def build_final_pose_native_metrics(*, direct_bundle_root: str | Path, fit_first
                     with np.load(fit_path, allow_pickle=False) as fit:
                         proposed, fit_first = np.asarray(direct[f"{parameter}_ms"], float), np.asarray(fit["prediction_ms"], float)
                         proposed_valid = np.isfinite(proposed)
-                        if fit_manifest.get("schema") == "fit_first_native_prediction_bundle/v4":
-                            volume_geometry_valid = np.asarray(fit["volume_geometry_valid"], bool)
-                            query_effective_mask = np.asarray(fit["query_effective_mask"], bool)
-                            fit_valid = volume_geometry_valid & query_effective_mask & np.isfinite(fit_first)
-                        else:
-                            volume_geometry_valid, query_effective_mask = np.asarray(fit["valid"], bool), np.ones_like(fit_first, bool)
-                            fit_valid = volume_geometry_valid & np.isfinite(fit_first)
+                        volume_geometry_valid = np.asarray(fit["volume_geometry_valid"], bool)
+                        query_effective_mask = np.asarray(fit["query_effective_mask"], bool)
+                        fit_valid = volume_geometry_valid & query_effective_mask & np.isfinite(fit_first)
                         if not (reference.shape == proposed.shape == fit_first.shape == source.shape == proposed_valid.shape == fit_valid.shape):
                             raise ValueError(f"{parameter}/{stack}/group{group:03d}: native plane geometry mismatch")
                         record: dict[str, Any] = {"parameter": parameter, "stack": stack, "original_group_idx": group, "fit_first_volume_geometry_valid_voxels": int(volume_geometry_valid.sum()), "fit_first_query_effective_mask_voxels": int(query_effective_mask.sum()), "masks": {}}
@@ -89,8 +85,8 @@ def build_final_pose_native_metrics(*, direct_bundle_root: str | Path, fit_first
                 ref = np.concatenate(values["reference"]); support = np.ones(ref.size, bool)
                 aggregate_output[parameter][name] = {"common_support_voxels": int(ref.size), "proposed": _metrics(ref, np.concatenate(values["proposed"]), support), "fit_first": _metrics(ref, np.concatenate(values["fit_first"]), support)}
         primary_aggregate = {parameter: aggregate_output[parameter][PRIMARY_MASK] for parameter in PARAMETERS}
-        (staging / "aggregate_metrics.json").write_text(json.dumps({"schema": "final_pose_native_common_support_metrics/v3", "primary_mask": PRIMARY_MASK, "primary_support_equation": COMMON_SUPPORT_EQUATION, "primary_aggregate": primary_aggregate, "regions": aggregate_output}, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        write_immutable_json(staging / "manifest.json", {"schema": "final_pose_native_bundle_metrics/v4", "subject": subject, "condition": "L100_fold0", "sparse_manifest_schema": sparse_identity["sparse_manifest_schema"], "sparse_identity": sparse_identity["sparse_identity"], "endpoint": direct_manifest["endpoint"], "direct_bundle": _record(direct_root / "manifest.json"), "fit_first_bundle": _record(fit_root / "manifest.json"), "mask_manifest": _record(mask_root / "manifest.json"), "primary_mask": PRIMARY_MASK, "primary_support_equation": COMMON_SUPPORT_EQUATION, "sensitivity_masks": [name for name in MASKS if name != PRIMARY_MASK], "metric_contract": "current-native primary mask plus final direct INR and final Fit-first bundle on one paired valid support", "per_plane_records": rows, "aggregate_metrics": _record(staging / "aggregate_metrics.json"), "no_existing_metrics_overwritten": True})
+        (staging / "aggregate_metrics.json").write_text(json.dumps({"schema": "final_pose_native_common_support_metrics/v4", "primary_mask": PRIMARY_MASK, "primary_support_equation": COMMON_SUPPORT_EQUATION, "primary_aggregate": primary_aggregate, "regions": aggregate_output, "fit_first_mask_semantics": "Fit-first effective query mask is part of pairwise common support; corrected Fit-first route is mask-aware v2"}, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        write_immutable_json(staging / "manifest.json", {"schema": "final_pose_native_bundle_metrics/v5", "subject": subject, "condition": "L100_fold0", "sparse_manifest_schema": sparse_identity["sparse_manifest_schema"], "sparse_identity": sparse_identity["sparse_identity"], "endpoint": direct_manifest["endpoint"], "direct_bundle": _record(direct_root / "manifest.json"), "fit_first_bundle": _record(fit_root / "manifest.json"), "mask_manifest": _record(mask_root / "manifest.json"), "primary_mask": PRIMARY_MASK, "primary_support_equation": COMMON_SUPPORT_EQUATION, "sensitivity_masks": [name for name in MASKS if name != PRIMARY_MASK], "metric_contract": "current-native primary mask plus final direct INR and mask-aware v2 Fit-first bundle on one paired valid support; Fit-first effective query mask is part of pairwise common support", "per_plane_records": rows, "aggregate_metrics": _record(staging / "aggregate_metrics.json"), "no_existing_metrics_overwritten": True})
         staging.rename(output)
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True)

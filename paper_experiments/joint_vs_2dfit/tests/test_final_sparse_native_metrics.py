@@ -25,7 +25,10 @@ def _endpoint(root: Path, method: str, endpoint: str, *, subject: str = "CYJ") -
             mask = root / parameter / "query_effective_mask.nii.gz"
             _volume(mask, 1.0)
     parameters = {} if method == "Proposed" else {parameter: {"effective_query_mask": {"path": str((root / parameter / "query_effective_mask.nii.gz").resolve()), "sha256": sha256(root / parameter / "query_effective_mask.nii.gz")}} for parameter in ("t1", "t2")}
-    (root / "manifest.json").write_text(json.dumps({"schema": "phase4r_formal_proposed_export/v1" if method == "Proposed" else "phase4r_fixed_l100_fit_first_export_bundle/v1", "subject": subject, "condition": "L50_fold0", "method": method, "endpoint": endpoint, "parameters": parameters}), encoding="utf-8")
+    payload = {"schema": "phase4r_formal_proposed_export/v1" if method == "Proposed" else "phase4r_fixed_l100_fit_first_export_bundle/v2", "subject": subject, "condition": "L50_fold0", "method": method, "endpoint": endpoint, "parameters": parameters}
+    if method == "Fit-first":
+        payload["fit_first_routes"] = {name: {"route_schema": "phase4r_intensity_preserving_fit_first/v2"} for name in ("l100", "sparse")}
+    (root / "manifest.json").write_text(json.dumps(payload), encoding="utf-8")
     return root
 
 

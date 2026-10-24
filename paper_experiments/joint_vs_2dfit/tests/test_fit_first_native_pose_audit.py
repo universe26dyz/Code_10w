@@ -98,7 +98,7 @@ def test_bundle_uses_volume_not_output_slice_and_refuses_invalid_gate(tmp_path: 
         volume = nib.load(str(target / "volume_ms.nii.gz"))
         nib.save(nib.Nifti1Image(np.ones(volume.shape, np.uint8), volume.affine), target / "query_effective_mask.nii.gz")
     parameters = {parameter: {"effective_query_mask": {"path": str((endpoint / parameter / "query_effective_mask.nii.gz").resolve()), "sha256": sha256(endpoint / parameter / "query_effective_mask.nii.gz")}} for parameter in ("t1", "t2")}
-    (endpoint / "manifest.json").write_text(json.dumps({"schema": "phase4r_fixed_l100_fit_first_export_bundle/v1", "endpoint": "central", "parameters": parameters}), encoding="utf-8")
+    (endpoint / "manifest.json").write_text(json.dumps({"schema": "phase4r_fixed_l100_fit_first_export_bundle/v2", "endpoint": "central", "parameters": parameters}), encoding="utf-8")
     bundle = build_fit_first_native_prediction_bundle(audit_root=audit_root, baseline_root=baseline, r0_native_maps_root=r0, endpoint="central", endpoint_source_root=endpoint, output=tmp_path / "bundle")
     with np.load(bundle / "planes" / "t1" / "sax" / "group005.npz") as plane:
         assert np.allclose(plane["prediction_ms"], [[102, 102, 102], [103, 103, 103]])

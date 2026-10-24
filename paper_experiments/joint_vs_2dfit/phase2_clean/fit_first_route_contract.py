@@ -30,6 +30,41 @@ def _args(path: Path) -> dict[str, Any]:
     return value
 
 
+def _matches_record(value: Any, path: Path) -> bool:
+    return isinstance(value, dict) and path.is_file() and Path(str(value.get("path", ""))).resolve() == path.resolve() and value.get("sha256") == sha256(path)
+
+
+def _validate_stage1_stack_masks(root: Path, manifest: dict[str, Any], audit: dict[str, Any]) -> None:
+    """Require the v2 route/audit to prove the masks passed to NeSVoR Stage 1."""
+    stage1_path = root / "stage1_registration_manifest.json"
+    if not _matches_record(manifest.get("stage1"), stage1_path):
+        raise ValueError("Stage-1 registration manifest provenance mismatch")
+    stage1 = json.loads(stage1_path.read_text(encoding="utf-8"))
+    active = manifest.get("active_stacks")
+    if stage1.get("schema") != "phase4r_fit_first_registration_stage/v2" or not isinstance(active, list) or stage1.get("active_stacks") != active:
+        raise ValueError("Stage-1 active stack provenance mismatch")
+    masks = stage1.get("stack_masks")
+    audit_parameters = audit.get("parameters")
+    if not isinstance(masks, dict) or not isinstance(audit_parameters, dict):
+        raise ValueError("Stage-1 stack mask provenance is absent")
+    for parameter in PARAMETERS:
+        expected_stacks = [root / "nesvor_inputs" / stack / parameter / "stack.nii.gz" for stack in active]
+        expected_masks = [root / "nesvor_inputs" / stack / parameter / "stack_mask.nii.gz" for stack in active]
+        args = _args(root / "stage1_registration" / parameter / "result.json")
+        got_stacks, got_masks = args.get("input_stacks"), args.get("stack_masks")
+        if not isinstance(got_stacks, list) or not isinstance(got_masks, list) or len(got_stacks) != len(expected_stacks) or len(got_masks) != len(expected_masks):
+            raise ValueError(f"{parameter}: Stage-1 stack mask count does not match input stacks")
+        if [Path(str(value)).resolve() for value in got_stacks] != [path.resolve() for path in expected_stacks] or [Path(str(value)).resolve() for value in got_masks] != [path.resolve() for path in expected_masks]:
+            raise ValueError(f"{parameter}: Stage-1 stack mask paths do not match native inputs")
+        manifest_masks = masks.get(parameter)
+        audit_masks = audit_parameters.get(parameter, {}).get("stage1_stack_masks") if isinstance(audit_parameters.get(parameter), dict) else None
+        if not isinstance(manifest_masks, dict) or not isinstance(audit_masks, list) or len(audit_masks) != len(expected_masks):
+            raise ValueError(f"{parameter}: Stage-1 stack mask SHA provenance is absent")
+        for stack, mask, audit_mask in zip(active, expected_masks, audit_masks):
+            if not _matches_record(manifest_masks.get(stack), mask) or not _matches_record(audit_mask, mask):
+                raise ValueError(f"{parameter}: Stage-1 stack mask SHA provenance mismatch")
+
+
 @dataclass(frozen=True)
 class FitFirstFormalRoute:
     route_kind: str
@@ -95,6 +130,7 @@ def _intensity_preserving(root: Path, manifest_path: Path, manifest: dict[str, A
     audit = json.loads(audit_path.read_text(encoding="utf-8"))
     if audit.get("schema") != INTENSITY_AUDIT_SCHEMA or audit.get("status") != "POSE_STAGE1_AND_QUANTITATIVE_STAGE2_VALID":
         raise ValueError("final pose audit is not valid for intensity-preserving Fit-first")
+    _validate_stage1_stack_masks(root, manifest, audit)
     models, results, slices = {}, {}, {}
     for parameter in PARAMETERS:
         target = root / "stage2_reconstruction" / parameter

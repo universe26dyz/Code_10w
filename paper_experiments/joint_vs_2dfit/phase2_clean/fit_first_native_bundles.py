@@ -59,7 +59,7 @@ def build_fit_first_native_prediction_bundle(*, audit_root: str | Path | None = 
     if endpoint not in ("central", "psf128") or not endpoint_manifest_path.is_file():
         raise ValueError("Fit-first final-pose bundle requires a formal central or psf128 endpoint source")
     endpoint_manifest = json.loads(endpoint_manifest_path.read_text(encoding="utf-8"))
-    if endpoint_manifest.get("schema") != "phase4r_fixed_l100_fit_first_export_bundle/v1" or endpoint_manifest.get("endpoint") != endpoint:
+    if endpoint_manifest.get("schema") != "phase4r_fixed_l100_fit_first_export_bundle/v2" or endpoint_manifest.get("endpoint") != endpoint:
         raise ValueError("Fit-first endpoint source schema/endpoint mismatch")
     if output.exists():
         raise FileExistsError(f"refusing overwrite: {output}")

@@ -148,6 +148,21 @@ def _selection_fixture(root: Path, *, sparse_sha: str = "standardized-sha", inac
     return standardized, reuse, sparse
 
 
+def _write_stage1_mask_provenance(root: Path) -> None:
+    active = ["sax"]
+    masks: dict[str, dict[str, dict[str, str]]] = {}
+    for parameter in ("t1", "t2"):
+        stack = root / f"nesvor_inputs/sax/{parameter}/stack.nii.gz"; stack.parent.mkdir(parents=True, exist_ok=True); stack.write_bytes(b"stack")
+        mask = root / f"nesvor_inputs/sax/{parameter}/stack_mask.nii.gz"; mask.write_bytes(b"mask")
+        stage1 = root / f"stage1_registration/{parameter}/result.json"
+        stage1.write_text(json.dumps({"registration": "stack", "input_stacks": [str(stack.resolve())], "stack_masks": [str(mask.resolve())]}))
+        masks[parameter] = {"sax": {"path": str(mask.resolve()), "sha256": sha256(mask)}}
+    stage1_manifest = root / "stage1_registration_manifest.json"
+    stage1_manifest.write_text(json.dumps({"schema": intensity_route.REGISTRATION_SCHEMA, "active_stacks": active, "stack_masks": masks}))
+    route = json.loads((root / "manifest.json").read_text()); route.update({"active_stacks": active, "stage1": {"path": str(stage1_manifest.resolve()), "sha256": sha256(stage1_manifest)}})
+    (root / "manifest.json").write_text(json.dumps(route))
+
+
 def test_cyj_style_14_to_12_selection_uses_standardized_ids_and_records_prestandardized_provenance(tmp_path: Path) -> None:
     standardized, reuse, sparse = _selection_fixture(tmp_path)
     native, active, records = _selected_standardized_maps(standardized_root=standardized, reuse=reuse, sparse=sparse, output=tmp_path / "selection")
@@ -184,6 +199,7 @@ def test_final_audit_rejects_missing_stage2_freeze_evidence(tmp_path: Path, fiel
         values = {"input_slices": str((root / f"registered_quantitative_inputs/{parameter}/slices").resolve()), "no_transformation_optimization": True, "no_slice_scale": True, "input_stacks": None}
         values.pop(field)
         (stage2 / "result.json").write_text(json.dumps(values))
+    _write_stage1_mask_provenance(root)
     with pytest.raises(ValueError, match=field):
         audit_intensity_preserving_final_pose(root=root)
 
@@ -206,6 +222,7 @@ def test_final_audit_rejects_true_stage2_geometry_drift(
         (stage1 / "result.json").write_text(json.dumps({"registration": "stack"}))
         result = {"input_slices": str(input_folder.resolve()), "input_stacks": None, "output_slices": str(output_folder.resolve()), "no_transformation_optimization": True, "no_slice_scale": True}
         (root / f"stage2_reconstruction/{parameter}/result.json").write_text(json.dumps(result))
+    _write_stage1_mask_provenance(root)
     with pytest.raises(ValueError, match="final geometry"):
         audit_intensity_preserving_final_pose(root=root)
 
@@ -225,6 +242,17 @@ def test_final_audit_accepts_realistic_float32_affine_round_trip_error(tmp_path:
         (stage1 / "result.json").write_text(json.dumps({"registration": "stack"}))
         result = {"input_slices": str(input_folder.resolve()), "input_stacks": None, "output_slices": str(output_folder.resolve()), "no_transformation_optimization": True, "no_slice_scale": True}
         (root / f"stage2_reconstruction/{parameter}/result.json").write_text(json.dumps(result))
+    _write_stage1_mask_provenance(root)
     audit = json.loads(audit_intensity_preserving_final_pose(root=root).read_text())
     assert audit["parameters"]["t1"]["stage2_input_vs_final"]["status"] == "PASS_GEOMETRY_EQUIVALENT"
     assert audit["parameters"]["t1"]["stage2_input_vs_final"]["raw_affine_max_abs_error"] > VALUE_TOLERANCE
+
+
+def test_final_audit_rejects_missing_stage1_stack_mask_provenance(tmp_path: Path) -> None:
+    root = tmp_path / "route"; root.mkdir()
+    stage1_manifest = root / "stage1_registration_manifest.json"
+    stage1_manifest.write_text(json.dumps({"schema": intensity_route.REGISTRATION_SCHEMA, "active_stacks": ["sax"]}))
+    (root / "manifest.json").write_text(json.dumps({"schema": "phase4r_intensity_preserving_fit_first/v2", "active_stacks": ["sax"], "stage1": {"path": str(stage1_manifest.resolve()), "sha256": sha256(stage1_manifest)}}))
+    (root / "registered_quantitative_inputs_gate.json").write_text(json.dumps({"schema": INPUT_SCHEMA, "status": "REGISTERED_QUANTITATIVE_INPUTS_VALID"}))
+    with pytest.raises(ValueError, match="stack_masks"):
+        audit_intensity_preserving_final_pose(root=root)

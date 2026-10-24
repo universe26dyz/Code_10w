@@ -19,7 +19,7 @@ from typing import Any
 
 from .contracts import sha256
 from .fit_first_intensity_preserving import audit_intensity_preserving_final_pose
-from .fit_first_route_contract import resolve_fit_first_route
+from .fit_first_route_contract import INTENSITY_SCHEMA, resolve_fit_first_route
 from .matched_output import formalize_proposed_export, export_fixed_l100_fit_first
 from .direct_native_bundles import build_direct_native_prediction_bundle
 from .fit_first_native_bundles import build_fit_first_native_prediction_bundle
@@ -36,6 +36,11 @@ EXPECTED_CASES = (
     "S2CH50_4CH100_fold0", "S2CH50_4CH100_fold1", "S2CH100_4CH50_fold0", "S2CH100_4CH50_fold1",
 )
 MAX_GPU_JOBS = 1
+FIT_FIRST_ENDPOINT_SCHEMA = "phase4r_fixed_l100_fit_first_export_bundle/v2"
+FIT_FIRST_PARAMETER_ENDPOINT_SCHEMA = "phase4r_fixed_l100_fit_first_export/v2"
+L100_METRIC_SCHEMA = "final_pose_native_bundle_metrics/v5"
+SPARSE_METRIC_SCHEMA = "final_sparse_native_bundle_metrics/v2"
+FIT_FIRST_COMMON_SUPPORT_TERM = "fit_first_query_effective_mask"
 SUBPROCESS_STAGES = ("proposed_reconstruction", "fit_first_reconstruction")
 DIRECT_STAGES = ("proposed_endpoint", "fit_first_endpoint", "proposed_native_bundle", "fit_first_native_bundle", "l100_native_support", "current_native_mask", "l100_metrics", "sparse_metrics")
 PROPOSED_B6 = "/data/dengyz/dataset/Code_10w_v1/Code_10w_runs/CYJ_decoder_comparison_20260924_clean_v1/runs/frozen_mlp_B6/model.pt"
@@ -192,23 +197,125 @@ def _schema(path: Path, expected: str) -> ValidationResult:
     return ValidationResult(True, "SKIP_VALID", f"valid {expected}")
 
 
+def _matches_record(value: Any, path: Path) -> bool:
+    return isinstance(value, dict) and path.is_file() and Path(str(value.get("path", ""))).resolve() == path.resolve() and value.get("sha256") == sha256(path)
+
+
+def validate_fit_first_endpoint(path: Path, record: CaseRecord, records: dict[tuple[str, str], CaseRecord], root: Path) -> ValidationResult:
+    """Admit only mask-aware v2 Fit-first endpoint provenance for this case."""
+    if not path.exists():
+        return _invalid(path, "output absent")
+    try:
+        manifest = _read(path / "manifest.json")
+        if manifest.get("schema") != FIT_FIRST_ENDPOINT_SCHEMA:
+            return _invalid(path, f"expected {FIT_FIRST_ENDPOINT_SCHEMA}")
+        if manifest.get("subject") != record.subject or manifest.get("condition") != record.case_id or manifest.get("method") != "Fit-first" or manifest.get("endpoint") != "central":
+            return _invalid(path, "Fit-first endpoint identity mismatch")
+        routes = manifest.get("fit_first_routes")
+        l100_record = records[(record.subject, "L100")]
+        for name, source_record in (("l100", l100_record), ("sparse", record)):
+            route_record = routes.get(name) if isinstance(routes, dict) else None
+            source_root = _paths(root, source_record)["fit_first"]
+            route = resolve_fit_first_route(source_root)
+            if route.route_kind != "intensity_preserving_fit_first" or route.route_schema != INTENSITY_SCHEMA:
+                return _invalid(path, f"{name}: Fit-first route is not mask-aware v2")
+            if not isinstance(route_record, dict) or route_record.get("route_schema") != INTENSITY_SCHEMA or Path(str(route_record.get("source_fit_first_root", ""))).resolve() != source_root.resolve():
+                return _invalid(path, f"{name}: endpoint route provenance mismatch")
+            audit = route_record.get("final_pose_audit")
+            if route.pose_audit_path is None or not _matches_record(audit, route.pose_audit_path):
+                return _invalid(path, f"{name}: endpoint final-pose audit provenance mismatch")
+            models, results = route_record.get("formal_reconstruction_model"), route_record.get("parameter_results")
+            if not isinstance(models, dict) or not isinstance(results, dict) or any(not _matches_record(models.get(parameter), route.models[parameter]) or not _matches_record(results.get(parameter), route.results[parameter]) for parameter in ("t1", "t2")):
+                return _invalid(path, f"{name}: endpoint reconstruction provenance mismatch")
+        parameters = manifest.get("parameters")
+        if not isinstance(parameters, dict):
+            return _invalid(path, "Fit-first endpoint parameter provenance is absent")
+        for parameter in ("t1", "t2"):
+            item = parameters.get(parameter)
+            volume, mask = path / parameter / "volume_ms.nii.gz", path / parameter / "query_effective_mask.nii.gz"
+            if not isinstance(item, dict) or item.get("schema") != FIT_FIRST_PARAMETER_ENDPOINT_SCHEMA or item.get("parameter") != parameter:
+                return _invalid(path, f"{parameter}: parameter endpoint schema mismatch")
+            if any(item.get(field) != manifest.get(field) for field in ("subject", "condition", "endpoint")):
+                return _invalid(path, f"{parameter}: parameter endpoint identity mismatch")
+            if _read(path / parameter / "manifest.json") != item:
+                return _invalid(path, f"{parameter}: embedded endpoint manifest disagrees with disk")
+            if not _matches_record(item.get("output_volume_ms"), volume) or not _matches_record(item.get("effective_query_mask"), mask):
+                return _invalid(path, f"{parameter}: endpoint volume/effective-mask provenance mismatch")
+    except (FileNotFoundError, ValueError, KeyError, TypeError) as exc:
+        return _invalid(path, str(exc))
+    return ValidationResult(True, "SKIP_VALID", "valid mask-aware v2 Fit-first endpoint")
+
+
+def validate_l100_metric(path: Path, record: CaseRecord, root: Path) -> ValidationResult:
+    """Admit only v5 metrics with v4 Fit-first-bundle endpoint provenance."""
+    if not path.exists():
+        return _invalid(path, "output absent")
+    try:
+        manifest = _read(path / "manifest.json")
+        paths = _paths(root, record)
+        if manifest.get("schema") != L100_METRIC_SCHEMA or manifest.get("subject") != record.subject or manifest.get("condition") != "L100_fold0":
+            return _invalid(path, "L100 metric schema/identity mismatch")
+        if FIT_FIRST_COMMON_SUPPORT_TERM not in str(manifest.get("primary_support_equation", "")):
+            return _invalid(path, "L100 metric does not record Fit-first effective query mask support")
+        if not _matches_record(manifest.get("direct_bundle"), paths["direct_bundle"] / "manifest.json") or not _matches_record(manifest.get("fit_first_bundle"), paths["fit_bundle"] / "manifest.json") or not _matches_record(manifest.get("mask_manifest"), paths["native_mask"] / "manifest.json"):
+            return _invalid(path, "L100 metric upstream bundle/mask provenance mismatch")
+        aggregate_path = path / "aggregate_metrics.json"
+        if not _matches_record(manifest.get("aggregate_metrics"), aggregate_path):
+            return _invalid(path, "L100 metric aggregate provenance mismatch")
+        aggregate = _read(aggregate_path)
+        if aggregate.get("schema") != "final_pose_native_common_support_metrics/v4" or FIT_FIRST_COMMON_SUPPORT_TERM not in str(aggregate.get("primary_support_equation", "")):
+            return _invalid(path, "L100 aggregate does not record mask-aware common support")
+        fit_bundle = _read(paths["fit_bundle"] / "manifest.json")
+        if fit_bundle.get("schema") != "fit_first_native_prediction_bundle/v4" or not _matches_record(fit_bundle.get("endpoint_source_manifest"), paths["fit_endpoint"] / "manifest.json"):
+            return _invalid(path, "L100 Fit-first bundle endpoint provenance mismatch")
+    except (FileNotFoundError, ValueError, TypeError) as exc:
+        return _invalid(path, str(exc))
+    return ValidationResult(True, "SKIP_VALID", "valid mask-aware v5 L100 metric")
+
+
+def validate_sparse_metric(path: Path, record: CaseRecord, root: Path) -> ValidationResult:
+    """Admit only v2 held-out metrics tied to the v2 Fit-first endpoint."""
+    if not path.exists():
+        return _invalid(path, "output absent")
+    try:
+        manifest = _read(path / "manifest.json")
+        paths = _paths(root, record)
+        if manifest.get("schema") != SPARSE_METRIC_SCHEMA or manifest.get("subject") != record.subject or manifest.get("condition") != record.case_id:
+            return _invalid(path, "sparse metric schema/identity mismatch")
+        if FIT_FIRST_COMMON_SUPPORT_TERM not in str(manifest.get("primary_support_equation", "")):
+            return _invalid(path, "sparse metric does not record Fit-first effective query mask support")
+        provenance = manifest.get("endpoint_provenance")
+        if not isinstance(provenance, dict) or not _matches_record(provenance.get("proposed_manifest"), paths["proposed_endpoint"] / "manifest.json") or not _matches_record(provenance.get("fit_first_manifest"), paths["fit_endpoint"] / "manifest.json"):
+            return _invalid(path, "sparse metric endpoint provenance mismatch")
+        aggregate_path = path / "aggregate_metrics.json"
+        if not _matches_record(manifest.get("aggregate_metrics"), aggregate_path):
+            return _invalid(path, "sparse metric aggregate provenance mismatch")
+        aggregate = _read(aggregate_path)
+        if aggregate.get("schema") != "final_sparse_native_common_support_metrics/v2" or FIT_FIRST_COMMON_SUPPORT_TERM not in str(aggregate.get("primary_support_equation", "")):
+            return _invalid(path, "sparse aggregate does not record mask-aware common support")
+    except (FileNotFoundError, ValueError, TypeError) as exc:
+        return _invalid(path, str(exc))
+    return ValidationResult(True, "SKIP_VALID", "valid mask-aware v2 sparse metric")
+
+
 def _stage(result: ValidationResult, *, dependency: bool = False) -> dict[str, str]:
-    return {"state": "BLOCKED_DEPENDENCY" if dependency and result.state == "READY" else result.state, "reason": result.reason}
+    return {"state": "BLOCKED_DEPENDENCY" if dependency and result.state != "BLOCKED_EXISTING_INVALID" else result.state, "reason": result.reason}
 
 
 def build_batch_plan(registry: str | Path, final_root: str | Path, *, device: str = "0", records: list[CaseRecord] | None = None) -> dict[str, Any]:
     """Read-only artifact truth for plan, status, validation, and resume."""
     records, root = (load_final5_registry(registry) if records is None else list(records)), Path(final_root)
     cases: dict[str, Any] = {}
+    records_by_key = {(item.subject, item.case_id): item for item in records}
     l100_ready: dict[str, bool] = {}
     for record in records:
         if record.case_id != "L100":
             continue
         paths = _paths(root, record)
         proposed, fit = validate_proposed_reconstruction(paths["proposed"], record), validate_fit_first_reconstruction(paths["fit_first"], record)
-        endpoints = _schema(paths["proposed_endpoint"], "phase4r_formal_proposed_export/v1"), _schema(paths["fit_endpoint"], "phase4r_fixed_l100_fit_first_export_bundle/v1")
+        endpoints = _schema(paths["proposed_endpoint"], "phase4r_formal_proposed_export/v1"), validate_fit_first_endpoint(paths["fit_endpoint"], record, records_by_key, root)
         bundles = _schema(paths["direct_bundle"], "direct_native_prediction_bundle/v1"), _schema(paths["fit_bundle"], "fit_first_native_prediction_bundle/v4")
-        support, mask, metric = _schema(paths["native_support"], "q004_direct_native_endpoint_audit/v2"), _schema(paths["native_mask"], "phase4r_current_native_central_component_mask/v1"), _schema(paths["l100_metrics"], "final_pose_native_bundle_metrics/v4")
+        support, mask, metric = _schema(paths["native_support"], "q004_direct_native_endpoint_audit/v2"), _schema(paths["native_mask"], "phase4r_current_native_central_component_mask/v1"), validate_l100_metric(paths["l100_metrics"], record, root)
         stages = {"proposed_reconstruction": _stage(proposed), "fit_first_reconstruction": _stage(fit), "proposed_endpoint": _stage(endpoints[0], dependency=not proposed.valid), "fit_first_endpoint": _stage(endpoints[1], dependency=not fit.valid), "proposed_native_bundle": _stage(bundles[0], dependency=not proposed.valid), "fit_first_native_bundle": _stage(bundles[1], dependency=not (fit.valid and endpoints[1].valid)), "l100_native_support": _stage(support, dependency=not (proposed.valid and endpoints[0].valid)), "current_native_mask": _stage(mask, dependency=not support.valid), "l100_metrics": _stage(metric, dependency=not (bundles[0].valid and bundles[1].valid and mask.valid))}
         l100_ready[record.subject] = all(value["state"] == "SKIP_VALID" for value in stages.values())
         cases[f"{record.subject}/{record.case_id}"] = {"profile_id": record.profile_id, "fold_id": record.fold_id, "metric_kind": "computational current-native common-support metric", "stages": stages}
@@ -217,9 +324,9 @@ def build_batch_plan(registry: str | Path, final_root: str | Path, *, device: st
             continue
         paths = _paths(root, record)
         proposed, fit = validate_proposed_reconstruction(paths["proposed"], record), validate_fit_first_reconstruction(paths["fit_first"], record)
-        metric = _schema(paths["sparse_metrics"], "final_sparse_native_bundle_metrics/v1")
+        metric = validate_sparse_metric(paths["sparse_metrics"], record, root)
         proposed_endpoint = _schema(paths["proposed_endpoint"], "phase4r_formal_proposed_export/v1")
-        fit_endpoint = _schema(paths["fit_endpoint"], "phase4r_fixed_l100_fit_first_export_bundle/v1")
+        fit_endpoint = validate_fit_first_endpoint(paths["fit_endpoint"], record, records_by_key, root)
         l100_record = next(item for item in records if item.subject == record.subject and item.case_id == "L100")
         l100_mask_ready = _schema(_paths(root, l100_record)["native_mask"], "phase4r_current_native_central_component_mask/v1").valid
         dependency = not (l100_mask_ready and proposed_endpoint.valid and fit_endpoint.valid)
@@ -231,22 +338,27 @@ def _case_stages(record: CaseRecord) -> tuple[str, ...]:
     return ("proposed_reconstruction", "fit_first_reconstruction", "proposed_endpoint", "fit_first_endpoint", "proposed_native_bundle", "fit_first_native_bundle", "l100_native_support", "current_native_mask", "l100_metrics") if record.case_id == "L100" else ("proposed_reconstruction", "fit_first_reconstruction", "proposed_endpoint", "fit_first_endpoint", "sparse_metrics")
 
 
-def _validate_stage_output(stage: str, record: CaseRecord, root: Path) -> ValidationResult:
+def _validate_stage_output(stage: str, record: CaseRecord, root: Path, records: dict[tuple[str, str], CaseRecord] | None = None) -> ValidationResult:
     """Validate one published artifact without rescanning the frozen registry."""
     paths = _paths(root, record)
     if stage == "proposed_reconstruction":
         return validate_proposed_reconstruction(paths["proposed"], record)
     if stage == "fit_first_reconstruction":
         return validate_fit_first_reconstruction(paths["fit_first"], record)
+    if stage == "fit_first_endpoint":
+        if records is None:
+            raise ValueError("Fit-first endpoint validation requires registry records")
+        return validate_fit_first_endpoint(paths["fit_endpoint"], record, records, root)
+    if stage == "l100_metrics":
+        return validate_l100_metric(paths["l100_metrics"], record, root)
+    if stage == "sparse_metrics":
+        return validate_sparse_metric(paths["sparse_metrics"], record, root)
     expected = {
         "proposed_endpoint": ("proposed_endpoint", "phase4r_formal_proposed_export/v1"),
-        "fit_first_endpoint": ("fit_endpoint", "phase4r_fixed_l100_fit_first_export_bundle/v1"),
         "proposed_native_bundle": ("direct_bundle", "direct_native_prediction_bundle/v1"),
         "fit_first_native_bundle": ("fit_bundle", "fit_first_native_prediction_bundle/v4"),
         "l100_native_support": ("native_support", "q004_direct_native_endpoint_audit/v2"),
         "current_native_mask": ("native_mask", "phase4r_current_native_central_component_mask/v1"),
-        "l100_metrics": ("l100_metrics", "final_pose_native_bundle_metrics/v4"),
-        "sparse_metrics": ("sparse_metrics", "final_sparse_native_bundle_metrics/v1"),
     }
     try:
         path_key, schema = expected[stage]
@@ -281,11 +393,11 @@ def _stage_dependencies(stage: str, record: CaseRecord, records: dict[tuple[str,
 
 def _validate_stage_locally(stage: str, record: CaseRecord, root: Path, records: dict[tuple[str, str], CaseRecord]) -> ValidationResult:
     """Read only the current output and its explicit, published dependencies."""
-    result = _validate_stage_output(stage, record, root)
-    if result.valid or result.state == "BLOCKED_EXISTING_INVALID":
+    result = _validate_stage_output(stage, record, root, records)
+    if result.state == "BLOCKED_EXISTING_INVALID":
         return result
     for dependency_stage, dependency_record in _stage_dependencies(stage, record, records):
-        dependency = _validate_stage_output(dependency_stage, dependency_record, root)
+        dependency = _validate_stage_output(dependency_stage, dependency_record, root, records)
         if not dependency.valid:
             return ValidationResult(False, "BLOCKED_DEPENDENCY", f"{dependency_record.subject}/{dependency_record.case_id} {dependency_stage}: {dependency.reason}")
     return result

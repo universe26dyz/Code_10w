@@ -24,11 +24,11 @@ def _endpoint(root: Path, *, method: str, endpoint: str = "central", condition: 
         if method == "Fit-first":
             query_mask = path.parent / "query_effective_mask.nii.gz"
             nib.save(nib.Nifti1Image(np.ones((4, 4, 4), np.uint8), np.eye(4)), str(query_mask))
-            parameter_manifest = {"schema": "phase4r_fixed_l100_fit_first_export/v1", "subject": "CYJ", "condition": condition, "endpoint": endpoint, "method": "Fit-first", "parameter": parameter, "training_route": "Fit-first sparse checkpoint query", "output_volume_ms": {"path": str(path.resolve()), "sha256": sha256(path)}, "effective_query_mask": {"path": str(query_mask.resolve()), "sha256": sha256(query_mask)}}
+            parameter_manifest = {"schema": "phase4r_fixed_l100_fit_first_export/v2", "subject": "CYJ", "condition": condition, "endpoint": endpoint, "method": "Fit-first", "parameter": parameter, "training_route": "Fit-first sparse checkpoint query", "output_volume_ms": {"path": str(path.resolve()), "sha256": sha256(path)}, "effective_query_mask": {"path": str(query_mask.resolve()), "sha256": sha256(query_mask)}}
             (path.parent / "manifest.json").write_text(json.dumps(parameter_manifest), encoding="utf-8")
             fit_parameters[parameter] = parameter_manifest
     if method == "Fit-first":
-        manifest = {"schema": "phase4r_fixed_l100_fit_first_export_bundle/v1", "subject": "CYJ", "condition": condition, "endpoint": endpoint, "method": "Fit-first", "parameters": fit_parameters, "no_training": True, "no_refitting": True, "no_reconstruction": True}
+        manifest = {"schema": "phase4r_fixed_l100_fit_first_export_bundle/v2", "subject": "CYJ", "condition": condition, "endpoint": endpoint, "method": "Fit-first", "parameters": fit_parameters, "fit_first_routes": {name: {"route_schema": "phase4r_intensity_preserving_fit_first/v2"} for name in ("l100", "sparse")}, "no_training": True, "no_refitting": True, "no_reconstruction": True}
     else:
         route = "Q002S640_B6_roi_same_anchor_mse" if method == "Q002S640" else "Q005S640_K4_B6_roi_same_anchor_mse"
         manifest = {"schema": "phase4r_formal_proposed_export/v1", "subject": "CYJ", "condition": condition, "endpoint": endpoint, "method": "Proposed", "training_route": route, "training_psf": {"training_psf_samples": samples}}

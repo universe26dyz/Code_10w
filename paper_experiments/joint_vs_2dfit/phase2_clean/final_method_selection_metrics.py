@@ -105,7 +105,7 @@ def _validate_proposed_route(root: str | Path, *, label: str, expected_route: st
 
 def _validate_fit_first_identity(root: str | Path) -> tuple[Path, dict[str, Any]]:
     path, manifest = _manifest(root)
-    if manifest.get("schema") != "phase4r_fixed_l100_fit_first_export_bundle/v1" or manifest.get("method") != "Fit-first":
+    if manifest.get("schema") != "phase4r_fixed_l100_fit_first_export_bundle/v2" or manifest.get("method") != "Fit-first":
         raise ValueError("Fit-first endpoint identity is invalid")
     parameters = manifest.get("parameters")
     if not isinstance(parameters, Mapping):
@@ -120,7 +120,7 @@ def _validate_fit_first_identity(root: str | Path) -> tuple[Path, dict[str, Any]
         parameter_manifest = json.loads(parameter_path.read_text(encoding="utf-8"))
         if embedded != parameter_manifest:
             raise ValueError(f"Fit-first embedded {parameter} manifest disagrees with disk manifest")
-        if parameter_manifest.get("schema") != "phase4r_fixed_l100_fit_first_export/v1" or parameter_manifest.get("method") != "Fit-first" or parameter_manifest.get("parameter") != parameter:
+        if parameter_manifest.get("schema") != "phase4r_fixed_l100_fit_first_export/v2" or parameter_manifest.get("method") != "Fit-first" or parameter_manifest.get("parameter") != parameter:
             raise ValueError(f"Fit-first {parameter} parameter manifest identity is invalid")
         for field in ("subject", "condition", "endpoint"):
             if parameter_manifest.get(field) != manifest.get(field):

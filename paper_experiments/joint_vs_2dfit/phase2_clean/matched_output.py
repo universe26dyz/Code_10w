@@ -116,7 +116,7 @@ def verified_fit_first_effective_query_mask(endpoint_root: str | Path, parameter
     root = Path(endpoint_root)
     manifest_path = root / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    if manifest.get("schema") != "phase4r_fixed_l100_fit_first_export_bundle/v1":
+    if manifest.get("schema") != "phase4r_fixed_l100_fit_first_export_bundle/v2":
         raise ValueError("Fit-first formal endpoint schema mismatch")
     record = manifest.get("parameters", {}).get(parameter, {}).get("effective_query_mask")
     expected = root / parameter / "query_effective_mask.nii.gz"
@@ -147,7 +147,7 @@ def fixed_l100_export_manifest(
     """Build the public provenance contract for one Fit-first endpoint export."""
     contract = endpoint_contract(endpoint)
     result = {
-        "schema": "phase4r_fixed_l100_fit_first_export/v1",
+        "schema": "phase4r_fixed_l100_fit_first_export/v2",
         "subject": subject,
         "condition": condition,
         "method": "Fit-first",
@@ -299,7 +299,7 @@ def export_fixed_l100_fit_first(*, subject: str, condition: str, l100_fit_first_
             manifests[parameter] = manifest
             write_immutable_json(target / "manifest.json", manifest)
         write_immutable_json(staging / "manifest.json", {
-            "schema": "phase4r_fixed_l100_fit_first_export_bundle/v1", "subject": subject, "condition": condition,
+            "schema": "phase4r_fixed_l100_fit_first_export_bundle/v2", "subject": subject, "condition": condition,
             "method": "Fit-first", "endpoint": endpoint, "parameters": manifests,
             "no_training": True, "no_refitting": True, "no_reconstruction": True,
         })

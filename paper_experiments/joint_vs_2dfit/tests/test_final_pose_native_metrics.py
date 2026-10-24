@@ -28,10 +28,10 @@ def test_final_metrics_freeze_current_native_primary_on_single_common_support(mo
     direct = tmp_path / "direct"; (direct / "planes" / "sax").mkdir(parents=True)
     (direct / "manifest.json").write_text(json.dumps({"schema": "direct_native_prediction_bundle/v1", "endpoint": "central", "planes": [{"stack": "sax", "original_group_idx": 3, "path": "planes/sax/group003.npz"}]}), encoding="utf-8")
     np.savez_compressed(direct / "planes" / "sax" / "group003.npz", t1_ms=np.full((2, 2), 900.0), t2_ms=np.full((2, 2), 70.0))
-    fit = tmp_path / "fit"; (fit / "manifest.json").parent.mkdir(); (fit / "manifest.json").write_text(json.dumps({"schema": "fit_first_native_prediction_bundle/v2", "endpoint": "central"}), encoding="utf-8")
+    fit = tmp_path / "fit"; (fit / "manifest.json").parent.mkdir(); (fit / "manifest.json").write_text(json.dumps({"schema": "fit_first_native_prediction_bundle/v4", "endpoint": "central"}), encoding="utf-8")
     for parameter, value in (("t1", 910.0), ("t2", 75.0)):
         target = fit / "planes" / parameter / "sax"; target.mkdir(parents=True)
-        np.savez_compressed(target / "group003.npz", prediction_ms=np.full((2, 2), value), valid=np.ones((2, 2), bool))
+        np.savez_compressed(target / "group003.npz", prediction_ms=np.full((2, 2), value), volume_geometry_valid=np.ones((2, 2), bool), query_effective_mask=np.ones((2, 2), bool), valid=np.ones((2, 2), bool))
     cache = {"group_idx": np.array([3]), "source_support": np.ones((1, 2, 2), bool), "t1_ms": np.full((1, 2, 2), 1000.0), "t2_ms": np.full((1, 2, 2), 80.0)}
     monkeypatch.setattr(metrics, "_load_all_verified_native_cache_groups", lambda *args: cache)
     sparse = tmp_path / "sparse.json"; sparse.write_text(json.dumps({"schema_version": "phase4r_sparse_v1", "subject": "DYL_2", "condition": "L100"}), encoding="utf-8")

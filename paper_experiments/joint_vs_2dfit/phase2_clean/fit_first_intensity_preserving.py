@@ -272,6 +272,16 @@ def audit_intensity_preserving_final_pose(*, root: str | Path) -> Path:
     gate = json.loads(gate_path.read_text(encoding="utf-8"))
     if route.get("schema") != ROUTE_SCHEMA or gate.get("schema") != INPUT_SCHEMA or gate.get("status") != "REGISTERED_QUANTITATIVE_INPUTS_VALID":
         raise ValueError("intensity-preserving final-pose audit requires a valid route and quantitative-input gate")
+    stage1_manifest_path = base / "stage1_registration_manifest.json"
+    if not _record(stage1_manifest_path) == route.get("stage1"):
+        raise ValueError("intensity-preserving final-pose audit requires the recorded Stage-1 registration manifest")
+    stage1_manifest = json.loads(stage1_manifest_path.read_text(encoding="utf-8"))
+    active = route.get("active_stacks")
+    if stage1_manifest.get("schema") != REGISTRATION_SCHEMA or not isinstance(active, list) or stage1_manifest.get("active_stacks") != active:
+        raise ValueError("Stage-1 registration manifest active-stack provenance mismatch")
+    stack_masks = stage1_manifest.get("stack_masks")
+    if not isinstance(stack_masks, dict):
+        raise ValueError("Stage-1 registration manifest lacks stack_masks")
     records: dict[str, Any] = {}
     for parameter in PARAMETERS:
         stage1_result = base / "stage1_registration" / parameter / "result.json"
@@ -282,6 +292,16 @@ def audit_intensity_preserving_final_pose(*, root: str | Path) -> Path:
         stage1_args, stage2_args = registration.get("args", registration), reconstruction.get("args", reconstruction)
         if stage1_args.get("registration") != "stack":
             raise ValueError(f"{parameter}: Stage 1 does not prove stack registration")
+        expected_stacks = [base / "nesvor_inputs" / stack / parameter / "stack.nii.gz" for stack in active]
+        expected_masks = [base / "nesvor_inputs" / stack / parameter / "stack_mask.nii.gz" for stack in active]
+        got_stacks, got_masks = stage1_args.get("input_stacks"), stage1_args.get("stack_masks")
+        if not isinstance(got_stacks, list) or not isinstance(got_masks, list) or len(got_stacks) != len(expected_stacks) or len(got_masks) != len(expected_masks):
+            raise ValueError(f"{parameter}: Stage 1 does not prove one stack mask per input stack")
+        if [Path(str(value)).resolve() for value in got_stacks] != [value.resolve() for value in expected_stacks] or [Path(str(value)).resolve() for value in got_masks] != [value.resolve() for value in expected_masks]:
+            raise ValueError(f"{parameter}: Stage 1 stack_masks do not match native inputs")
+        manifest_masks = stack_masks.get(parameter)
+        if not isinstance(manifest_masks, dict) or any(not isinstance(manifest_masks.get(stack), dict) or manifest_masks[stack] != _record(mask) for stack, mask in zip(active, expected_masks)):
+            raise ValueError(f"{parameter}: Stage-1 stack-mask manifest SHA provenance mismatch")
         expected = str((base / "registered_quantitative_inputs" / parameter / "slices").resolve())
         if str(stage2_args.get("input_slices", "")) != expected:
             raise ValueError(f"{parameter}: Stage 2 was not run from the gated registered quantitative slices")
@@ -305,7 +325,7 @@ def audit_intensity_preserving_final_pose(*, root: str | Path) -> Path:
             if geometry["status"] != "PASS_GEOMETRY_EQUIVALENT":
                 raise ValueError(f"{parameter}: Stage-2 final geometry differs from frozen registered input")
             geometry_records.append(geometry)
-        records[parameter] = {"stage1_registration": _record(stage1_result), "stage2_reconstruction": _record(stage2_result), "stage1_pose_semantics": "authoritative final rigid pose; optimisation enabled", "stage2_pose_semantics": "no registration and no transformation optimisation; frozen Stage-1 affine is consumed through --input-slices", "stage2_input_slices": expected, "stage2_input_vs_final": {"geometry_equivalence_tolerance_mm": _GEOMETRY_EQUIVALENCE_TOL_MM, "max_world_error_mm": max(item["max_world_error_mm"] for item in geometry_records), "corner_max_error_mm": max(item["corner_max_error_mm"] for item in geometry_records), "center_error_mm": max(item["center_error_mm"] for item in geometry_records), "spacing_error_mm": max(item["spacing_error_mm"] for item in geometry_records), "raw_affine_max_abs_error": max(item["raw_affine_max_abs_error"] for item in geometry_records), "status": "PASS_GEOMETRY_EQUIVALENT"}, "no_transformation_optimization": True, "no_slice_scale": True}
+        records[parameter] = {"stage1_registration": _record(stage1_result), "stage2_reconstruction": _record(stage2_result), "stage1_stack_masks": [_record(mask) for mask in expected_masks], "stage1_pose_semantics": "authoritative final rigid pose; optimisation enabled with one explicit authoritative native-support mask per input stack", "stage2_pose_semantics": "no registration and no transformation optimisation; frozen Stage-1 affine is consumed through --input-slices", "stage2_input_slices": expected, "stage2_input_vs_final": {"geometry_equivalence_tolerance_mm": _GEOMETRY_EQUIVALENCE_TOL_MM, "max_world_error_mm": max(item["max_world_error_mm"] for item in geometry_records), "corner_max_error_mm": max(item["corner_max_error_mm"] for item in geometry_records), "center_error_mm": max(item["center_error_mm"] for item in geometry_records), "spacing_error_mm": max(item["spacing_error_mm"] for item in geometry_records), "raw_affine_max_abs_error": max(item["raw_affine_max_abs_error"] for item in geometry_records), "status": "PASS_GEOMETRY_EQUIVALENT"}, "no_transformation_optimization": True, "no_slice_scale": True}
     output = base / "final_pose_audit.json"
     write_immutable_json(output, {"schema": "fit_first_intensity_preserving_final_pose_audit/v2", "status": "POSE_STAGE1_AND_QUANTITATIVE_STAGE2_VALID", "route_manifest": _record(base / "manifest.json"), "quantitative_input_gate": _record(gate_path), "pose_authority": "Stage-1 final registered slices", "quantitative_value_authority": "standardized native dictionary maps", "parameters": records, "stage2_registration_assertion": "Stage-2 receives --input-slices, bypasses Reconstruct._register, and result.json proves no_transformation_optimization=true", "immutable": True})
     return output
