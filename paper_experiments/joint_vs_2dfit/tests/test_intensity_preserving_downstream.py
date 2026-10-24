@@ -242,8 +242,8 @@ def test_scmr_bundle_rejects_non_authoritative_output_slice_or_input_group_mappi
         build_fit_first_native_prediction_bundle(baseline_root=root, r0_native_maps_root=r0, endpoint="central", endpoint_source_root=endpoint, output=tmp_path / "bundle")
 
 
-def test_fixed_l100_builder_routes_are_admitted_by_final5_validator(tmp_path: Path, monkeypatch) -> None:
-    """Exercise the real endpoint builder while mocking only NeSVoR runtime calls."""
+def test_historical_scmr_builder_route_is_not_admitted_by_exp1_1_final5_validator(tmp_path: Path, monkeypatch) -> None:
+    """The Final5 gate must not silently reuse the superseded SCMR route."""
     root = tmp_path / "final"
     sparse_manifest = tmp_path / "sparse_manifest.json"
     sparse_manifest.write_text(json.dumps({"subject": "CYJ", "n_samples": 1}))
@@ -279,7 +279,7 @@ def test_fixed_l100_builder_routes_are_admitted_by_final5_validator(tmp_path: Pa
 
     records = {("CYJ", "L100"): l100, ("CYJ", "L50_fold0"): sparse}
     validation = runner.validate_fit_first_endpoint(output, sparse, records, root)
-    assert validation.state == "SKIP_VALID", validation
+    assert validation.state == "BLOCKED_EXISTING_INVALID", validation
     bundle = json.loads((output / "manifest.json").read_text())
     routes = bundle["fit_first_routes"]
     for parameter in ("t1", "t2"):

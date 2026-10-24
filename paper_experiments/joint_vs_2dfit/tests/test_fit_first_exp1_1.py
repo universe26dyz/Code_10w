@@ -1,0 +1,99 @@
+"""CPU contracts for the Final5 CYJ Experiment 1.1 Fit-first route."""
+from __future__ import annotations
+
+import hashlib
+import json
+from pathlib import Path
+
+import numpy as np
+
+
+def _sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _native_stack(root: Path, stack: str, groups: list[int]) -> tuple[Path, Path, np.ndarray]:
+    stack_root = root / stack
+    stack_root.mkdir(parents=True)
+    observations = stack_root / "observations.npz"
+    np.savez_compressed(observations, group_idx=np.repeat(np.asarray(groups), 10))
+    values = np.asarray(groups, dtype=np.float32)[:, None, None] + np.arange(4, dtype=np.float32).reshape(1, 2, 2)
+    maps = stack_root / "native_maps.npz"
+    np.savez_compressed(maps, t1_ms=values, t2_ms=values + 100, b1=values + 200, group_idx=np.asarray(groups))
+    geometry = stack_root / "geometry.npz"
+    np.savez_compressed(geometry, affine_lps_rc=np.repeat(np.eye(4)[None], len(groups), axis=0), pixel_spacing_rc_mm=np.ones((len(groups), 2)), slice_thickness_mm=np.full(len(groups), 8.0))
+    (stack_root / "manifest.json").write_text(json.dumps({
+        "source_observations": {"path": str(observations.resolve()), "sha256": _sha256(observations)},
+        "native_maps_sha256": _sha256(maps), "geometry_sha256": _sha256(geometry),
+    }))
+    return observations, maps, values
+
+
+def _profile(root: Path, sources: dict[str, Path], retained: dict[str, list[int]]) -> Path:
+    stacks = {}
+    for stack, source in sources.items():
+        stacks[stack] = {
+            "source_observation": {"path": str(source.resolve()), "sha256": _sha256(source)},
+            "retained_original_group_ids": retained[stack],
+            "training_stack_present": bool(retained[stack]),
+        }
+    path = root / "sparse_manifest.json"
+    path.write_text(json.dumps({"subject": "CYJ", "profile_id": "L50", "case_id": "L50_fold0", "fold_id": 0, "fold_count": 2, "git_sha": "a" * 40, "stacks": stacks}))
+    return path
+
+
+def test_frozen_native_map_selection_uses_manifest_ids_and_never_refits(tmp_path: Path, monkeypatch) -> None:
+    from paper_experiments.joint_vs_2dfit.phase2_clean import fit_first_exp1_1 as route
+
+    native = tmp_path / "native"
+    sax_source, _, sax_values = _native_stack(native, "sax", [0, 1])
+    twoch_source, _, twoch_values = _native_stack(native, "2ch", [10, 20, 30])
+    fourch_source, _, _ = _native_stack(native, "4ch", [4, 5])
+    sparse = _profile(tmp_path, {"sax": sax_source, "2ch": twoch_source, "4ch": fourch_source}, {"sax": [0, 1], "2ch": [10, 30], "4ch": []})
+    profile = json.loads(sparse.read_text())
+    monkeypatch.setattr(route, "validate_sparse_profile_manifest", lambda *_args, **_kwargs: profile)
+    monkeypatch.setattr(route, "fit_native", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("formal frozen-map route must not refit")), raising=False)
+
+    selected = route.select_frozen_native_maps(native, sparse, tmp_path / "selected", subject="CYJ")
+
+    assert selected["sax"] == [0, 1]
+    assert selected["2ch"] == [10, 30]
+    assert selected["4ch"] == []
+    with np.load(tmp_path / "selected" / "2ch" / "native_maps.npz") as maps:
+        assert maps["group_idx"].tolist() == [10, 30]
+        assert np.array_equal(maps["t1_ms"], twoch_values[[0, 2]])
+    with np.load(tmp_path / "selected" / "sax" / "native_maps.npz") as maps:
+        assert np.array_equal(maps["t1_ms"], sax_values)
+    assert not (tmp_path / "selected" / "4ch").exists()
+
+
+def test_exp1_1_commands_are_independent_one_stage_without_sample_masks(tmp_path: Path) -> None:
+    from paper_experiments.joint_vs_2dfit.phase2_clean.fit_first_exp1_1 import build_exp1_1_nesvor_commands
+
+    inputs = [tmp_path / "selected" / "sax", tmp_path / "selected" / "2ch"]
+    commands = build_exp1_1_nesvor_commands(inputs, tmp_path / "output" / "nesvor", device="1", nesvor_executable="nesvor")
+
+    assert len(commands) == 2
+    assert all("--registration stack" in command and "--no-slice-scale" in command for command in commands)
+    assert all("--no-transformation-optimization" not in command and "--sample-mask" not in command for command in commands)
+    assert all("--n-iter 10000" in command and "--n-samples 256" in command and "--n-inference-samples 128" in command for command in commands)
+    assert "--scale 2500" in commands[0] and "--scale 200" in commands[1]
+
+
+def test_l100_selection_preserves_all_standardized_12_15_10_maps(tmp_path: Path, monkeypatch) -> None:
+    from paper_experiments.joint_vs_2dfit.phase2_clean import fit_first_exp1_1 as route
+
+    native = tmp_path / "native"
+    sources = {}
+    retained = {}
+    for stack, count in (("sax", 12), ("2ch", 15), ("4ch", 10)):
+        source, _maps, _values = _native_stack(native, stack, list(range(count)))
+        sources[stack], retained[stack] = source, list(range(count))
+    sparse = _profile(tmp_path, sources, retained)
+    profile = json.loads(sparse.read_text())
+    profile.update({"profile_id": "L100", "case_id": "L100", "fold_id": None, "fold_count": 1})
+    monkeypatch.setattr(route, "validate_sparse_profile_manifest", lambda *_args, **_kwargs: profile)
+
+    selected = route.select_frozen_native_maps(native, sparse, tmp_path / "selected", subject="CYJ")
+
+    assert {stack: len(groups) for stack, groups in selected.items()} == {"sax": 12, "2ch": 15, "4ch": 10}

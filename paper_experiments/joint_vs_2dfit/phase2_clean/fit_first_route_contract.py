@@ -13,6 +13,7 @@ INTENSITY_SCHEMA = "phase4r_intensity_preserving_fit_first/v2"
 INTENSITY_INPUT_SCHEMA = "phase4r_fit_first_registered_quantitative_inputs/v2"
 INTENSITY_AUDIT_SCHEMA = "fit_first_intensity_preserving_final_pose_audit/v2"
 SCMR_ONE_STAGE_SCHEMA = "phase4r_scmr_one_stage_fit_first/v1"
+EXP1_1_SCHEMA = "phase4r_exp1_1_fit_first/v1"
 SCMR_ONE_STAGE_FIXED_ARGS = {
     "n_iter": 10000,
     "n_samples": 256,
@@ -232,6 +233,39 @@ def _scmr_one_stage(root: Path, manifest: dict[str, Any]) -> FitFirstFormalRoute
     return FitFirstFormalRoute("scmr_one_stage_fit_first", SCMR_ONE_STAGE_SCHEMA, root, models, results, slices, None, None, "independent parameter-specific one-stage NeSVoR stack registration and transformation optimization", "standardized native dictionary maps; one-stage NeSVoR checkpoint")
 
 
+def _exp1_1(root: Path, manifest: dict[str, Any]) -> FitFirstFormalRoute:
+    """Validate the Final5 frozen-map CYJ Experiment 1.1 route."""
+    if manifest.get("scientific_route") != "CYJ Experiment 1.1 mapping-to-one-stage-NeSVoR" or manifest.get("dictionary_refit") is not False:
+        raise ValueError("Experiment 1.1 route lacks frozen-map/no-refit provenance")
+    if manifest.get("no_dictionary_refit") is not True or manifest.get("independent_t1_t2") is not True or manifest.get("transformation_optimization_enabled") is not True or manifest.get("no_slice_scale") is not True:
+        raise ValueError("Experiment 1.1 route lacks independent one-stage transformation provenance")
+    active_stacks = manifest.get("active_stacks")
+    if manifest.get("nesvor_version") != "nesvor_v5_128_w1" or not isinstance(active_stacks, list) or not active_stacks or any(stack not in ("sax", "2ch", "4ch") for stack in active_stacks) or len(set(active_stacks)) != len(active_stacks):
+        raise ValueError("Experiment 1.1 route lacks historical NeSVoR provenance")
+    command, selected = manifest.get("commands"), manifest.get("selected_native_maps")
+    selected_path = Path(str(selected.get("path", ""))) if isinstance(selected, dict) else None
+    if not _matches_record(command, root / "commands.sh") or selected_path is None or not _matches_record(selected, selected_path):
+        raise ValueError("Experiment 1.1 command/selected-map provenance mismatch")
+    command_text = (root / "commands.sh").read_text(encoding="utf-8")
+    if "--registration stack" not in command_text or "--no-transformation-optimization" in command_text or "--sample-mask" in command_text:
+        raise ValueError("Experiment 1.1 command contradicts historical one-stage semantics")
+    parameters = manifest.get("parameters")
+    if not isinstance(parameters, dict):
+        raise ValueError("Experiment 1.1 parameter provenance is absent")
+    models, results, slices = {}, {}, {}
+    for parameter in PARAMETERS:
+        target = root / "nesvor" / parameter
+        model, result, final = target / "model.pt", target / "result.json", target / "slices"
+        record = parameters.get(parameter)
+        if not model.is_file() or not result.is_file() or not final.is_dir() or not any(final.glob("[0-9]*.nii.gz")):
+            raise FileNotFoundError(f"Experiment 1.1 {parameter}: model.pt/result.json/final slices required")
+        if not isinstance(record, dict) or not _matches_record(record.get("model"), model) or not _matches_record(record.get("result"), result) or Path(str(record.get("final_slices", ""))).resolve() != final.resolve():
+            raise ValueError(f"Experiment 1.1 {parameter}: parameter provenance mismatch")
+        _validate_scmr_one_stage_result(root, parameter, active_stacks, _args(result))
+        models[parameter], results[parameter], slices[parameter] = model, result, final
+    return FitFirstFormalRoute("exp1_1_fit_first", EXP1_1_SCHEMA, root, models, results, slices, None, None, "independent parameter-specific CYJ Experiment 1.1 one-stage NeSVoR registration and transformation optimization", "frozen standardized native T1/T2 maps; no dictionary refit")
+
+
 def resolve_fit_first_route(root: str | Path, *, legacy_audit_root: str | Path | None = None) -> FitFirstFormalRoute:
     """Resolve exactly one declared route; never infer from optional paths."""
     root = Path(root)
@@ -243,5 +277,7 @@ def resolve_fit_first_route(root: str | Path, *, legacy_audit_root: str | Path |
             return _intensity_preserving(root, manifest_path, manifest)
         if schema == SCMR_ONE_STAGE_SCHEMA:
             return _scmr_one_stage(root, manifest)
+        if schema == EXP1_1_SCHEMA:
+            return _exp1_1(root, manifest)
         raise ValueError(f"unknown Fit-first route manifest schema: {schema!r}")
     return _legacy(root, None if legacy_audit_root is None else Path(legacy_audit_root))

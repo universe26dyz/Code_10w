@@ -25,7 +25,7 @@ def _endpoint(root: Path, method: str) -> Path:
     schema = "phase4r_formal_proposed_export/v1" if method == "Proposed" else "phase4r_fixed_l100_fit_first_export_bundle/v2"
     manifest = {"schema": schema, "subject": "DYL_2", "condition": "L50_fold0", "endpoint": "central", "parameters": parameters}
     if method == "Fit-first":
-        manifest["fit_first_routes"] = {name: {"route_schema": "phase4r_scmr_one_stage_fit_first/v1"} for name in ("l100", "sparse")}
+        manifest["fit_first_routes"] = {name: {"route_schema": "phase4r_exp1_1_fit_first/v1"} for name in ("l100", "sparse")}
     (root / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
     return root
 

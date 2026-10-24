@@ -97,7 +97,7 @@ def test_commands_are_serial_gpu_and_sparse_fit_uses_subject_l100_mask(tmp_path:
     assert commands["proposed_reconstruction"][0] == "python"
     assert commands["proposed_reconstruction"][commands["proposed_reconstruction"].index("--device") + 1] == "cuda:0"
     assert commands["fit_first_reconstruction"]["env"]["DEVICE"] == "0"
-    assert commands["fit_first_reconstruction"]["argv"][1].endswith("run_scmr_one_stage_fit_first.sh")
+    assert commands["fit_first_reconstruction"]["argv"][1].endswith("run_exp1_1_fit_first.sh")
     assert "--signal-simulator" in commands["proposed_reconstruction"]
     assert "--expected-decoder-sha256" not in commands["proposed_reconstruction"]
     for flag in ("--expected-b6-model-sha256", "--expected-protocol-sha256", "--expected-sparse-generator-git-sha", "--expected-sparse-manifest-sha256"):
@@ -240,7 +240,7 @@ def test_two_stage_fit_first_route_cannot_skip_formal_scmr_reconstruction(tmp_pa
     ("sparse_manifest.path", "/wrong/sparse.json"), ("sparse_manifest.sha256", "0" * 64),
     ("sparse_manifest.generator_git_sha", "0" * 40),
 ])
-def test_scmr_reconstruction_rejects_case_record_or_sparse_provenance_mismatch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, field: str, value: object) -> None:
+def test_exp1_1_reconstruction_rejects_case_record_or_sparse_provenance_mismatch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, field: str, value: object) -> None:
     sparse = tmp_path / "sparse.json"; sparse.write_text("{}")
     record = runner.CaseRecord("CYJ", "L100", "L100", None, 1, sparse, runner.sha256(sparse), "a" * 40, tmp_path)
     path = tmp_path / "fit"; path.mkdir()
@@ -250,12 +250,12 @@ def test_scmr_reconstruction_rejects_case_record_or_sparse_provenance_mismatch(t
     else:
         manifest[field] = value
     (path / "manifest.json").write_text(json.dumps(manifest))
-    monkeypatch.setattr(runner, "resolve_fit_first_route", lambda _path: SimpleNamespace(route_kind="scmr_one_stage_fit_first", route_schema="phase4r_scmr_one_stage_fit_first/v1"))
+    monkeypatch.setattr(runner, "resolve_fit_first_route", lambda _path: SimpleNamespace(route_kind="exp1_1_fit_first", route_schema="phase4r_exp1_1_fit_first/v1"))
     result = runner.validate_fit_first_reconstruction(path, record)
     assert not result.valid and result.state == "BLOCKED_EXISTING_INVALID"
 
 
-def test_scmr_one_stage_fit_first_endpoint_is_admitted(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_exp1_1_fit_first_endpoint_is_admitted(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     record = runner.CaseRecord("CYJ", "L100", "L100", None, 1, tmp_path / "sparse.json", "a" * 64, "b" * 40, tmp_path)
     root, paths = tmp_path / "final", runner._paths(tmp_path / "final", record)
     source = paths["fit_first"]; source.mkdir(parents=True)
@@ -264,14 +264,14 @@ def test_scmr_one_stage_fit_first_endpoint_is_admitted(tmp_path: Path, monkeypat
         model = source / f"nesvor/{parameter}/model.pt"; result = source / f"nesvor/{parameter}/result.json"
         model.parent.mkdir(parents=True, exist_ok=True); model.write_bytes(parameter.encode()); result.write_text("{}")
         models[parameter], results[parameter] = model, result
-    monkeypatch.setattr(runner, "resolve_fit_first_route", lambda path: SimpleNamespace(route_kind="scmr_one_stage_fit_first", route_schema="phase4r_scmr_one_stage_fit_first/v1", models=models, results=results))
+    monkeypatch.setattr(runner, "resolve_fit_first_route", lambda path: SimpleNamespace(route_kind="exp1_1_fit_first", route_schema="phase4r_exp1_1_fit_first/v1", models=models, results=results))
     parameters = {}
     for parameter in ("t1", "t2"):
         volume, mask = paths["fit_endpoint"] / parameter / "volume_ms.nii.gz", paths["fit_endpoint"] / parameter / "query_effective_mask.nii.gz"
         volume.parent.mkdir(parents=True, exist_ok=True); volume.write_bytes(parameter.encode()); mask.write_bytes(b"mask")
         parameters[parameter] = {"schema": "phase4r_fixed_l100_fit_first_export/v2", "subject": "CYJ", "condition": "L100", "endpoint": "central", "parameter": parameter, "output_volume_ms": {"path": str(volume.resolve()), "sha256": runner.sha256(volume)}, "effective_query_mask": {"path": str(mask.resolve()), "sha256": runner.sha256(mask)}}
         (paths["fit_endpoint"] / parameter / "manifest.json").write_text(json.dumps(parameters[parameter]))
-    route = {"route_schema": "phase4r_scmr_one_stage_fit_first/v1", "source_fit_first_root": str(source.resolve()), "formal_reconstruction_model": {parameter: {"path": str(models[parameter].resolve()), "sha256": runner.sha256(models[parameter])} for parameter in models}, "parameter_results": {parameter: {"path": str(results[parameter].resolve()), "sha256": runner.sha256(results[parameter])} for parameter in results}}
+    route = {"route_schema": "phase4r_exp1_1_fit_first/v1", "source_fit_first_root": str(source.resolve()), "formal_reconstruction_model": {parameter: {"path": str(models[parameter].resolve()), "sha256": runner.sha256(models[parameter])} for parameter in models}, "parameter_results": {parameter: {"path": str(results[parameter].resolve()), "sha256": runner.sha256(results[parameter])} for parameter in results}}
     for parameter in ("t1", "t2"):
         parameters[parameter]["fit_first_routes"] = {"l100": route, "sparse": route}
         (paths["fit_endpoint"] / parameter / "manifest.json").write_text(json.dumps(parameters[parameter]))
@@ -337,3 +337,15 @@ def test_execute_keeps_preflight_valid_artifacts_as_skip_valid(tmp_path: Path, m
     monkeypatch.setattr(runner, "_validate_stage_locally", lambda *_args: pytest.fail("valid preflight artifact was revalidated during execute"))
     result = runner.execute_batch(tmp_path / "registry.json", tmp_path / "final", device="0", python="python", nesvor="nesvor")
     assert {value["state"] for value in result["cases"]["CYJ/L100"]["stages"].values()} == {"SKIP_VALID"}
+
+
+def test_final5_uses_exp1_1_fit_first_wrapper_and_keeps_q002s640_central_only(tmp_path: Path) -> None:
+    record = runner.CaseRecord("CYJ", "L100", "L100", None, 1, tmp_path / "sparse.json", "a" * 64, "b" * 40, tmp_path / "prepared")
+    commands = runner.case_commands(record, tmp_path / "final", device="0", python="python", nesvor="nesvor")
+    proposed = commands["proposed_reconstruction"]
+    assert proposed[proposed.index("--experiment-id") + 1] == "Q002S640_B6_roi_same_anchor_mse"
+    assert proposed[proposed.index("--anchor-batch-size") + 1] == "640"
+    assert proposed[proposed.index("--endpoint-policy") + 1] == "central_only"
+    fit = commands["fit_first_reconstruction"]
+    assert fit["argv"][-1].endswith("run_exp1_1_fit_first.sh")
+    assert "PREPARED_ROOT" not in fit["env"] and "STANDARDIZED_REUSE_MANIFEST" not in fit["env"]

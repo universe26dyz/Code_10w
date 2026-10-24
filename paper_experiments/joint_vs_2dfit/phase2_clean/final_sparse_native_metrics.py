@@ -16,7 +16,7 @@ from .evaluation import _metrics, reproject_binary_mask_to_native_plane, reproje
 from .fit_first import select_verified_native_cache_groups
 from .heldout import _heldout_ids
 from .matched_output import require_matched_endpoints, verified_fit_first_effective_query_mask
-from .fit_first_route_contract import SCMR_ONE_STAGE_SCHEMA
+from .fit_first_route_contract import EXP1_1_SCHEMA
 
 
 def _record(path: Path) -> dict[str, str]:
@@ -76,8 +76,8 @@ def validate_sparse_endpoint_roots(proposed_root: str | Path, fit_first_root: st
     if fit.get("schema") != "phase4r_fixed_l100_fit_first_export_bundle/v2":
         raise ValueError("Fit-first formal endpoint schema mismatch")
     routes = fit.get("fit_first_routes")
-    if not isinstance(routes, dict) or any(not isinstance(routes.get(name), dict) or routes[name].get("route_schema") != SCMR_ONE_STAGE_SCHEMA for name in ("l100", "sparse")):
-        raise ValueError("Fit-first formal endpoint is not bound to formal SCMR one-stage reconstruction routes")
+    if not isinstance(routes, dict) or any(not isinstance(routes.get(name), dict) or routes[name].get("route_schema") != EXP1_1_SCHEMA for name in ("l100", "sparse")):
+        raise ValueError("Fit-first formal endpoint is not bound to CYJ Experiment 1.1 reconstruction routes")
     for name, payload in (("Proposed", proposed), ("Fit-first", fit)):
         if payload.get("subject") != subject or payload.get("condition") != condition:
             raise ValueError(f"{name} endpoint subject/condition mismatch")

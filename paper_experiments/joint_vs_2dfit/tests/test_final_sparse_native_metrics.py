@@ -16,7 +16,7 @@ def _volume(path: Path, value: float) -> None:
     nib.save(nib.Nifti1Image(np.full((4, 4, 1), value, np.float32), np.eye(4)), str(path))
 
 
-def _endpoint(root: Path, method: str, endpoint: str, *, subject: str = "CYJ", route_schema: str = "phase4r_scmr_one_stage_fit_first/v1") -> Path:
+def _endpoint(root: Path, method: str, endpoint: str, *, subject: str = "CYJ", route_schema: str = "phase4r_exp1_1_fit_first/v1") -> Path:
     root.mkdir(parents=True)
     for parameter, value in (("t1", 900.0), ("t2", 70.0)):
         target = root / (f"{parameter.upper()}_3D.nii.gz" if method == "Proposed" else f"{parameter}/volume_ms.nii.gz")
@@ -74,7 +74,7 @@ def test_sparse_evaluator_rejects_endpoint_mismatch(tmp_path: Path) -> None:
 def test_sparse_evaluator_rejects_old_two_stage_fit_first_route(tmp_path: Path) -> None:
     from paper_experiments.joint_vs_2dfit.phase2_clean import final_sparse_native_metrics as sparse
 
-    with pytest.raises(ValueError, match="SCMR one-stage"):
+    with pytest.raises(ValueError, match="CYJ Experiment 1.1"):
         sparse.validate_sparse_endpoint_roots(_endpoint(tmp_path / "proposed", "Proposed", "central"), _endpoint(tmp_path / "fit", "Fit-first", "central", route_schema="phase4r_intensity_preserving_fit_first/v2"), "L50_fold0")
 
 

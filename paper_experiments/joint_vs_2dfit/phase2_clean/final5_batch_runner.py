@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from .contracts import sha256
-from .fit_first_route_contract import SCMR_ONE_STAGE_SCHEMA, resolve_fit_first_route
+from .fit_first_route_contract import EXP1_1_SCHEMA, resolve_fit_first_route
 from .matched_output import formalize_proposed_export, export_fixed_l100_fit_first
 from .direct_native_bundles import build_direct_native_prediction_bundle
 from .fit_first_native_bundles import build_fit_first_native_prediction_bundle
@@ -102,7 +102,7 @@ def _paths(root: Path, record: CaseRecord) -> dict[str, Path]:
     subject, case = record.subject, record.case_id
     return {
         "proposed": root / "04_reconstruction" / "proposed" / subject / case,
-        "fit_first": root / "04_reconstruction" / "fit_first_scmr_one_stage" / subject / case,
+        "fit_first": root / "04_reconstruction" / "fit_first_exp1_1" / subject / case,
         "proposed_endpoint": root / "05_formal_endpoints" / "central" / "proposed" / subject / case,
         "fit_endpoint": root / "05_formal_endpoints" / "central" / "fit_first" / subject / case,
         "direct_bundle": root / "05_formal_endpoints" / "central" / "proposed_native_bundle" / subject / "L100",
@@ -175,8 +175,8 @@ def validate_fit_first_reconstruction(path: Path, record: CaseRecord) -> Validat
         route = resolve_fit_first_route(path)
     except (FileNotFoundError, ValueError) as exc:
         return _invalid(path, str(exc))
-    if route.route_kind != "scmr_one_stage_fit_first" or route.route_schema != SCMR_ONE_STAGE_SCHEMA:
-        return _invalid(path, "Fit-first route is not the formal SCMR one-stage baseline")
+    if route.route_kind != "exp1_1_fit_first" or route.route_schema != EXP1_1_SCHEMA:
+        return _invalid(path, "Fit-first route is not the CYJ Experiment 1.1 frozen-map one-stage baseline")
     if (manifest.get("subject"), manifest.get("case_id"), manifest.get("profile_id"), manifest.get("fold_id"), manifest.get("fold_count")) != (record.subject, record.case_id, record.profile_id, record.fold_id, record.fold_count):
         return _invalid(path, "Fit-first CaseRecord identity/fold provenance mismatch")
     sparse = manifest.get("sparse_manifest")
@@ -216,9 +216,9 @@ def validate_fit_first_endpoint(path: Path, record: CaseRecord, records: dict[tu
             route_record = routes.get(name) if isinstance(routes, dict) else None
             source_root = _paths(root, source_record)["fit_first"]
             route = resolve_fit_first_route(source_root)
-            if route.route_kind != "scmr_one_stage_fit_first" or route.route_schema != SCMR_ONE_STAGE_SCHEMA:
-                return _invalid(path, f"{name}: Fit-first route is not SCMR one-stage")
-            if not isinstance(route_record, dict) or route_record.get("route_schema") != SCMR_ONE_STAGE_SCHEMA or Path(str(route_record.get("source_fit_first_root", ""))).resolve() != source_root.resolve():
+            if route.route_kind != "exp1_1_fit_first" or route.route_schema != EXP1_1_SCHEMA:
+                return _invalid(path, f"{name}: Fit-first route is not CYJ Experiment 1.1 one-stage")
+            if not isinstance(route_record, dict) or route_record.get("route_schema") != EXP1_1_SCHEMA or Path(str(route_record.get("source_fit_first_root", ""))).resolve() != source_root.resolve():
                 return _invalid(path, f"{name}: endpoint route provenance mismatch")
             models, results = route_record.get("formal_reconstruction_model"), route_record.get("parameter_results")
             if not isinstance(models, dict) or not isinstance(results, dict) or any(not _matches_record(models.get(parameter), route.models[parameter]) or not _matches_record(results.get(parameter), route.results[parameter]) for parameter in ("t1", "t2")):
@@ -417,8 +417,8 @@ def case_commands(record: CaseRecord, final_root: str | Path, *, device: str, py
     root, paths = Path(final_root), _paths(Path(final_root), record)
     devices = normalize_device(device)
     proposed = [python, "-m", "quality_experiments.Q002_B6_roi_same_anchor_mse.run_q002_reconstruction", "--cropped-prepared-root", str(record.prepared_root), "--subject-id", record.subject, "--b6-model", PROPOSED_B6, "--expected-b6-model-sha256", PROPOSED_B6_SHA256, "--signal-simulator", DECODER, "--protocol", PROTOCOL, "--expected-protocol-sha256", PROTOCOL_SHA256, "--sparse-manifest", str(record.sparse_manifest), "--expected-sparse-generator-git-sha", record.generator_git_sha, "--expected-sparse-manifest-sha256", record.sparse_manifest_sha256, "--endpoint-policy", "central_only", "--output", str(paths["proposed"]), "--device", devices.torch_device, "--experiment-id", "Q002S640_B6_roi_same_anchor_mse", "--anchor-batch-size", "640"]
-    fit_env = {"SUBJECT": record.subject, "PREPARED_ROOT": str(record.prepared_root), "STANDARDIZED_NATIVE_DICTIONARY_ROOT": str(root / "02_standardized_12_15_10" / "native_dictionary" / record.subject), "STANDARDIZED_REUSE_MANIFEST": str(root / "02_standardized_12_15_10" / "native_dictionary" / record.subject / "reuse_manifest.json"), "SPARSE_MANIFEST": str(record.sparse_manifest), "EXPECTED_GENERATOR_GIT_SHA": record.generator_git_sha, "EXPECTED_MANIFEST_SHA256": record.sparse_manifest_sha256, "NESVOR": nesvor, "OUTPUT": str(paths["fit_first"]), "DEVICE": devices.nesvor_device, "PYTHON": python}
-    return {"proposed_reconstruction": proposed, "fit_first_reconstruction": {"argv": ["bash", str(Path(__file__).with_name("server_commands") / "run_scmr_one_stage_fit_first.sh")], "env": fit_env}}
+    fit_env = {"SUBJECT": record.subject, "STANDARDIZED_NATIVE_DICTIONARY_ROOT": str(root / "02_standardized_12_15_10" / "native_dictionary" / record.subject), "SPARSE_MANIFEST": str(record.sparse_manifest), "EXPECTED_GENERATOR_GIT_SHA": record.generator_git_sha, "EXPECTED_MANIFEST_SHA256": record.sparse_manifest_sha256, "NESVOR": nesvor, "OUTPUT": str(paths["fit_first"]), "DEVICE": devices.nesvor_device, "PYTHON": python}
+    return {"proposed_reconstruction": proposed, "fit_first_reconstruction": {"argv": ["bash", str(Path(__file__).with_name("server_commands") / "run_exp1_1_fit_first.sh")], "env": fit_env}}
 
 
 def _state_root(final_root: Path) -> Path:
