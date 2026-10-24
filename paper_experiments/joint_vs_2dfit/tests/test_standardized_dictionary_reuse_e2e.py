@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import json
+import shlex
 from pathlib import Path
 
 import numpy as np
+import nibabel as nib
 import pytest
 
 from paper_experiments.joint_vs_2dfit.phase2_clean.contracts import sha256
@@ -82,7 +84,9 @@ def test_standardized_sparse_baseline_selects_only_retained_groups_and_skips_emp
     reuse = audit_standardized_native_dictionary_maps(standardized / "slice_standardization_manifest.json", native, tmp_path / "reuse")
     standardization = json.loads((standardized / "slice_standardization_manifest.json").read_text())
     sparse_path = tmp_path / "sparse.json"; sparse_path.write_text("{}")
-    sparse = {"subject": "CYJ", "profile_id": "L50", "case_id": "L50_fold0", "fold_id": 0, "fold_count": 2, "git_sha": "a" * 40, "_manifest_path": str(sparse_path), "_manifest_sha256": sha256(sparse_path), "stacks": {}}
+    # This is the formal v2 branch, rather than a legacy sparse fixture.  In
+    # particular, standardized one-stage reuse has no R0 `reuse_records`.
+    sparse = {"schema_version": baseline.SCHEMA_VERSION, "subject": "CYJ", "profile_id": "L50", "case_id": "L50_fold0", "fold_id": 0, "fold_count": 2, "git_sha": "a" * 40, "_manifest_path": str(sparse_path), "_manifest_sha256": sha256(sparse_path), "stacks": {}}
     for stack, retained in {"sax": list(range(12)), "2ch": list(range(0, 15, 2)), "4ch": []}.items():
         observed = standardization["stacks"][stack]["output_observation"]
         sparse["stacks"][stack] = {"source_observation": observed, "retained_original_group_ids": retained, "training_stack_present": bool(retained)}
@@ -90,6 +94,9 @@ def test_standardized_sparse_baseline_selects_only_retained_groups_and_skips_emp
     output, commands = baseline.build_baseline_run(prepared, "CYJ", tmp_path / "fit_first", standardized_native_maps_root=reuse, standardized_reuse_manifest=reuse / "reuse_manifest.json", sparse_manifest=sparse_path, expected_generator_git_sha="a" * 40, expected_manifest_sha256=sha256(sparse_path))
     assert len(commands) == 2
     assert all("--registration stack" in command and "--no-transformation-optimization" not in command for command in commands)
+    for command in commands:
+        tokens = shlex.split(command.split(" && ", 1)[0]); start = tokens.index("--thicknesses") + 1
+        assert tokens[start:start + 2] == ["8", "8"]
     assert all("/4ch/" not in command for command in commands)
     assert np.load(output / "selected_standardized_native_maps/native_maps/2ch/native_maps.npz")["group_idx"].tolist() == list(range(0, 15, 2))
     for parameter in ("t1", "t2"):
@@ -100,8 +107,47 @@ def test_standardized_sparse_baseline_selects_only_retained_groups_and_skips_emp
     route = json.loads((output / "manifest.json").read_text())
     assert route["schema"] == "phase4r_scmr_one_stage_fit_first/v1"
     assert route["active_stacks"] == ["sax", "2ch"]
+    assert route["fold_id"] == 0 and route["fold_count"] == 2
     assert route["exact_nesvor_commands"] == commands
     assert route["independent_t1_t2"] is True and route["transformation_optimization_enabled"] is True
+
+
+@pytest.mark.parametrize(("profile_id", "case_id", "fold_id", "fold_count", "retained", "expected_active"), [
+    ("L100", "L100", None, 1, {"sax": list(range(12)), "2ch": list(range(15)), "4ch": list(range(10))}, ["sax", "2ch", "4ch"]),
+    ("L50", "L50_fold0", 0, 2, {"sax": list(range(12)), "2ch": list(range(0, 15, 2)), "4ch": list(range(0, 10, 2))}, ["sax", "2ch", "4ch"]),
+    ("L25", "L25_fold0", 0, 4, {"sax": list(range(12)), "2ch": [0, 4, 8, 12], "4ch": [0, 4, 8]}, ["sax", "2ch", "4ch"]),
+    ("SAX100_2CH0_4CH100", "SAX100_2CH0_4CH100", None, 1, {"sax": list(range(12)), "2ch": [], "4ch": list(range(10))}, ["sax", "4ch"]),
+])
+def test_formal_v2_sparse_profiles_use_selected_active_stacks_and_8mm_thickness(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, profile_id: str, case_id: str, fold_id: int | None, fold_count: int, retained: dict[str, list[int]], expected_active: list[str]) -> None:
+    """Run the actual standardized one-stage builder through its formal v2 branch."""
+    from paper_experiments.joint_vs_2dfit.phase2_clean import baseline
+    from paper_experiments.joint_vs_2dfit.phase2_clean.reuse_standardized_native_dictionary_maps import audit_standardized_native_dictionary_maps
+    from paper_experiments.joint_vs_2dfit.phase2_clean.standardize_subject_slices import standardize_subject_slices
+
+    prepared, native = tmp_path / "prepared", tmp_path / "native"
+    for stack, count in {"sax": 12, "2ch": 16, "4ch": 10}.items():
+        observation = prepared / "CYJ" / stack / "observations.npz"; _observations(observation, count); _native(native / stack, observation)
+    standardized = standardize_subject_slices(prepared, "CYJ", tmp_path / "standardized", git_sha="test")
+    reuse = audit_standardized_native_dictionary_maps(standardized / "slice_standardization_manifest.json", native, tmp_path / "reuse")
+    standardization = json.loads((standardized / "slice_standardization_manifest.json").read_text())
+    sparse_path = tmp_path / "sparse.json"; sparse_path.write_text("{}")
+    sparse = {"schema_version": baseline.SCHEMA_VERSION, "subject": "CYJ", "profile_id": profile_id, "case_id": case_id, "fold_id": fold_id, "fold_count": fold_count, "git_sha": "a" * 40, "_manifest_path": str(sparse_path), "_manifest_sha256": sha256(sparse_path), "stacks": {}}
+    for stack, groups in retained.items():
+        sparse["stacks"][stack] = {"source_observation": standardization["stacks"][stack]["output_observation"], "retained_original_group_ids": groups, "training_stack_present": bool(groups)}
+    monkeypatch.setattr(baseline, "validate_sparse_profile_manifest", lambda *_args, **_kwargs: sparse)
+    output, commands = baseline.build_baseline_run(prepared, "CYJ", tmp_path / "fit_first", standardized_native_maps_root=reuse, standardized_reuse_manifest=reuse / "reuse_manifest.json", sparse_manifest=sparse_path, expected_generator_git_sha="a" * 40, expected_manifest_sha256=sha256(sparse_path))
+    manifest = json.loads((output / "input_manifest.json").read_text())
+    assert manifest["training_stacks"] == expected_active
+    assert (manifest["profile_id"], manifest["case_id"], manifest["fold_id"], manifest["fold_count"]) == (profile_id, case_id, fold_id, fold_count)
+    for command in commands:
+        tokens = shlex.split(command.split(" && ", 1)[0]); start = tokens.index("--thicknesses") + 1
+        assert tokens[start:start + len(expected_active)] == ["8"] * len(expected_active)
+        assert "--sample-mask" in tokens
+    for stack in expected_active:
+        geometry = np.load(output / "selected_standardized_native_maps" / "native_maps" / stack / "geometry.npz")["affine_lps_rc"]
+        if len(geometry) > 1:
+            expected_axis = np.diag([-1., -1., 1.]) @ (geometry[1, :3, 3] - geometry[0, :3, 3])
+            assert np.allclose(nib.load(str(output / "nesvor_inputs" / stack / "t1" / "stack.nii.gz")).affine[:3, 2], expected_axis)
 
 
 @pytest.mark.parametrize("mutation, message", [("dictionary", "dictionary contract"), ("geometry", "content or geometry mismatch"), ("mapping", "mapping")])

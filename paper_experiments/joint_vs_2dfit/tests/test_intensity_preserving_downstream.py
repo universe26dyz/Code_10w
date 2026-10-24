@@ -12,6 +12,7 @@ from paper_experiments.joint_vs_2dfit.phase2_clean.fit_first_native_bundles impo
 from paper_experiments.joint_vs_2dfit.phase2_clean.contracts import sha256
 from paper_experiments.joint_vs_2dfit.phase2_clean import final5_batch_runner as runner
 from paper_experiments.joint_vs_2dfit.phase2_clean import matched_output
+from paper_experiments.joint_vs_2dfit.phase2_clean.fit_first_route_contract import SCMR_ONE_STAGE_FIXED_ARGS
 
 
 def _route(root: Path, r0: Path, endpoint: Path) -> None:
@@ -65,7 +66,7 @@ def _scmr_route(root: Path, r0: Path, sparse_manifest: Path, case_id: str) -> No
     for parameter in ("t1", "t2"):
         target = root / "nesvor" / parameter; target.mkdir(parents=True)
         model, result = target / "model.pt", target / "result.json"
-        model.write_bytes(parameter.encode()); result.write_text(json.dumps({"registration": "stack", "no_slice_scale": True}))
+        model.write_bytes(parameter.encode()); result.write_text(json.dumps({"input_stacks": [str((root / "nesvor_inputs/sax" / parameter / "stack.nii.gz").resolve())], "thicknesses": [8], "registration": "stack", "no_slice_scale": True, "no_transformation_optimization": False, **SCMR_ONE_STAGE_FIXED_ARGS}))
         slices = target / "slices"; slices.mkdir()
         nib.save(nib.Nifti1Image(np.zeros((1, 1, 1)), np.eye(4)), slices / "0.nii.gz")
         parameters[parameter] = {"model": {"path": str(model.resolve()), "sha256": sha256(model)}, "result": {"path": str(result.resolve()), "sha256": sha256(result)}, "final_slices": str(slices.resolve())}

@@ -196,6 +196,26 @@ def test_two_stage_fit_first_route_cannot_skip_formal_scmr_reconstruction(tmp_pa
     assert not result.valid and result.state == "BLOCKED_EXISTING_INVALID"
 
 
+@pytest.mark.parametrize(("field", "value"), [
+    ("subject", "DYL_2"), ("case_id", "L50_fold0"), ("profile_id", "L50"), ("fold_id", 0), ("fold_count", 2),
+    ("sparse_manifest.path", "/wrong/sparse.json"), ("sparse_manifest.sha256", "0" * 64),
+    ("sparse_manifest.generator_git_sha", "0" * 40),
+])
+def test_scmr_reconstruction_rejects_case_record_or_sparse_provenance_mismatch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, field: str, value: object) -> None:
+    sparse = tmp_path / "sparse.json"; sparse.write_text("{}")
+    record = runner.CaseRecord("CYJ", "L100", "L100", None, 1, sparse, runner.sha256(sparse), "a" * 40, tmp_path)
+    path = tmp_path / "fit"; path.mkdir()
+    manifest = {"subject": record.subject, "case_id": record.case_id, "profile_id": record.profile_id, "fold_id": record.fold_id, "fold_count": record.fold_count, "sparse_manifest": {"path": str(sparse.resolve()), "sha256": record.sparse_manifest_sha256, "generator_git_sha": record.generator_git_sha}}
+    if "." in field:
+        parent, child = field.split("."); manifest[parent][child] = value
+    else:
+        manifest[field] = value
+    (path / "manifest.json").write_text(json.dumps(manifest))
+    monkeypatch.setattr(runner, "resolve_fit_first_route", lambda _path: SimpleNamespace(route_kind="scmr_one_stage_fit_first", route_schema="phase4r_scmr_one_stage_fit_first/v1"))
+    result = runner.validate_fit_first_reconstruction(path, record)
+    assert not result.valid and result.state == "BLOCKED_EXISTING_INVALID"
+
+
 def test_scmr_one_stage_fit_first_endpoint_is_admitted(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     record = runner.CaseRecord("CYJ", "L100", "L100", None, 1, tmp_path / "sparse.json", "a" * 64, "b" * 40, tmp_path)
     root, paths = tmp_path / "final", runner._paths(tmp_path / "final", record)

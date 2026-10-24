@@ -6,12 +6,22 @@ from pathlib import Path
 
 import pytest
 
-from paper_experiments.joint_vs_2dfit.phase2_clean.fit_first_route_contract import resolve_fit_first_route
+from paper_experiments.joint_vs_2dfit.phase2_clean.fit_first_route_contract import SCMR_ONE_STAGE_FIXED_ARGS, resolve_fit_first_route
 from paper_experiments.joint_vs_2dfit.phase2_clean.contracts import sha256
 
 
 def _result(input_slices: Path, *, frozen: bool = True, scaled: bool = True) -> dict:
     return {"input_stacks": None, "input_slices": str(input_slices.resolve()), "no_transformation_optimization": frozen, "no_slice_scale": scaled}
+
+
+def _scmr_result(root: Path, parameter: str, active: list[str], **changes: object) -> dict:
+    result = {
+        "input_stacks": [str((root / "nesvor_inputs" / stack / parameter / "stack.nii.gz").resolve()) for stack in active],
+        "thicknesses": [8] * len(active), "registration": "stack", "no_slice_scale": True,
+        "no_transformation_optimization": False, **SCMR_ONE_STAGE_FIXED_ARGS,
+    }
+    result.update(changes)
+    return result
 
 
 def _new_route(root: Path, *, gate: str = "REGISTERED_QUANTITATIVE_INPUTS_VALID", audit: str = "POSE_STAGE1_AND_QUANTITATIVE_STAGE2_VALID", frozen: bool = True, scaled: bool = True) -> None:
@@ -63,7 +73,7 @@ def test_resolves_formal_scmr_one_stage_models_without_two_stage_audit(tmp_path:
     for parameter in ("t1", "t2"):
         target = root / "nesvor" / parameter; target.mkdir(parents=True)
         model, result = target / "model.pt", target / "result.json"
-        model.write_bytes(parameter.encode()); result.write_text(json.dumps({"registration": "stack", "no_slice_scale": True}))
+        model.write_bytes(parameter.encode()); result.write_text(json.dumps(_scmr_result(root, parameter, ["sax"])))
         (target / "slices").mkdir(); (target / "slices/0.nii.gz").write_bytes(b"slice")
         parameters[parameter] = {"model": {"path": str(model.resolve()), "sha256": sha256(model)}, "result": {"path": str(result.resolve()), "sha256": sha256(result)}, "final_slices": str((target / "slices").resolve())}
     selected = root / "selected_standardized_native_maps"; selected.mkdir()
@@ -83,6 +93,30 @@ def test_resolves_formal_scmr_one_stage_models_without_two_stage_audit(tmp_path:
     assert route.route_kind == "scmr_one_stage_fit_first"
     assert route.models["t1"] == root / "nesvor/t1/model.pt"
     assert route.pose_audit_path is None
+
+
+@pytest.mark.parametrize(("changes", "message"), [
+    ({"thicknesses": [16]}, "thicknesses"),
+    ({"n_iter": 1}, "n_iter"),
+    ({"input_stacks": []}, "input_stacks"),
+    ({"no_transformation_optimization": True}, "registration/pose"),
+])
+def test_scmr_one_stage_rejects_result_args_outside_historical_contract(tmp_path: Path, changes: dict, message: str) -> None:
+    root = tmp_path / "scmr"; root.mkdir()
+    parameters = {}
+    for parameter in ("t1", "t2"):
+        target = root / "nesvor" / parameter; target.mkdir(parents=True)
+        model, result = target / "model.pt", target / "result.json"
+        model.write_bytes(parameter.encode()); result.write_text(json.dumps(_scmr_result(root, parameter, ["sax"], **changes)))
+        (target / "slices").mkdir(); (target / "slices/0.nii.gz").write_bytes(b"slice")
+        parameters[parameter] = {"model": {"path": str(model.resolve()), "sha256": sha256(model)}, "result": {"path": str(result.resolve()), "sha256": sha256(result)}, "final_slices": str((target / "slices").resolve())}
+    selected = root / "selected_standardized_native_maps"; selected.mkdir()
+    selection = selected / "manifest.json"; selection.write_text(json.dumps({}))
+    sparse = root / "sparse.json"; sparse.write_text("{}")
+    commands = root / "commands.sh"; commands.write_text("nesvor reconstruct --registration stack\n")
+    (root / "manifest.json").write_text(json.dumps({"schema": "phase4r_scmr_one_stage_fit_first/v1", "active_stacks": ["sax"], "no_dictionary_refit": True, "independent_t1_t2": True, "transformation_optimization_enabled": True, "no_slice_scale": True, "nesvor_version": "nesvor_v5_128_w1", "commands": {"path": str(commands.resolve()), "sha256": sha256(commands)}, "sparse_manifest": {"path": str(sparse.resolve()), "sha256": sha256(sparse), "generator_git_sha": "a" * 40}, "selected_standardized_native_maps": {"path": str(selection.resolve()), "sha256": sha256(selection)}, "parameters": parameters}))
+    with pytest.raises(ValueError, match=message):
+        resolve_fit_first_route(root)
 
 
 @pytest.mark.parametrize(("kwargs", "message"), [

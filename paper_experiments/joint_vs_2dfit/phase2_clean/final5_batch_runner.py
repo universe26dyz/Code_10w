@@ -171,11 +171,17 @@ def validate_fit_first_reconstruction(path: Path, record: CaseRecord) -> Validat
     if not path.exists():
         return _invalid(path, "output absent")
     try:
+        manifest = _read(path / "manifest.json")
         route = resolve_fit_first_route(path)
     except (FileNotFoundError, ValueError) as exc:
         return _invalid(path, str(exc))
     if route.route_kind != "scmr_one_stage_fit_first" or route.route_schema != SCMR_ONE_STAGE_SCHEMA:
         return _invalid(path, "Fit-first route is not the formal SCMR one-stage baseline")
+    if (manifest.get("subject"), manifest.get("case_id"), manifest.get("profile_id"), manifest.get("fold_id"), manifest.get("fold_count")) != (record.subject, record.case_id, record.profile_id, record.fold_id, record.fold_count):
+        return _invalid(path, "Fit-first CaseRecord identity/fold provenance mismatch")
+    sparse = manifest.get("sparse_manifest")
+    if not isinstance(sparse, dict) or Path(str(sparse.get("path", ""))).resolve() != record.sparse_manifest.resolve() or sparse.get("sha256") != record.sparse_manifest_sha256 or sparse.get("generator_git_sha") != record.generator_git_sha:
+        return _invalid(path, "Fit-first sparse-manifest provenance mismatch")
     return ValidationResult(True, "SKIP_VALID", "valid SCMR one-stage Fit-first reconstruction")
 
 

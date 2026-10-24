@@ -13,6 +13,34 @@ INTENSITY_SCHEMA = "phase4r_intensity_preserving_fit_first/v2"
 INTENSITY_INPUT_SCHEMA = "phase4r_fit_first_registered_quantitative_inputs/v2"
 INTENSITY_AUDIT_SCHEMA = "fit_first_intensity_preserving_final_pose_audit/v2"
 SCMR_ONE_STAGE_SCHEMA = "phase4r_scmr_one_stage_fit_first/v1"
+SCMR_ONE_STAGE_FIXED_ARGS = {
+    "n_iter": 10000,
+    "n_samples": 256,
+    "n_inference_samples": 128,
+    "inference_batch_size": 16000,
+    "pixel_variance_weight": 1,
+    "weight_transformation": 1,
+    "weight_deform": 0.1,
+    "weight_image": 1,
+    "weight_pixel_var_smooth": 0,
+    "output_resolution": 1,
+    "output_psf_factor": 1,
+    "coarsest_resolution": 16,
+    "finest_resolution": 0.5,
+    "level_scale": 1.3819,
+    "n_features_per_level": 2,
+    "depth": 1,
+    "width": 64,
+    "n_features_z": 15,
+    "n_features_slice": 16,
+    "weight_bias": 100,
+    "image_regularization": "edge",
+    "delta": 0.2,
+    "learning_rate": 0.005,
+    "gamma": 0.33,
+    "milestones": [0.5, 0.75, 0.9],
+    "seed": 20260823,
+}
 
 
 def _record(path: Path) -> dict[str, str]:
@@ -33,6 +61,28 @@ def _args(path: Path) -> dict[str, Any]:
 
 def _matches_record(value: Any, path: Path) -> bool:
     return isinstance(value, dict) and path.is_file() and Path(str(value.get("path", ""))).resolve() == path.resolve() and value.get("sha256") == sha256(path)
+
+
+def _same_argument(value: Any, expected: Any) -> bool:
+    if isinstance(expected, list):
+        return isinstance(value, list) and len(value) == len(expected) and all(_same_argument(actual, item) for actual, item in zip(value, expected))
+    if isinstance(expected, (int, float)) and not isinstance(expected, bool):
+        return isinstance(value, (int, float)) and not isinstance(value, bool) and float(value) == float(expected)
+    return value == expected
+
+
+def _validate_scmr_one_stage_result(root: Path, parameter: str, active_stacks: list[str], args: dict[str, Any]) -> None:
+    expected_inputs = [root / "nesvor_inputs" / stack / parameter / "stack.nii.gz" for stack in active_stacks]
+    received_inputs = args.get("input_stacks")
+    if not isinstance(received_inputs, list) or [Path(str(value)).resolve() for value in received_inputs] != [path.resolve() for path in expected_inputs]:
+        raise ValueError(f"SCMR one-stage {parameter}: result input_stacks do not match active stack order")
+    if args.get("registration") != "stack" or args.get("no_slice_scale") is not True or args.get("no_transformation_optimization") is True:
+        raise ValueError(f"SCMR one-stage {parameter}: result contradicts one-stage registration/pose contract")
+    if not _same_argument(args.get("thicknesses"), [8] * len(active_stacks)):
+        raise ValueError(f"SCMR one-stage {parameter}: result thicknesses must be 8 mm for every active stack")
+    for name, expected in SCMR_ONE_STAGE_FIXED_ARGS.items():
+        if not _same_argument(args.get(name), expected):
+            raise ValueError(f"SCMR one-stage {parameter}: result {name} does not match the frozen historical contract")
 
 
 def _validate_stage1_stack_masks(root: Path, manifest: dict[str, Any], audit: dict[str, Any]) -> None:
@@ -153,7 +203,8 @@ def _intensity_preserving(root: Path, manifest_path: Path, manifest: dict[str, A
 def _scmr_one_stage(root: Path, manifest: dict[str, Any]) -> FitFirstFormalRoute:
     if manifest.get("no_dictionary_refit") is not True or manifest.get("independent_t1_t2") is not True or manifest.get("transformation_optimization_enabled") is not True or manifest.get("no_slice_scale") is not True:
         raise ValueError("SCMR one-stage route lacks independent transformation-optimization provenance")
-    if manifest.get("nesvor_version") != "nesvor_v5_128_w1" or not isinstance(manifest.get("active_stacks"), list) or not manifest["active_stacks"]:
+    active_stacks = manifest.get("active_stacks")
+    if manifest.get("nesvor_version") != "nesvor_v5_128_w1" or not isinstance(active_stacks, list) or not active_stacks or any(stack not in ("sax", "2ch", "4ch") for stack in active_stacks) or len(set(active_stacks)) != len(active_stacks):
         raise ValueError("SCMR one-stage route lacks historical NeSVoR provenance")
     command = manifest.get("commands")
     selected = manifest.get("selected_standardized_native_maps")
@@ -176,8 +227,7 @@ def _scmr_one_stage(root: Path, manifest: dict[str, Any]) -> FitFirstFormalRoute
         if not isinstance(record, dict) or not _matches_record(record.get("model"), model) or not _matches_record(record.get("result"), result) or Path(str(record.get("final_slices", ""))).resolve() != final.resolve():
             raise ValueError(f"SCMR one-stage {parameter}: parameter provenance mismatch")
         args = _args(result)
-        if args.get("no_transformation_optimization") is True or args.get("no_slice_scale") is False:
-            raise ValueError(f"SCMR one-stage {parameter}: result contradicts one-stage command contract")
+        _validate_scmr_one_stage_result(root, parameter, active_stacks, args)
         models[parameter], results[parameter], slices[parameter] = model, result, final
     return FitFirstFormalRoute("scmr_one_stage_fit_first", SCMR_ONE_STAGE_SCHEMA, root, models, results, slices, None, None, "independent parameter-specific one-stage NeSVoR stack registration and transformation optimization", "standardized native dictionary maps; one-stage NeSVoR checkpoint")
 
