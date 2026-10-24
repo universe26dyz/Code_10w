@@ -245,7 +245,7 @@ def validate_fit_first_endpoint(path: Path, record: CaseRecord, records: dict[tu
 
 
 def validate_l100_metric(path: Path, record: CaseRecord, root: Path) -> ValidationResult:
-    """Admit only v5 metrics with v4 Fit-first-bundle endpoint provenance."""
+    """Admit only v5 metrics with v6 reindex-corrected Fit-first-bundle provenance."""
     if not path.exists():
         return _invalid(path, "output absent")
     try:
@@ -264,7 +264,7 @@ def validate_l100_metric(path: Path, record: CaseRecord, root: Path) -> Validati
         if aggregate.get("schema") != "final_pose_native_common_support_metrics/v4" or FIT_FIRST_COMMON_SUPPORT_TERM not in str(aggregate.get("primary_support_equation", "")):
             return _invalid(path, "L100 aggregate does not record mask-aware common support")
         fit_bundle = _read(paths["fit_bundle"] / "manifest.json")
-        if fit_bundle.get("schema") != "fit_first_native_prediction_bundle/v5" or not _matches_record(fit_bundle.get("endpoint_source_manifest"), paths["fit_endpoint"] / "manifest.json"):
+        if fit_bundle.get("schema") != "fit_first_native_prediction_bundle/v6" or not _matches_record(fit_bundle.get("endpoint_source_manifest"), paths["fit_endpoint"] / "manifest.json"):
             return _invalid(path, "L100 Fit-first bundle endpoint provenance mismatch")
     except (FileNotFoundError, ValueError, TypeError) as exc:
         return _invalid(path, str(exc))
@@ -312,7 +312,7 @@ def build_batch_plan(registry: str | Path, final_root: str | Path, *, device: st
         paths = _paths(root, record)
         proposed, fit = validate_proposed_reconstruction(paths["proposed"], record), validate_fit_first_reconstruction(paths["fit_first"], record)
         endpoints = _schema(paths["proposed_endpoint"], "phase4r_formal_proposed_export/v1"), validate_fit_first_endpoint(paths["fit_endpoint"], record, records_by_key, root)
-        bundles = _schema(paths["direct_bundle"], "direct_native_prediction_bundle/v1"), _schema(paths["fit_bundle"], "fit_first_native_prediction_bundle/v5")
+        bundles = _schema(paths["direct_bundle"], "direct_native_prediction_bundle/v1"), _schema(paths["fit_bundle"], "fit_first_native_prediction_bundle/v6")
         support, mask, metric = _schema(paths["native_support"], "q004_direct_native_endpoint_audit/v2"), _schema(paths["native_mask"], "phase4r_current_native_central_component_mask/v1"), validate_l100_metric(paths["l100_metrics"], record, root)
         stages = {"proposed_reconstruction": _stage(proposed), "fit_first_reconstruction": _stage(fit), "proposed_endpoint": _stage(endpoints[0], dependency=not proposed.valid), "fit_first_endpoint": _stage(endpoints[1], dependency=not fit.valid), "proposed_native_bundle": _stage(bundles[0], dependency=not proposed.valid), "fit_first_native_bundle": _stage(bundles[1], dependency=not (fit.valid and endpoints[1].valid)), "l100_native_support": _stage(support, dependency=not (proposed.valid and endpoints[0].valid)), "current_native_mask": _stage(mask, dependency=not support.valid), "l100_metrics": _stage(metric, dependency=not (bundles[0].valid and bundles[1].valid and mask.valid))}
         l100_ready[record.subject] = all(value["state"] == "SKIP_VALID" for value in stages.values())
@@ -354,7 +354,7 @@ def _validate_stage_output(stage: str, record: CaseRecord, root: Path, records: 
     expected = {
         "proposed_endpoint": ("proposed_endpoint", "phase4r_formal_proposed_export/v1"),
         "proposed_native_bundle": ("direct_bundle", "direct_native_prediction_bundle/v1"),
-        "fit_first_native_bundle": ("fit_bundle", "fit_first_native_prediction_bundle/v5"),
+        "fit_first_native_bundle": ("fit_bundle", "fit_first_native_prediction_bundle/v6"),
         "l100_native_support": ("native_support", "q004_direct_native_endpoint_audit/v2"),
         "current_native_mask": ("native_mask", "phase4r_current_native_central_component_mask/v1"),
     }

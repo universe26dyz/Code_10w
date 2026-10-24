@@ -12,7 +12,7 @@ import numpy as np
 
 from .contracts import sha256, write_immutable_json
 from .evaluation import _world_sample
-from .fit_first_native_geometry import final_world_grid_original_order
+from .fit_first_native_geometry import final_world_grid_original_order, negative_determinant_reindex
 from .fit_first_route_contract import INTENSITY_AUDIT_SCHEMA, resolve_fit_first_route
 from .matched_output import verified_fit_first_effective_query_mask
 
@@ -27,6 +27,51 @@ def _r0_shape(root: Path, stack: str, group: int, parameter: str) -> tuple[int, 
         if groups.count(group) != 1:
             raise ValueError(f"{stack}: R0 group {group} unavailable")
         return tuple(int(value) for value in np.asarray(maps[f"{parameter}_ms"][groups.index(group)]).shape)
+
+
+def _scmr_output_slices(root: Path, parameter: str, expected_count: int) -> list[Path]:
+    folder = root / "nesvor" / parameter / "slices"
+    paths = list(folder.glob("*.nii.gz"))
+    try:
+        indexed = sorted(((int(path.name.removesuffix(".nii.gz")), path) for path in paths if path.name.removesuffix(".nii.gz").isdigit()), key=lambda item: item[0])
+    except ValueError as exc:
+        raise ValueError(f"SCMR one-stage {parameter}: output-slice IDs are invalid") from exc
+    if len(indexed) != len(paths) or [index for index, _path in indexed] != list(range(expected_count)):
+        raise ValueError(f"SCMR one-stage {parameter}: output-slice IDs must be exactly 0..{expected_count - 1}")
+    return [path for _index, path in indexed]
+
+
+def _scmr_one_stage_group_records(baseline_root: Path, parameter: str) -> list[dict[str, Any]]:
+    """Bind SCMR output-slice indices to the selected standardized group order."""
+    route_manifest = json.loads((baseline_root / "manifest.json").read_text(encoding="utf-8"))
+    selected_path = Path(str(route_manifest.get("selected_standardized_native_maps", {}).get("path", "")))
+    if not selected_path.is_file():
+        raise FileNotFoundError("SCMR one-stage selected standardized-map manifest is missing")
+    selected = json.loads(selected_path.read_text(encoding="utf-8"))
+    if selected.get("schema") != "phase4r_fit_first_selected_standardized_native_maps/v1":
+        raise ValueError("SCMR one-stage selected standardized-map schema mismatch")
+    ordered: list[tuple[str, int, int]] = []
+    for stack in route_manifest["active_stacks"]:
+        record = selected.get("stacks", {}).get(stack)
+        if not isinstance(record, dict) or record.get("training_stack_present") is not True:
+            raise ValueError(f"SCMR one-stage {stack}: selected active-stack provenance is absent")
+        groups = [int(value) for value in record.get("standardized_group_ids", [])]
+        identities = record.get("group_identity")
+        if not groups or len(groups) != len(set(groups)) or not isinstance(identities, list):
+            raise ValueError(f"SCMR one-stage {stack}: selected standardized group order is absent or ambiguous")
+        prestandardized = {int(item["standardized_group_idx"]): int(item["original_prestandardization_group_idx"]) for item in identities if isinstance(item, dict) and "standardized_group_idx" in item and "original_prestandardization_group_idx" in item}
+        if set(prestandardized) != set(groups) or len(prestandardized) != len(identities):
+            raise ValueError(f"SCMR one-stage {stack}: selected group identity provenance mismatch")
+        export_manifest = baseline_root / "nesvor_inputs" / stack / "manifest.json"
+        if not export_manifest.is_file():
+            raise FileNotFoundError(f"SCMR one-stage {stack}: exported NeSVoR input manifest is missing")
+        exported = json.loads(export_manifest.read_text(encoding="utf-8"))
+        exported_groups = [int(value) for value in exported.get("group_idx", [])]
+        if exported_groups != groups:
+            raise ValueError(f"SCMR one-stage {stack}: exported input group order disagrees with selected standardized groups")
+        ordered.extend((stack, group, prestandardized[group]) for group in groups)
+    output_slices = _scmr_output_slices(baseline_root, parameter, len(ordered))
+    return [{"stack": stack, "original_group_idx": group, "standardized_group_idx": group, "original_prestandardization_group_idx": original, "output_slice_index": index, "final_output_slice": _record(output_slices[index])} for index, (stack, group, original) in enumerate(ordered)]
 
 
 def build_fit_first_native_prediction_bundle(*, audit_root: str | Path | None = None, baseline_root: str | Path, r0_native_maps_root: str | Path, endpoint: str, endpoint_source_root: str | Path, output: str | Path) -> Path:
@@ -96,23 +141,14 @@ def build_fit_first_native_prediction_bundle(*, audit_root: str | Path | None = 
                         raise FileNotFoundError(f"{parameter}/{stack}: Stage-2 final slice is missing")
                     group_records.append({"stack": stack, "original_group_idx": int(input_record["standardized_group_idx"]), "standardized_group_idx": int(input_record["standardized_group_idx"]), "original_prestandardization_group_idx": int(input_record["original_prestandardization_group_idx"]), "output_slice_index": index, "final_output_slice": _record(final_path), "reindex_flip": {"flip_original_row": bool(np.linalg.det(np.asarray(nib.load(str(final_path)).affine, float)[:3, :3]) < 0)}})
             else:
-                route_manifest = json.loads((baseline_root / "manifest.json").read_text(encoding="utf-8"))
-                selected_path = Path(route_manifest["selected_standardized_native_maps"]["path"])
-                selected = json.loads(selected_path.read_text(encoding="utf-8"))
-                group_records = []
-                index = 0
-                for stack in route_manifest["active_stacks"]:
-                    identities = {int(item["standardized_group_idx"]): int(item["original_prestandardization_group_idx"]) for item in selected["stacks"][stack]["group_identity"]}
-                    for group in selected["stacks"][stack]["standardized_group_ids"]:
-                        final_path = route.final_slices[parameter] / f"{index}.nii.gz"
-                        if not final_path.is_file():
-                            raise FileNotFoundError(f"{parameter}/{stack}: one-stage final slice is missing")
-                        group_records.append({"stack": stack, "original_group_idx": int(group), "standardized_group_idx": int(group), "original_prestandardization_group_idx": identities[int(group)], "output_slice_index": index, "final_output_slice": _record(final_path), "reindex_flip": {"flip_original_row": bool(np.linalg.det(np.asarray(nib.load(str(final_path)).affine, float)[:3, :3]) < 0)}})
-                        index += 1
+                group_records = _scmr_one_stage_group_records(baseline_root, parameter)
             for group_record in group_records:
                 stack, group = group_record["stack"], int(group_record["original_group_idx"])
                 shape = _r0_shape(r0_root, stack, group, parameter)
                 final_path = Path(group_record["final_output_slice"]["path"])
+                if route.route_kind == "scmr_one_stage_fit_first":
+                    input_stack = baseline_root / "nesvor_inputs" / stack / parameter / "stack.nii.gz"
+                    group_record["reindex_flip"] = negative_determinant_reindex(input_stack, shape)
                 world = final_world_grid_original_order(final_path, shape, group_record["reindex_flip"])
                 prediction, volume_geometry_valid = _world_sample(volume, image.affine, world, order=1)
                 effective_mask_values, effective_mask_geometry_valid = _world_sample(effective_mask, effective_mask_image.affine, world, order=0)
@@ -125,7 +161,7 @@ def build_fit_first_native_prediction_bundle(*, audit_root: str | Path | None = 
                 if route.route_kind in ("intensity_preserving_fit_first", "scmr_one_stage_fit_first"):
                     plane_record.update({"standardized_group_idx": group_record["standardized_group_idx"], "original_prestandardization_group_idx": group_record["original_prestandardization_group_idx"]})
                 planes.append(plane_record)
-        schema = "fit_first_native_prediction_bundle/v2" if route.route_kind == "legacy_fit_first" else "fit_first_native_prediction_bundle/v5" if route.route_kind == "scmr_one_stage_fit_first" else "fit_first_native_prediction_bundle/v4"
+        schema = "fit_first_native_prediction_bundle/v2" if route.route_kind == "legacy_fit_first" else "fit_first_native_prediction_bundle/v6" if route.route_kind == "scmr_one_stage_fit_first" else "fit_first_native_prediction_bundle/v4"
         route_evidence = _record(audit_path)
         write_immutable_json(staging / "manifest.json", {"schema": schema, "route": route.provenance(), "route_manifest": route_evidence, "reconstruction_input_geometry_gate": "RECONSTRUCTION_INPUT_GEOMETRY_VALID" if route.route_kind == "legacy_fit_first" else "SCMR_ONE_STAGE_ROUTE_VALID" if route.route_kind == "scmr_one_stage_fit_first" else "REGISTERED_QUANTITATIVE_INPUTS_VALID", "endpoint": endpoint, "endpoint_source_manifest": _record(endpoint_manifest_path), "coordinate_contract": "original native [row,col] lattice -> proven NeSVoR reindex/negative-determinant flip -> parameter-specific final output-slice physical RAS -> endpoint-specific volume_ms linear sample -> original [row,col] ordering", "effective_mask_contract": "formal endpoint effective query mask SHA-verified and mapped to each native plane with nearest-neighbour order=0; valid = volume_geometry_valid AND query_effective_mask AND finite(prediction)", "output_slices_role": "geometry only; predictions are sampled from formal endpoint volume_ms, never output-slice pixels", "parameter_pose_policy": "T1 and T2 use independently optimised parameter-specific one-stage poses", "planes": planes, "no_training": True, "no_reconstruction": True, "no_metrics_modified": True})
         staging.rename(output)

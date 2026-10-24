@@ -7,6 +7,7 @@ from pathlib import Path
 
 import nibabel as nib
 import numpy as np
+import pytest
 
 from paper_experiments.joint_vs_2dfit.phase2_clean.fit_first_native_bundles import build_fit_first_native_prediction_bundle
 from paper_experiments.joint_vs_2dfit.phase2_clean.contracts import sha256
@@ -64,6 +65,9 @@ def _scmr_route(root: Path, r0: Path, sparse_manifest: Path, case_id: str) -> No
     commands = root / "commands.sh"; commands.write_text("nesvor reconstruct --input-stacks sax --registration stack --no-slice-scale\n")
     parameters = {}
     for parameter in ("t1", "t2"):
+        input_stack = root / "nesvor_inputs/sax" / parameter / "stack.nii.gz"; input_stack.parent.mkdir(parents=True, exist_ok=True)
+        nib.save(nib.Nifti1Image(np.zeros((1, 1, 1)), np.eye(4)), input_stack)
+        (input_stack.parent.parent / "manifest.json").write_text(json.dumps({"group_idx": [0]}))
         target = root / "nesvor" / parameter; target.mkdir(parents=True)
         model, result = target / "model.pt", target / "result.json"
         model.write_bytes(parameter.encode()); result.write_text(json.dumps({"input_stacks": [str((root / "nesvor_inputs/sax" / parameter / "stack.nii.gz").resolve())], "thicknesses": [8], "registration": "stack", "no_slice_scale": True, "no_transformation_optimization": False, **SCMR_ONE_STAGE_FIXED_ARGS}))
@@ -71,6 +75,40 @@ def _scmr_route(root: Path, r0: Path, sparse_manifest: Path, case_id: str) -> No
         nib.save(nib.Nifti1Image(np.zeros((1, 1, 1)), np.eye(4)), slices / "0.nii.gz")
         parameters[parameter] = {"model": {"path": str(model.resolve()), "sha256": sha256(model)}, "result": {"path": str(result.resolve()), "sha256": sha256(result)}, "final_slices": str(slices.resolve())}
     (root / "manifest.json").write_text(json.dumps({"schema": "phase4r_scmr_one_stage_fit_first/v1", "subject": "CYJ", "case_id": case_id, "profile_id": case_id.split("_fold")[0], "fold_id": None, "active_stacks": ["sax"], "no_dictionary_refit": True, "independent_t1_t2": True, "transformation_optimization_enabled": True, "no_slice_scale": True, "nesvor_version": "nesvor_v5_128_w1", "commands": {"path": str(commands.resolve()), "sha256": sha256(commands)}, "sparse_manifest": {"path": str(sparse_manifest.resolve()), "sha256": sha256(sparse_manifest), "generator_git_sha": "a" * 40}, "selected_standardized_native_maps": {"path": str(selection.resolve()), "sha256": sha256(selection)}, "selected_group_ids": {"sax": [0], "2ch": [], "4ch": []}, "parameters": parameters}))
+
+
+def _scmr_three_stack_route(root: Path, r0: Path, sparse_manifest: Path) -> None:
+    """Formal fixture with input representation flips independent of final pose."""
+    root.mkdir(parents=True)
+    stacks = ("sax", "2ch", "4ch")
+    selected_root = root / "selected_standardized_native_maps" / "native_maps"
+    selected_stacks = {}
+    for stack in stacks:
+        source = selected_root / stack; source.mkdir(parents=True)
+        np.savez_compressed(source / "native_maps.npz", group_idx=np.array([0]), t1_ms=np.ones((1, 2, 3)), t2_ms=np.ones((1, 2, 3)), b1=np.ones((1, 2, 3)))
+        np.savez_compressed(source / "geometry.npz", affine_lps_rc=np.eye(4)[None], pixel_spacing_rc_mm=np.ones((1, 2)), slice_thickness_mm=np.ones(1))
+        selected_stacks[stack] = {"training_stack_present": True, "standardized_group_ids": [0], "group_identity": [{"standardized_group_idx": 0, "original_prestandardization_group_idx": 0}]}
+        r0_stack = r0 / stack; r0_stack.mkdir(parents=True, exist_ok=True)
+        np.savez_compressed(r0_stack / "native_maps.npz", group_idx=np.array([0]), t1_ms=np.ones((1, 2, 3)), t2_ms=np.ones((1, 2, 3)))
+    selection = selected_root / "manifest.json"; selection.write_text(json.dumps({"schema": "phase4r_fit_first_selected_standardized_native_maps/v1", "stacks": selected_stacks}))
+    commands = root / "commands.sh"; commands.write_text("nesvor reconstruct --registration stack --no-slice-scale\n")
+    parameters = {}
+    for parameter in ("t1", "t2"):
+        input_paths = []
+        for stack, determinant_sign in (("sax", -1), ("2ch", 1), ("4ch", -1)):
+            input_stack = root / "nesvor_inputs" / stack / parameter / "stack.nii.gz"; input_stack.parent.mkdir(parents=True, exist_ok=True)
+            affine = np.eye(4); affine[0, 0] = determinant_sign
+            nib.save(nib.Nifti1Image(np.zeros((2, 3, 1)), affine), input_stack)
+            (input_stack.parent.parent / "manifest.json").write_text(json.dumps({"group_idx": [0]}))
+            input_paths.append(str(input_stack.resolve()))
+        target = root / "nesvor" / parameter; target.mkdir(parents=True)
+        model, result, slices = target / "model.pt", target / "result.json", target / "slices"
+        model.write_bytes(parameter.encode()); result.write_text(json.dumps({"input_stacks": input_paths, "thicknesses": [8, 8, 8], "registration": "stack", "no_slice_scale": True, "no_transformation_optimization": False, **SCMR_ONE_STAGE_FIXED_ARGS}))
+        slices.mkdir()
+        for index in range(3):
+            nib.save(nib.Nifti1Image(np.zeros((2, 3, 1)), np.eye(4)), slices / f"{index}.nii.gz")
+        parameters[parameter] = {"model": {"path": str(model.resolve()), "sha256": sha256(model)}, "result": {"path": str(result.resolve()), "sha256": sha256(result)}, "final_slices": str(slices.resolve())}
+    (root / "manifest.json").write_text(json.dumps({"schema": "phase4r_scmr_one_stage_fit_first/v1", "subject": "CYJ", "case_id": "L100", "profile_id": "L100", "fold_id": None, "fold_count": 1, "active_stacks": list(stacks), "no_dictionary_refit": True, "independent_t1_t2": True, "transformation_optimization_enabled": True, "no_slice_scale": True, "nesvor_version": "nesvor_v5_128_w1", "commands": {"path": str(commands.resolve()), "sha256": sha256(commands)}, "sparse_manifest": {"path": str(sparse_manifest.resolve()), "sha256": sha256(sparse_manifest), "generator_git_sha": "a" * 40}, "selected_standardized_native_maps": {"path": str(selection.resolve()), "sha256": sha256(selection)}, "selected_group_ids": {stack: [0] for stack in stacks}, "parameters": parameters}))
 
 
 def test_intensity_preserving_bundle_uses_stage2_pose_and_endpoint_values_not_stage1_pixels(tmp_path: Path) -> None:
@@ -100,9 +138,51 @@ def test_scmr_one_stage_bundle_uses_parameter_final_slice_geometry_and_endpoint_
     (endpoint / "manifest.json").write_text(json.dumps({"schema": "phase4r_fixed_l100_fit_first_export_bundle/v2", "endpoint": "central", "parameters": parameters}))
     bundle = build_fit_first_native_prediction_bundle(baseline_root=root, r0_native_maps_root=r0, endpoint="central", endpoint_source_root=endpoint, output=tmp_path / "bundle")
     manifest = json.loads((bundle / "manifest.json").read_text())
-    assert manifest["schema"] == "fit_first_native_prediction_bundle/v5"
+    assert manifest["schema"] == "fit_first_native_prediction_bundle/v6"
     assert manifest["route"]["route_kind"] == "scmr_one_stage_fit_first"
     assert np.load(bundle / "planes/t1/sax/group000.npz")["prediction_ms"].item() == 1000.0
+
+
+def test_scmr_bundle_uses_input_stack_negative_determinant_reindex_not_final_slice_affine(tmp_path: Path) -> None:
+    """Changing this to infer the flip from final output affine must fail."""
+    sparse = tmp_path / "sparse.json"; sparse.write_text(json.dumps({"subject": "CYJ"}))
+    root, r0, endpoint = tmp_path / "scmr", tmp_path / "r0", tmp_path / "endpoint"
+    _scmr_three_stack_route(root, r0, sparse)
+    parameters = {}
+    for parameter in ("t1", "t2"):
+        target = endpoint / parameter; target.mkdir(parents=True)
+        volume, mask = target / "volume_ms.nii.gz", target / "query_effective_mask.nii.gz"
+        nib.save(nib.Nifti1Image(np.ones((4, 4, 4), np.float32), np.eye(4)), volume)
+        nib.save(nib.Nifti1Image(np.ones((4, 4, 4), np.uint8), np.eye(4)), mask)
+        parameters[parameter] = {"effective_query_mask": {"path": str(mask.resolve()), "sha256": sha256(mask)}}
+    (endpoint / "manifest.json").write_text(json.dumps({"schema": "phase4r_fixed_l100_fit_first_export_bundle/v2", "endpoint": "central", "parameters": parameters}))
+    bundle = build_fit_first_native_prediction_bundle(baseline_root=root, r0_native_maps_root=r0, endpoint="central", endpoint_source_root=endpoint, output=tmp_path / "bundle")
+    manifest = json.loads((bundle / "manifest.json").read_text())
+    flips = {plane["stack"]: plane["reindex_flip"]["flip_original_row"] for plane in manifest["planes"] if plane["parameter"] == "t1"}
+    assert flips == {"sax": True, "2ch": False, "4ch": True}
+
+
+@pytest.mark.parametrize("mutation", ["extra_output_id", "input_group_order"])
+def test_scmr_bundle_rejects_non_authoritative_output_slice_or_input_group_mapping(tmp_path: Path, mutation: str) -> None:
+    """Output IDs and exported stack group order are formal one-stage evidence."""
+    sparse = tmp_path / "sparse.json"; sparse.write_text(json.dumps({"subject": "CYJ"}))
+    root, r0, endpoint = tmp_path / "scmr", tmp_path / "r0", tmp_path / "endpoint"
+    _scmr_three_stack_route(root, r0, sparse)
+    if mutation == "extra_output_id":
+        for parameter in ("t1", "t2"):
+            nib.save(nib.Nifti1Image(np.zeros((2, 3, 1)), np.eye(4)), root / "nesvor" / parameter / "slices/3.nii.gz")
+    else:
+        (root / "nesvor_inputs/2ch/manifest.json").write_text(json.dumps({"group_idx": [99]}))
+    parameters = {}
+    for parameter in ("t1", "t2"):
+        target = endpoint / parameter; target.mkdir(parents=True)
+        volume, mask = target / "volume_ms.nii.gz", target / "query_effective_mask.nii.gz"
+        nib.save(nib.Nifti1Image(np.ones((4, 4, 4), np.float32), np.eye(4)), volume)
+        nib.save(nib.Nifti1Image(np.ones((4, 4, 4), np.uint8), np.eye(4)), mask)
+        parameters[parameter] = {"effective_query_mask": {"path": str(mask.resolve()), "sha256": sha256(mask)}}
+    (endpoint / "manifest.json").write_text(json.dumps({"schema": "phase4r_fixed_l100_fit_first_export_bundle/v2", "endpoint": "central", "parameters": parameters}))
+    with pytest.raises(ValueError, match="output-slice IDs|group order"):
+        build_fit_first_native_prediction_bundle(baseline_root=root, r0_native_maps_root=r0, endpoint="central", endpoint_source_root=endpoint, output=tmp_path / "bundle")
 
 
 def test_fixed_l100_builder_routes_are_admitted_by_final5_validator(tmp_path: Path, monkeypatch) -> None:

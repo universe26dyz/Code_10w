@@ -65,10 +65,11 @@ def test_existing_invalid_output_is_blocked_without_delete(tmp_path: Path, monke
     assert invalid.is_dir()
 
 
-def test_pre_scmr_fit_first_bundle_cannot_skip_valid(tmp_path: Path) -> None:
-    bundle = tmp_path / "fit_bundle"; bundle.mkdir()
-    (bundle / "manifest.json").write_text(json.dumps({"schema": "fit_first_native_prediction_bundle/v4"}))
-    result = runner._schema(bundle, "fit_first_native_prediction_bundle/v5")
+def test_pre_reindex_fix_fit_first_bundle_v5_cannot_skip_valid(tmp_path: Path) -> None:
+    record = runner.CaseRecord("CYJ", "L100", "L100", None, 1, tmp_path / "sparse.json", "a" * 64, "b" * 40, tmp_path)
+    bundle = runner._paths(tmp_path / "final", record)["fit_bundle"]; bundle.mkdir(parents=True)
+    (bundle / "manifest.json").write_text(json.dumps({"schema": "fit_first_native_prediction_bundle/v5"}))
+    result = runner._validate_stage_output("fit_first_native_bundle", record, tmp_path / "final")
     assert not result.valid and result.state == "BLOCKED_EXISTING_INVALID"
 
 
