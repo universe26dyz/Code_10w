@@ -215,6 +215,105 @@ def _matches_record(value: Any, path: Path) -> bool:
     return isinstance(value, dict) and path.is_file() and Path(str(value.get("path", ""))).resolve() == path.resolve() and value.get("sha256") == sha256(path)
 
 
+def validate_proposed_endpoint(path: Path, record: CaseRecord, root: Path) -> ValidationResult:
+    """Admit only a central Proposed export bound to this current checkpoint."""
+    if not path.exists():
+        return _invalid(path, "output absent")
+    try:
+        manifest = _read(path / "manifest.json")
+        checkpoint = _paths(root, record)["proposed"] / "model.pt"
+        if (manifest.get("schema"), manifest.get("subject"), manifest.get("condition"), manifest.get("method"), manifest.get("endpoint")) != ("phase4r_formal_proposed_export/v1", record.subject, record.case_id, "Proposed", "central"):
+            return _invalid(path, "Proposed endpoint schema/identity mismatch")
+        if not _matches_record(manifest.get("source_checkpoint"), checkpoint):
+            return _invalid(path, "Proposed endpoint checkpoint provenance mismatch")
+    except (FileNotFoundError, ValueError, TypeError) as exc:
+        return _invalid(path, str(exc))
+    return ValidationResult(True, "SKIP_VALID", "valid current central Proposed endpoint")
+
+
+def validate_proposed_native_bundle(path: Path, record: CaseRecord, root: Path) -> ValidationResult:
+    """Admit only a direct-native bundle bound to this current Proposed checkpoint."""
+    if not path.exists():
+        return _invalid(path, "output absent")
+    try:
+        manifest = _read(path / "manifest.json")
+        checkpoint = _paths(root, record)["proposed"] / "model.pt"
+        if manifest.get("schema") != "direct_native_prediction_bundle/v1" or manifest.get("endpoint") != "central":
+            return _invalid(path, "Proposed native bundle schema/endpoint mismatch")
+        if not _matches_record(manifest.get("checkpoint"), checkpoint):
+            return _invalid(path, "Proposed native bundle checkpoint provenance mismatch")
+    except (FileNotFoundError, ValueError, TypeError) as exc:
+        return _invalid(path, str(exc))
+    return ValidationResult(True, "SKIP_VALID", "valid central Proposed native bundle")
+
+
+def validate_fit_first_native_bundle(path: Path, record: CaseRecord, root: Path) -> ValidationResult:
+    """Admit only a v6 bundle bound to current Exp1.1 route and endpoint artifacts."""
+    if not path.exists():
+        return _invalid(path, "output absent")
+    try:
+        manifest = _read(path / "manifest.json")
+        paths = _paths(root, record)
+        endpoint_manifest = paths["fit_endpoint"] / "manifest.json"
+        route_manifest = paths["fit_first"] / "manifest.json"
+        if manifest.get("schema") != "fit_first_native_prediction_bundle/v6" or manifest.get("endpoint") != "central":
+            return _invalid(path, "Fit-first native bundle schema/endpoint mismatch")
+        if not _matches_record(manifest.get("endpoint_source_manifest"), endpoint_manifest):
+            return _invalid(path, "Fit-first native bundle endpoint provenance mismatch")
+        route = resolve_fit_first_route(paths["fit_first"])
+        if route.route_kind != "exp1_1_fit_first" or route.route_schema != EXP1_1_SCHEMA or Path(route.root).resolve() != paths["fit_first"].resolve():
+            return _invalid(path, "Fit-first native bundle route is not current CYJ Experiment 1.1")
+        if not _matches_record(manifest.get("route_manifest"), route_manifest):
+            return _invalid(path, "Fit-first native bundle route-manifest provenance mismatch")
+        route_provenance = manifest.get("route")
+        if not isinstance(route_provenance, dict) or route_provenance.get("route_kind") != "exp1_1_fit_first" or route_provenance.get("route_schema") != EXP1_1_SCHEMA or Path(str(route_provenance.get("source_fit_first_root", ""))).resolve() != paths["fit_first"].resolve():
+            return _invalid(path, "Fit-first native bundle route identity provenance mismatch")
+    except (FileNotFoundError, ValueError, TypeError) as exc:
+        return _invalid(path, str(exc))
+    return ValidationResult(True, "SKIP_VALID", "valid current Exp1.1 central Fit-first native bundle")
+
+
+def validate_l100_native_support(path: Path, record: CaseRecord, root: Path) -> ValidationResult:
+    """Admit only a support audit bound to current Proposed endpoint/checkpoint inputs."""
+    if not path.exists():
+        return _invalid(path, "output absent")
+    try:
+        manifest = _read(path / "manifest.json")
+        paths = _paths(root, record)
+        checkpoint, support_mask = paths["proposed"] / "model.pt", paths["proposed"] / "support_mask_3D.nii.gz"
+        if manifest.get("schema") != "q004_direct_native_endpoint_audit/v2":
+            return _invalid(path, "L100 native support schema mismatch")
+        if not _matches_record(manifest.get("checkpoint"), checkpoint):
+            return _invalid(path, "L100 native support checkpoint provenance mismatch")
+        central, masks = manifest.get("central_volumes"), manifest.get("frozen_l100_masks")
+        if not isinstance(central, dict) or not isinstance(masks, dict):
+            return _invalid(path, "L100 native support endpoint/mask provenance is absent")
+        for parameter in ("t1", "t2"):
+            if not _matches_record(central.get(parameter), paths["proposed_endpoint"] / f"{parameter.upper()}_3D.nii.gz") or not _matches_record(masks.get(parameter), support_mask):
+                return _invalid(path, f"L100 native support {parameter} endpoint/mask provenance mismatch")
+    except (FileNotFoundError, ValueError, TypeError) as exc:
+        return _invalid(path, str(exc))
+    return ValidationResult(True, "SKIP_VALID", "valid current L100 native support audit")
+
+
+def validate_current_native_mask(path: Path, record: CaseRecord, root: Path) -> ValidationResult:
+    """Admit only a current native mask bound to this support audit and sparse profile."""
+    if not path.exists():
+        return _invalid(path, "output absent")
+    try:
+        manifest = _read(path / "manifest.json")
+        paths = _paths(root, record)
+        if (manifest.get("schema"), manifest.get("subject"), manifest.get("condition")) != ("phase4r_current_native_central_component_mask/v1", record.subject, "L100_fold0"):
+            return _invalid(path, "Current native mask schema/identity mismatch")
+        if not _matches_record(manifest.get("frozen_l100_native_support_manifest"), paths["native_support"] / "manifest.json"):
+            return _invalid(path, "Current native mask L100 support provenance mismatch")
+        if not _matches_record(manifest.get("sparse_manifest"), record.sparse_manifest):
+            return _invalid(path, "Current native mask sparse-manifest provenance mismatch")
+    except (FileNotFoundError, ValueError, TypeError) as exc:
+        return _invalid(path, str(exc))
+    return ValidationResult(True, "SKIP_VALID", "valid current native central-component mask")
+
+
 def validate_fit_first_endpoint(path: Path, record: CaseRecord, records: dict[tuple[str, str], CaseRecord], root: Path) -> ValidationResult:
     """Admit only SCMR one-stage Fit-first endpoint provenance for this case."""
     if not path.exists():
@@ -346,9 +445,9 @@ def build_batch_plan(registry: str | Path, final_root: str | Path, *, device: st
             continue
         paths = _paths(root, record)
         proposed, fit = validate_proposed_reconstruction(paths["proposed"], record), validate_fit_first_reconstruction(paths["fit_first"], record)
-        endpoints = _schema(paths["proposed_endpoint"], "phase4r_formal_proposed_export/v1"), validate_fit_first_endpoint(paths["fit_endpoint"], record, records_by_key, root)
-        bundles = _schema(paths["direct_bundle"], "direct_native_prediction_bundle/v1"), _schema(paths["fit_bundle"], "fit_first_native_prediction_bundle/v6")
-        support, mask, metric = _schema(paths["native_support"], "q004_direct_native_endpoint_audit/v2"), _schema(paths["native_mask"], "phase4r_current_native_central_component_mask/v1"), validate_l100_metric(paths["l100_metrics"], record, root)
+        endpoints = validate_proposed_endpoint(paths["proposed_endpoint"], record, root), validate_fit_first_endpoint(paths["fit_endpoint"], record, records_by_key, root)
+        bundles = validate_proposed_native_bundle(paths["direct_bundle"], record, root), validate_fit_first_native_bundle(paths["fit_bundle"], record, root)
+        support, mask, metric = validate_l100_native_support(paths["native_support"], record, root), validate_current_native_mask(paths["native_mask"], record, root), validate_l100_metric(paths["l100_metrics"], record, root)
         stages = {"proposed_reconstruction": _stage(proposed), "fit_first_reconstruction": _stage(fit), "proposed_endpoint": _stage(endpoints[0], dependency=not proposed.valid), "fit_first_endpoint": _stage(endpoints[1], dependency=not fit.valid), "proposed_native_bundle": _stage(bundles[0], dependency=not proposed.valid), "fit_first_native_bundle": _stage(bundles[1], dependency=not (fit.valid and endpoints[1].valid)), "l100_native_support": _stage(support, dependency=not (proposed.valid and endpoints[0].valid)), "current_native_mask": _stage(mask, dependency=not support.valid), "l100_metrics": _stage(metric, dependency=not (bundles[0].valid and bundles[1].valid and mask.valid))}
         stages = _with_artifact_paths(stages, paths)
         l100_ready[record.subject] = all(value["state"] == "SKIP_VALID" for value in stages.values())
@@ -359,10 +458,10 @@ def build_batch_plan(registry: str | Path, final_root: str | Path, *, device: st
         paths = _paths(root, record)
         proposed, fit = validate_proposed_reconstruction(paths["proposed"], record), validate_fit_first_reconstruction(paths["fit_first"], record)
         metric = validate_sparse_metric(paths["sparse_metrics"], record, root)
-        proposed_endpoint = _schema(paths["proposed_endpoint"], "phase4r_formal_proposed_export/v1")
+        proposed_endpoint = validate_proposed_endpoint(paths["proposed_endpoint"], record, root)
         fit_endpoint = validate_fit_first_endpoint(paths["fit_endpoint"], record, records_by_key, root)
         l100_record = next(item for item in records if item.subject == record.subject and item.case_id == "L100")
-        l100_mask_ready = _schema(_paths(root, l100_record)["native_mask"], "phase4r_current_native_central_component_mask/v1").valid
+        l100_mask_ready = validate_current_native_mask(_paths(root, l100_record)["native_mask"], l100_record, root).valid
         dependency = not (l100_mask_ready and proposed_endpoint.valid and fit_endpoint.valid)
         stages = {
             "proposed_reconstruction": _stage(proposed),
@@ -390,16 +489,21 @@ def _validate_stage_output(stage: str, record: CaseRecord, root: Path, records: 
         if records is None:
             raise ValueError("Fit-first endpoint validation requires registry records")
         return validate_fit_first_endpoint(paths["fit_endpoint"], record, records, root)
+    if stage == "proposed_endpoint":
+        return validate_proposed_endpoint(paths["proposed_endpoint"], record, root)
+    if stage == "proposed_native_bundle":
+        return validate_proposed_native_bundle(paths["direct_bundle"], record, root)
+    if stage == "fit_first_native_bundle":
+        return validate_fit_first_native_bundle(paths["fit_bundle"], record, root)
+    if stage == "l100_native_support":
+        return validate_l100_native_support(paths["native_support"], record, root)
+    if stage == "current_native_mask":
+        return validate_current_native_mask(paths["native_mask"], record, root)
     if stage == "l100_metrics":
         return validate_l100_metric(paths["l100_metrics"], record, root)
     if stage == "sparse_metrics":
         return validate_sparse_metric(paths["sparse_metrics"], record, root)
     expected = {
-        "proposed_endpoint": ("proposed_endpoint", "phase4r_formal_proposed_export/v1"),
-        "proposed_native_bundle": ("direct_bundle", "direct_native_prediction_bundle/v1"),
-        "fit_first_native_bundle": ("fit_bundle", "fit_first_native_prediction_bundle/v6"),
-        "l100_native_support": ("native_support", "q004_direct_native_endpoint_audit/v2"),
-        "current_native_mask": ("native_mask", "phase4r_current_native_central_component_mask/v1"),
     }
     try:
         path_key, schema = expected[stage]

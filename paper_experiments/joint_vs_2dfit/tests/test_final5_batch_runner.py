@@ -143,12 +143,115 @@ def test_buggy_pre_reindex_scmr_fit_first_bundle_v5_cannot_skip_valid(tmp_path: 
     assert not result.valid and result.state == "BLOCKED_EXISTING_INVALID"
 
 
-def test_reindex_corrected_scmr_fit_first_bundle_v6_can_skip_valid(tmp_path: Path) -> None:
+def _fit_bundle_record(path: Path) -> dict[str, str]:
+    return {"path": str(path.resolve()), "sha256": runner.sha256(path)}
+
+
+def _write_fit_first_bundle_inputs(root: Path, record: runner.CaseRecord) -> tuple[Path, Path, Path]:
+    paths = runner._paths(root, record)
+    fit_manifest, endpoint_manifest = paths["fit_first"] / "manifest.json", paths["fit_endpoint"] / "manifest.json"
+    fit_manifest.parent.mkdir(parents=True, exist_ok=True); endpoint_manifest.parent.mkdir(parents=True, exist_ok=True)
+    fit_manifest.write_text(json.dumps({"route": "current"}))
+    endpoint_manifest.write_text(json.dumps({"endpoint": "current"}))
+    bundle_manifest = paths["fit_bundle"] / "manifest.json"; bundle_manifest.parent.mkdir(parents=True, exist_ok=True)
+    bundle_manifest.write_text(json.dumps({
+        "schema": "fit_first_native_prediction_bundle/v6",
+        "endpoint": "central",
+        "endpoint_source_manifest": _fit_bundle_record(endpoint_manifest),
+        "route_manifest": _fit_bundle_record(fit_manifest),
+        "route": {"route_kind": "exp1_1_fit_first", "route_schema": "phase4r_exp1_1_fit_first/v1", "source_fit_first_root": str(paths["fit_first"].resolve())},
+    }))
+    return fit_manifest, endpoint_manifest, bundle_manifest
+
+
+def _exp1_1_route(root: Path) -> SimpleNamespace:
+    return SimpleNamespace(route_kind="exp1_1_fit_first", route_schema="phase4r_exp1_1_fit_first/v1", root=root)
+
+
+def test_current_exp1_1_fit_first_bundle_v6_can_skip_valid(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     record = runner.CaseRecord("CYJ", "L100", "L100", None, 1, tmp_path / "sparse.json", "a" * 64, "b" * 40, tmp_path)
-    bundle = runner._paths(tmp_path / "final", record)["fit_bundle"]; bundle.mkdir(parents=True)
-    (bundle / "manifest.json").write_text(json.dumps({"schema": "fit_first_native_prediction_bundle/v6"}))
-    result = runner._validate_stage_output("fit_first_native_bundle", record, tmp_path / "final")
+    root = tmp_path / "final"; fit_manifest, _endpoint_manifest, bundle_manifest = _write_fit_first_bundle_inputs(root, record)
+    monkeypatch.setattr(runner, "resolve_fit_first_route", lambda path: _exp1_1_route(Path(path)))
+    result = runner.validate_fit_first_native_bundle(bundle_manifest.parent, record, root)
+    assert fit_manifest.is_file() and result.valid and result.state == "SKIP_VALID"
+
+
+@pytest.mark.parametrize("upstream", ("endpoint", "route_manifest"))
+def test_stale_v6_fit_first_bundle_upstream_provenance_is_blocked(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, upstream: str) -> None:
+    record = runner.CaseRecord("CYJ", "L100", "L100", None, 1, tmp_path / "sparse.json", "a" * 64, "b" * 40, tmp_path)
+    root = tmp_path / "final"; fit_manifest, endpoint_manifest, bundle_manifest = _write_fit_first_bundle_inputs(root, record)
+    (endpoint_manifest if upstream == "endpoint" else fit_manifest).write_text(json.dumps({"changed": upstream}))
+    monkeypatch.setattr(runner, "resolve_fit_first_route", lambda path: _exp1_1_route(Path(path)))
+    result = runner.validate_fit_first_native_bundle(bundle_manifest.parent, record, root)
+    assert not result.valid and result.state == "BLOCKED_EXISTING_INVALID"
+
+
+def test_plan_blocks_stale_fit_first_bundle_before_execute(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    record = runner.CaseRecord("CYJ", "L100", "L100", None, 1, tmp_path / "sparse.json", "a" * 64, "b" * 40, tmp_path)
+    root = tmp_path / "final"; _fit_manifest, endpoint_manifest, _bundle_manifest = _write_fit_first_bundle_inputs(root, record)
+    endpoint_manifest.write_text(json.dumps({"endpoint": "new-current"}))
+    monkeypatch.setattr(runner, "resolve_fit_first_route", lambda path: _exp1_1_route(Path(path)))
+    monkeypatch.setattr(runner, "validate_proposed_reconstruction", lambda *_args: runner.ValidationResult(True, "SKIP_VALID", "valid"))
+    monkeypatch.setattr(runner, "validate_fit_first_reconstruction", lambda *_args: runner.ValidationResult(True, "SKIP_VALID", "valid"))
+    monkeypatch.setattr(runner, "validate_fit_first_endpoint", lambda *_args: runner.ValidationResult(True, "SKIP_VALID", "valid"))
+    monkeypatch.setattr(runner, "validate_proposed_native_bundle", lambda *_args: runner.ValidationResult(True, "SKIP_VALID", "valid"))
+    plan = runner.build_batch_plan(tmp_path / "registry.json", root, records=[record])
+    stages = plan["cases"]["CYJ/L100"]["stages"]
+    assert stages["fit_first_native_bundle"]["state"] == "BLOCKED_EXISTING_INVALID"
+    assert stages["l100_metrics"]["state"] == "BLOCKED_DEPENDENCY"
+
+
+def test_current_proposed_native_bundle_matches_current_checkpoint(tmp_path: Path) -> None:
+    record = runner.CaseRecord("CYJ", "L100", "L100", None, 1, tmp_path / "sparse.json", "a" * 64, "b" * 40, tmp_path)
+    root = tmp_path / "final"; paths = runner._paths(root, record)
+    checkpoint = paths["proposed"] / "model.pt"; checkpoint.parent.mkdir(parents=True); checkpoint.write_bytes(b"current")
+    bundle = paths["direct_bundle"]; bundle.mkdir(parents=True)
+    (bundle / "manifest.json").write_text(json.dumps({"schema": "direct_native_prediction_bundle/v1", "endpoint": "central", "checkpoint": _fit_bundle_record(checkpoint)}))
+    result = runner.validate_proposed_native_bundle(bundle, record, root)
     assert result.valid and result.state == "SKIP_VALID"
+
+
+def test_stale_proposed_native_bundle_checkpoint_provenance_is_blocked(tmp_path: Path) -> None:
+    record = runner.CaseRecord("CYJ", "L100", "L100", None, 1, tmp_path / "sparse.json", "a" * 64, "b" * 40, tmp_path)
+    root = tmp_path / "final"; paths = runner._paths(root, record)
+    checkpoint = paths["proposed"] / "model.pt"; checkpoint.parent.mkdir(parents=True); checkpoint.write_bytes(b"old")
+    bundle = paths["direct_bundle"]; bundle.mkdir(parents=True)
+    (bundle / "manifest.json").write_text(json.dumps({"schema": "direct_native_prediction_bundle/v1", "endpoint": "central", "checkpoint": _fit_bundle_record(checkpoint)}))
+    checkpoint.write_bytes(b"new")
+    result = runner.validate_proposed_native_bundle(bundle, record, root)
+    assert not result.valid and result.state == "BLOCKED_EXISTING_INVALID"
+
+
+def test_proposed_endpoint_and_native_support_reject_stale_checkpoint_or_endpoint_inputs(tmp_path: Path) -> None:
+    record = runner.CaseRecord("CYJ", "L100", "L100", None, 1, tmp_path / "sparse.json", "a" * 64, "b" * 40, tmp_path)
+    root = tmp_path / "final"; paths = runner._paths(root, record)
+    checkpoint = paths["proposed"] / "model.pt"; checkpoint.parent.mkdir(parents=True); checkpoint.write_bytes(b"checkpoint")
+    support_mask = paths["proposed"] / "support_mask_3D.nii.gz"; support_mask.write_bytes(b"support")
+    volumes = {}
+    for parameter in ("t1", "t2"):
+        volume = paths["proposed_endpoint"] / f"{parameter.upper()}_3D.nii.gz"; volume.parent.mkdir(parents=True, exist_ok=True); volume.write_bytes(parameter.encode())
+        volumes[parameter] = volume
+    endpoint_manifest = paths["proposed_endpoint"] / "manifest.json"
+    endpoint_manifest.write_text(json.dumps({"schema": "phase4r_formal_proposed_export/v1", "subject": "CYJ", "condition": "L100", "method": "Proposed", "endpoint": "central", "source_checkpoint": _fit_bundle_record(checkpoint)}))
+    support_root = paths["native_support"]; support_root.mkdir(parents=True)
+    (support_root / "manifest.json").write_text(json.dumps({"schema": "q004_direct_native_endpoint_audit/v2", "checkpoint": _fit_bundle_record(checkpoint), "central_volumes": {parameter: _fit_bundle_record(volume) for parameter, volume in volumes.items()}, "frozen_l100_masks": {parameter: _fit_bundle_record(support_mask) for parameter in ("t1", "t2")}}))
+    assert runner.validate_proposed_endpoint(paths["proposed_endpoint"], record, root).valid
+    assert runner.validate_l100_native_support(support_root, record, root).valid
+    checkpoint.write_bytes(b"replacement")
+    assert runner.validate_proposed_endpoint(paths["proposed_endpoint"], record, root).state == "BLOCKED_EXISTING_INVALID"
+    assert runner.validate_l100_native_support(support_root, record, root).state == "BLOCKED_EXISTING_INVALID"
+
+
+def test_current_native_mask_rejects_stale_native_support_manifest(tmp_path: Path) -> None:
+    sparse = tmp_path / "sparse.json"; sparse.write_text("{}")
+    record = runner.CaseRecord("CYJ", "L100", "L100", None, 1, sparse, runner.sha256(sparse), "b" * 40, tmp_path)
+    root = tmp_path / "final"; paths = runner._paths(root, record)
+    support_manifest = paths["native_support"] / "manifest.json"; support_manifest.parent.mkdir(parents=True); support_manifest.write_text(json.dumps({"support": "current"}))
+    mask = paths["native_mask"]; mask.mkdir(parents=True)
+    (mask / "manifest.json").write_text(json.dumps({"schema": "phase4r_current_native_central_component_mask/v1", "subject": "CYJ", "condition": "L100_fold0", "sparse_manifest": _fit_bundle_record(sparse), "frozen_l100_native_support_manifest": _fit_bundle_record(support_manifest)}))
+    assert runner.validate_current_native_mask(mask, record, root).valid
+    support_manifest.write_text(json.dumps({"support": "replacement"}))
+    assert runner.validate_current_native_mask(mask, record, root).state == "BLOCKED_EXISTING_INVALID"
 
 
 def test_commands_are_serial_gpu_and_sparse_fit_uses_subject_l100_mask(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
