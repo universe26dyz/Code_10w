@@ -7,6 +7,7 @@ the source of truth for resume decisions.
 from __future__ import annotations
 
 import argparse
+from copy import deepcopy
 import json
 import os
 import subprocess
@@ -16,7 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .contracts import sha256, write_immutable_json
+from .contracts import sha256
 from .fit_first_intensity_preserving import audit_intensity_preserving_final_pose
 from .fit_first_route_contract import resolve_fit_first_route
 from .matched_output import formalize_proposed_export, export_fixed_l100_fit_first
@@ -195,9 +196,9 @@ def _stage(result: ValidationResult, *, dependency: bool = False) -> dict[str, s
     return {"state": "BLOCKED_DEPENDENCY" if dependency and result.state == "READY" else result.state, "reason": result.reason}
 
 
-def build_batch_plan(registry: str | Path, final_root: str | Path, *, device: str = "0") -> dict[str, Any]:
+def build_batch_plan(registry: str | Path, final_root: str | Path, *, device: str = "0", records: list[CaseRecord] | None = None) -> dict[str, Any]:
     """Read-only artifact truth for plan, status, validation, and resume."""
-    records, root = load_final5_registry(registry), Path(final_root)
+    records, root = (load_final5_registry(registry) if records is None else list(records)), Path(final_root)
     cases: dict[str, Any] = {}
     l100_ready: dict[str, bool] = {}
     for record in records:
@@ -224,6 +225,70 @@ def build_batch_plan(registry: str | Path, final_root: str | Path, *, device: st
         dependency = not (l100_mask_ready and proposed_endpoint.valid and fit_endpoint.valid)
         cases[f"{record.subject}/{record.case_id}"] = {"profile_id": record.profile_id, "fold_id": record.fold_id, "metric_kind": "held-out LAX original-native metric using subject frozen L100 computational mask", "stages": {"proposed_reconstruction": _stage(proposed), "fit_first_reconstruction": _stage(fit), "proposed_endpoint": _stage(proposed_endpoint, dependency=not proposed.valid), "fit_first_endpoint": _stage(fit_endpoint, dependency=not fit.valid), "sparse_metrics": _stage(metric, dependency=dependency)}}
     return {"schema": "phase4r_final5_batch_plan/v1", "registry": str(Path(registry).resolve()), "final_root": str(root.resolve()), "max_gpu_jobs": MAX_GPU_JOBS, "cases": cases, "device": str(device), "computational_metrics_only": True}
+
+
+def _case_stages(record: CaseRecord) -> tuple[str, ...]:
+    return ("proposed_reconstruction", "fit_first_reconstruction", "proposed_endpoint", "fit_first_endpoint", "proposed_native_bundle", "fit_first_native_bundle", "l100_native_support", "current_native_mask", "l100_metrics") if record.case_id == "L100" else ("proposed_reconstruction", "fit_first_reconstruction", "proposed_endpoint", "fit_first_endpoint", "sparse_metrics")
+
+
+def _validate_stage_output(stage: str, record: CaseRecord, root: Path) -> ValidationResult:
+    """Validate one published artifact without rescanning the frozen registry."""
+    paths = _paths(root, record)
+    if stage == "proposed_reconstruction":
+        return validate_proposed_reconstruction(paths["proposed"], record)
+    if stage == "fit_first_reconstruction":
+        return validate_fit_first_reconstruction(paths["fit_first"], record)
+    expected = {
+        "proposed_endpoint": ("proposed_endpoint", "phase4r_formal_proposed_export/v1"),
+        "fit_first_endpoint": ("fit_endpoint", "phase4r_fixed_l100_fit_first_export_bundle/v1"),
+        "proposed_native_bundle": ("direct_bundle", "direct_native_prediction_bundle/v1"),
+        "fit_first_native_bundle": ("fit_bundle", "fit_first_native_prediction_bundle/v4"),
+        "l100_native_support": ("native_support", "q004_direct_native_endpoint_audit/v2"),
+        "current_native_mask": ("native_mask", "phase4r_current_native_central_component_mask/v1"),
+        "l100_metrics": ("l100_metrics", "final_pose_native_bundle_metrics/v4"),
+        "sparse_metrics": ("sparse_metrics", "final_sparse_native_bundle_metrics/v1"),
+    }
+    try:
+        path_key, schema = expected[stage]
+    except KeyError as exc:
+        raise RuntimeError(f"unknown final5 stage: {stage}") from exc
+    return _schema(paths[path_key], schema)
+
+
+def _stage_dependencies(stage: str, record: CaseRecord, records: dict[tuple[str, str], CaseRecord]) -> tuple[tuple[str, CaseRecord], ...]:
+    same = lambda required: (required, record)
+    if stage == "proposed_endpoint":
+        return (same("proposed_reconstruction"),)
+    if stage == "fit_first_endpoint":
+        dependencies = [same("fit_first_reconstruction")]
+        if record.case_id != "L100":
+            dependencies.append(("fit_first_reconstruction", records[(record.subject, "L100")]))
+        return tuple(dependencies)
+    if stage == "proposed_native_bundle":
+        return (same("proposed_reconstruction"),)
+    if stage == "fit_first_native_bundle":
+        return (same("fit_first_reconstruction"), same("fit_first_endpoint"))
+    if stage == "l100_native_support":
+        return (same("proposed_reconstruction"), same("proposed_endpoint"))
+    if stage == "current_native_mask":
+        return (same("l100_native_support"),)
+    if stage == "l100_metrics":
+        return (same("proposed_native_bundle"), same("fit_first_native_bundle"), same("current_native_mask"))
+    if stage == "sparse_metrics":
+        return (("current_native_mask", records[(record.subject, "L100")]), same("proposed_endpoint"), same("fit_first_endpoint"))
+    return ()
+
+
+def _validate_stage_locally(stage: str, record: CaseRecord, root: Path, records: dict[tuple[str, str], CaseRecord]) -> ValidationResult:
+    """Read only the current output and its explicit, published dependencies."""
+    result = _validate_stage_output(stage, record, root)
+    if result.valid or result.state == "BLOCKED_EXISTING_INVALID":
+        return result
+    for dependency_stage, dependency_record in _stage_dependencies(stage, record, records):
+        dependency = _validate_stage_output(dependency_stage, dependency_record, root)
+        if not dependency.valid:
+            return ValidationResult(False, "BLOCKED_DEPENDENCY", f"{dependency_record.subject}/{dependency_record.case_id} {dependency_stage}: {dependency.reason}")
+    return result
 
 
 def case_commands(record: CaseRecord, final_root: str | Path, *, device: str, python: str, nesvor: str) -> dict[str, Any]:
@@ -281,28 +346,44 @@ def _run_direct_stage(stage: str, record: CaseRecord, root: Path, *, device: str
 
 
 def execute_batch(registry: str | Path, final_root: str | Path, *, device: str, python: str, nesvor: str, subject: str | None = None, case: str | None = None) -> dict[str, Any]:
-    """Run only READY reconstruction stages serially; never delete partial roots."""
-    records = load_final5_registry(registry)
+    """Run serially after one strict preflight; never delete partial roots."""
+    all_records = load_final5_registry(registry)
+    root = Path(final_root)
+    result = deepcopy(build_batch_plan(registry, root, device=device, records=all_records))
+    invalid = [f"{key} {stage}" for key, item in result["cases"].items() for stage, value in item["stages"].items() if value["state"] == "BLOCKED_EXISTING_INVALID"]
+    if invalid:
+        _write_state(root, result, name="status.json")
+        raise RuntimeError(f"execute preflight found BLOCKED_EXISTING_INVALID: {', '.join(invalid)}")
+    records = all_records
     if subject is not None:
         records = [item for item in records if item.subject == subject]
     if case is not None:
         records = [item for item in records if item.case_id == case]
-    root = Path(final_root)
+    records_by_key = {(item.subject, item.case_id): item for item in all_records}
     events = _state_root(root) / "events.jsonl"; events.parent.mkdir(parents=True, exist_ok=True)
     try:
         for record in records:
             commands = case_commands(record, root, device=device, python=python, nesvor=nesvor)
-            stages = ("proposed_reconstruction", "fit_first_reconstruction", "proposed_endpoint", "fit_first_endpoint", "proposed_native_bundle", "fit_first_native_bundle", "l100_native_support", "current_native_mask", "l100_metrics") if record.case_id == "L100" else ("proposed_reconstruction", "fit_first_reconstruction", "proposed_endpoint", "fit_first_endpoint", "sparse_metrics")
-            for stage in stages:
-                case_plan = build_batch_plan(registry, root, device=device)["cases"][f"{record.subject}/{record.case_id}"]
-                state = case_plan["stages"][stage]["state"]
-                if state == "AUDIT_ONLY" and stage == "fit_first_reconstruction":
-                    audit_intensity_preserving_final_pose(root=_paths(root, record)["fit_first"])
+            case_plan = result["cases"][f"{record.subject}/{record.case_id}"]
+            for stage in _case_stages(record):
+                stage_plan = case_plan["stages"][stage]
+                if stage_plan["state"] == "SKIP_VALID":
                     continue
-                if state != "READY":
+                local = _validate_stage_locally(stage, record, root, records_by_key)
+                stage_plan.update(_stage(local))
+                if local.valid:
                     continue
                 log = _state_root(root) / "logs" / record.subject / record.case_id / f"{stage}.log"
-                if stage in SUBPROCESS_STAGES:
+                if local.state == "AUDIT_ONLY" and stage == "fit_first_reconstruction":
+                    try:
+                        audit_intensity_preserving_final_pose(root=_paths(root, record)["fit_first"])
+                        code = 0
+                    except Exception as exc:
+                        log.parent.mkdir(parents=True, exist_ok=True); log.write_text(f"{type(exc).__name__}: {exc}\n", encoding="utf-8")
+                        code = 1
+                elif local.state != "READY":
+                    continue
+                elif stage in SUBPROCESS_STAGES:
                     code = _run_stage(stage, record, commands[stage], log)
                 elif stage in DIRECT_STAGES:
                     try:
@@ -313,12 +394,19 @@ def execute_batch(registry: str | Path, final_root: str | Path, *, device: str, 
                         code = 1
                 else:
                     raise RuntimeError(f"unknown final5 stage: {stage}")
+                if code == 0:
+                    post = _validate_stage_locally(stage, record, root, records_by_key)
+                    if post.valid:
+                        stage_plan.update(_stage(post))
+                    else:
+                        stage_plan.update({"state": "FAILED", "reason": f"post-stage validation failed: {post.reason}"})
+                else:
+                    stage_plan.update({"state": "FAILED", "reason": f"stage returned {code}"})
                 with events.open("a", encoding="utf-8") as handle:
-                    handle.write(json.dumps({"stage": stage, "subject": record.subject, "case_id": record.case_id, "return_code": code, "log_path": str(log), "finished_utc": _utc()}) + "\n")
+                    handle.write(json.dumps({"stage": stage, "subject": record.subject, "case_id": record.case_id, "return_code": code, "validation_state": stage_plan["state"], "log_path": str(log), "finished_utc": _utc()}) + "\n")
     except KeyboardInterrupt:
-        _write_state(root, build_batch_plan(registry, root, device=device), name="status.json")
+        _write_state(root, result, name="status.json")
         raise
-    result = build_batch_plan(registry, root, device=device)
     _write_state(root, result, name="status.json")
     _write_state(root, result, name="summary.json")
     return result
