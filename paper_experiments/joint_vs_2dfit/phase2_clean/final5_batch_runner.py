@@ -160,7 +160,12 @@ def validate_proposed_reconstruction(path: Path, record: CaseRecord) -> Validati
     route = data.get("route") if isinstance(data.get("route"), dict) else {}
     sampling = route.get("sampling") if isinstance(route.get("sampling"), dict) else {}
     samples = data.get("training_psf_samples")
-    if data.get("experiment_id") != "Q002S640_B6_roi_same_anchor_mse" or data.get("anchor_batch_size") != 640 or samples != 8 or sampling.get("shared_training_psf_samples") != 8:
+    if (
+        data.get("experiment_id") != "Q002S640_B6_roi_same_anchor_mse"
+        or sampling.get("anchor_batch_size") != 640
+        or samples != 8
+        or sampling.get("shared_training_psf_samples") != 8
+    ):
         return _invalid(path, "Proposed route is not Q002S640/K8")
     if data.get("subject_id") != record.subject or ("subject" in data and data["subject"] != record.subject):
         return _invalid(path, "Proposed subject/case identity mismatch")
@@ -306,8 +311,28 @@ def validate_sparse_metric(path: Path, record: CaseRecord, root: Path) -> Valida
     return ValidationResult(True, "SKIP_VALID", "valid formal SCMR one-stage sparse metric")
 
 
+_STAGE_ARTIFACT_PATH = {
+    "proposed_reconstruction": "proposed",
+    "fit_first_reconstruction": "fit_first",
+    "proposed_endpoint": "proposed_endpoint",
+    "fit_first_endpoint": "fit_endpoint",
+    "proposed_native_bundle": "direct_bundle",
+    "fit_first_native_bundle": "fit_bundle",
+    "l100_native_support": "native_support",
+    "current_native_mask": "native_mask",
+    "l100_metrics": "l100_metrics",
+    "sparse_metrics": "sparse_metrics",
+}
+
+
 def _stage(result: ValidationResult, *, dependency: bool = False) -> dict[str, str]:
     return {"state": "BLOCKED_DEPENDENCY" if dependency and result.state != "BLOCKED_EXISTING_INVALID" else result.state, "reason": result.reason}
+
+
+def _with_artifact_paths(stages: dict[str, dict[str, str]], paths: dict[str, Path]) -> dict[str, dict[str, str]]:
+    for stage, item in stages.items():
+        item["artifact_path"] = str(paths[_STAGE_ARTIFACT_PATH[stage]].resolve())
+    return stages
 
 
 def build_batch_plan(registry: str | Path, final_root: str | Path, *, device: str = "0", records: list[CaseRecord] | None = None) -> dict[str, Any]:
@@ -325,6 +350,7 @@ def build_batch_plan(registry: str | Path, final_root: str | Path, *, device: st
         bundles = _schema(paths["direct_bundle"], "direct_native_prediction_bundle/v1"), _schema(paths["fit_bundle"], "fit_first_native_prediction_bundle/v6")
         support, mask, metric = _schema(paths["native_support"], "q004_direct_native_endpoint_audit/v2"), _schema(paths["native_mask"], "phase4r_current_native_central_component_mask/v1"), validate_l100_metric(paths["l100_metrics"], record, root)
         stages = {"proposed_reconstruction": _stage(proposed), "fit_first_reconstruction": _stage(fit), "proposed_endpoint": _stage(endpoints[0], dependency=not proposed.valid), "fit_first_endpoint": _stage(endpoints[1], dependency=not fit.valid), "proposed_native_bundle": _stage(bundles[0], dependency=not proposed.valid), "fit_first_native_bundle": _stage(bundles[1], dependency=not (fit.valid and endpoints[1].valid)), "l100_native_support": _stage(support, dependency=not (proposed.valid and endpoints[0].valid)), "current_native_mask": _stage(mask, dependency=not support.valid), "l100_metrics": _stage(metric, dependency=not (bundles[0].valid and bundles[1].valid and mask.valid))}
+        stages = _with_artifact_paths(stages, paths)
         l100_ready[record.subject] = all(value["state"] == "SKIP_VALID" for value in stages.values())
         cases[f"{record.subject}/{record.case_id}"] = {"profile_id": record.profile_id, "fold_id": record.fold_id, "metric_kind": "computational current-native common-support metric", "stages": stages}
     for record in records:
@@ -338,7 +364,14 @@ def build_batch_plan(registry: str | Path, final_root: str | Path, *, device: st
         l100_record = next(item for item in records if item.subject == record.subject and item.case_id == "L100")
         l100_mask_ready = _schema(_paths(root, l100_record)["native_mask"], "phase4r_current_native_central_component_mask/v1").valid
         dependency = not (l100_mask_ready and proposed_endpoint.valid and fit_endpoint.valid)
-        cases[f"{record.subject}/{record.case_id}"] = {"profile_id": record.profile_id, "fold_id": record.fold_id, "metric_kind": "held-out LAX original-native metric using subject frozen L100 computational mask", "stages": {"proposed_reconstruction": _stage(proposed), "fit_first_reconstruction": _stage(fit), "proposed_endpoint": _stage(proposed_endpoint, dependency=not proposed.valid), "fit_first_endpoint": _stage(fit_endpoint, dependency=not fit.valid), "sparse_metrics": _stage(metric, dependency=dependency)}}
+        stages = {
+            "proposed_reconstruction": _stage(proposed),
+            "fit_first_reconstruction": _stage(fit),
+            "proposed_endpoint": _stage(proposed_endpoint, dependency=not proposed.valid),
+            "fit_first_endpoint": _stage(fit_endpoint, dependency=not fit.valid),
+            "sparse_metrics": _stage(metric, dependency=dependency),
+        }
+        cases[f"{record.subject}/{record.case_id}"] = {"profile_id": record.profile_id, "fold_id": record.fold_id, "metric_kind": "held-out LAX original-native metric using subject frozen L100 computational mask", "stages": _with_artifact_paths(stages, paths)}
     return {"schema": "phase4r_final5_batch_plan/v1", "registry": str(Path(registry).resolve()), "final_root": str(root.resolve()), "max_gpu_jobs": MAX_GPU_JOBS, "cases": cases, "device": str(device), "computational_metrics_only": True}
 
 
@@ -482,7 +515,12 @@ def execute_batch(registry: str | Path, final_root: str | Path, *, device: str, 
     all_records = load_final5_registry(registry)
     root = Path(final_root)
     result = deepcopy(build_batch_plan(registry, root, device=device, records=all_records))
-    invalid = [f"{key} {stage}" for key, item in result["cases"].items() for stage, value in item["stages"].items() if value["state"] == "BLOCKED_EXISTING_INVALID"]
+    invalid = [
+        f"{key} {stage} path={value.get('artifact_path', '<unknown>')} reason={value.get('reason', '<none>')}"
+        for key, item in result["cases"].items()
+        for stage, value in item["stages"].items()
+        if value["state"] == "BLOCKED_EXISTING_INVALID"
+    ]
     if invalid:
         _write_state(root, result, name="status.json")
         raise RuntimeError(f"execute preflight found BLOCKED_EXISTING_INVALID: {', '.join(invalid)}")

@@ -101,7 +101,24 @@ def test_l100_selection_preserves_all_standardized_12_15_10_maps(tmp_path: Path,
     assert {stack: len(groups) for stack, groups in selected.items()} == {"sax": 12, "2ch": 15, "4ch": 10}
 
 
-def test_execute_creates_nesvor_output_dirs_and_final_manifest_admits(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize(
+    ("case_id", "profile_id", "fold_id", "fold_count", "retained", "expected_stacks"),
+    [
+        ("L100", "L100", None, 1, {"sax": [0], "2ch": [0], "4ch": [0]}, ("sax", "2ch", "4ch")),
+        ("L50_fold0", "L50", 0, 2, {"sax": [0], "2ch": [0], "4ch": [0]}, ("sax", "2ch", "4ch")),
+        ("SAX100_2CH0_4CH0", "SAX100_2CH0_4CH0", None, 1, {"sax": [0], "2ch": [], "4ch": []}, ("sax",)),
+    ],
+)
+def test_execute_creates_nesvor_output_dirs_and_final_manifest_admits(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    case_id: str,
+    profile_id: str,
+    fold_id: int | None,
+    fold_count: int,
+    retained: dict[str, list[int]],
+    expected_stacks: tuple[str, ...],
+) -> None:
     """Exercise the actual producer finalization and Final5 admission together."""
     from paper_experiments.joint_vs_2dfit.phase2_clean import fit_first_exp1_1 as route
     from paper_experiments.joint_vs_2dfit.phase2_clean import final5_batch_runner as runner
@@ -112,9 +129,9 @@ def test_execute_creates_nesvor_output_dirs_and_final_manifest_admits(tmp_path: 
     for stack, groups in (("sax", [0]), ("2ch", [0]), ("4ch", [0])):
         source, _maps, _values = _native_stack(native, stack, groups)
         sources[stack] = source
-    sparse = _profile(tmp_path, sources, {stack: [0] for stack in sources})
+    sparse = _profile(tmp_path, sources, retained)
     profile = json.loads(sparse.read_text())
-    profile.update({"_manifest_path": str(sparse.resolve()), "_manifest_sha256": _sha256(sparse)})
+    profile.update({"profile_id": profile_id, "case_id": case_id, "fold_id": fold_id, "fold_count": fold_count, "_manifest_path": str(sparse.resolve()), "_manifest_sha256": _sha256(sparse)})
     monkeypatch.setattr(route, "validate_sparse_profile_manifest", lambda *_args, **_kwargs: profile)
     output = tmp_path / "fit"
 
@@ -128,14 +145,15 @@ def test_execute_creates_nesvor_output_dirs_and_final_manifest_admits(tmp_path: 
         (target / "slices").mkdir()
         (target / "slices" / "0.nii.gz").write_bytes(b"slice")
         (target / "volume_ms.nii.gz").write_bytes(b"volume")
-        inputs = [str((output / "nesvor_inputs" / stack / parameter / "stack.nii.gz").resolve()) for stack in ("sax", "2ch", "4ch")]
-        (target / "result.json").write_text(json.dumps({"input_stacks": inputs, "thicknesses": [8, 8, 8], "registration": "stack", "no_slice_scale": True, "no_transformation_optimization": False, **SCMR_ONE_STAGE_FIXED_ARGS}))
+        inputs = [str((output / "nesvor_inputs" / stack / parameter / "stack.nii.gz").resolve()) for stack in expected_stacks]
+        (target / "result.json").write_text(json.dumps({"input_stacks": inputs, "thicknesses": [8] * len(expected_stacks), "registration": "stack", "no_slice_scale": True, "no_transformation_optimization": False, **SCMR_ONE_STAGE_FIXED_ARGS}))
 
     monkeypatch.setattr(route.subprocess, "run", fake_run)
     route.run_exp1_1_fit_first(subject="CYJ", sparse_manifest=sparse, standardized_native_dictionary_root=native, output=output, nesvor_executable="nesvor", device="0", expected_generator_git_sha="a" * 40, expected_manifest_sha256=_sha256(sparse), execute=True)
 
     manifest = json.loads((output / "manifest.json").read_text())
     assert manifest["sparse_manifest"]["generator_git_sha"] == "a" * 40
-    record = runner.CaseRecord("CYJ", "L50_fold0", "L50", 0, 2, sparse, _sha256(sparse), "a" * 40, tmp_path)
+    assert tuple(manifest["active_stacks"]) == expected_stacks
+    record = runner.CaseRecord("CYJ", case_id, profile_id, fold_id, fold_count, sparse, _sha256(sparse), "a" * 40, tmp_path)
     result = runner.validate_fit_first_reconstruction(output, record)
     assert result.valid and result.state == "SKIP_VALID"

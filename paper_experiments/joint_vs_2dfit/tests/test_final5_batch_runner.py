@@ -54,6 +54,8 @@ def test_plan_is_read_only_and_blocks_sparse_downstream_until_subject_l100(tmp_p
     assert l100["stages"]["proposed_reconstruction"]["state"] == "READY"
     assert sparse["stages"]["sparse_metrics"]["state"] == "BLOCKED_DEPENDENCY"
     assert sparse["metric_kind"] == "held-out LAX original-native metric using subject frozen L100 computational mask"
+    assert l100["stages"]["proposed_reconstruction"]["artifact_path"].endswith("04_reconstruction/proposed/CYJ/L100")
+    assert sparse["stages"]["sparse_metrics"]["artifact_path"].endswith("06_metrics/final_sparse_native/CYJ/L50_fold0")
 
 
 def test_existing_invalid_output_is_blocked_without_delete(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -72,8 +74,8 @@ def _proposed_manifest(root: Path, record: runner.CaseRecord) -> dict[str, objec
     return {
         "experiment_id": "Q002S640_B6_roi_same_anchor_mse", "subject_id": record.subject,
         "profile_id": record.profile_id, "case_id": record.case_id, "fold_id": record.fold_id,
-        "anchor_batch_size": 640, "training_psf_samples": 8, "endpoint_policy": "central_only",
-        "route": {"sampling": {"shared_training_psf_samples": 8}},
+        "training_psf_samples": 8, "endpoint_policy": "central_only",
+        "route": {"sampling": {"anchor_batch_size": 640, "shared_training_psf_samples": 8, "weights_per_anchor": 10, "signal_residual_count": 6400, "data_psf_inr_location_count": 5120}},
         "sparse_manifest": {"path": str(record.sparse_manifest.resolve()), "sha256": record.sparse_manifest_sha256, "generator_git_sha": record.generator_git_sha},
         "dependency_sha256": {"B6_model": runner.PROPOSED_B6_SHA256, "frozen_decoder": runner.DECODER_SHA256, "protocol": runner.PROTOCOL_SHA256},
     }
@@ -94,7 +96,8 @@ def test_proposed_resume_validator_admits_only_complete_final5_provenance(tmp_pa
     ("sparse_manifest.path", "/wrong/sparse.json"), ("sparse_manifest.sha256", "0" * 64),
     ("sparse_manifest.generator_git_sha", "0" * 40), ("dependency_sha256.B6_model", "0" * 64),
     ("dependency_sha256.frozen_decoder", "0" * 64), ("dependency_sha256.protocol", "0" * 64),
-    ("anchor_batch_size", 64), ("training_psf_samples", 1), ("endpoint_policy", "legacy"),
+    ("route.sampling.anchor_batch_size", 64), ("route.sampling.shared_training_psf_samples", 1),
+    ("training_psf_samples", 1), ("endpoint_policy", "legacy"),
     ("experiment_id", "Q005S640_K4_B6_roi_same_anchor_mse"),
 ])
 def test_proposed_resume_validator_rejects_each_missing_or_wrong_final5_identity(tmp_path: Path, field: str, value: object) -> None:
@@ -102,7 +105,10 @@ def test_proposed_resume_validator_rejects_each_missing_or_wrong_final5_identity
     record = runner.CaseRecord("CYJ", "L50_fold0", "L50", 0, 2, sparse, runner.sha256(sparse), "a" * 40, tmp_path)
     root = tmp_path / "proposed"; manifest = _proposed_manifest(root, record)
     if "." in field:
-        parent, child = field.split("."); manifest[parent][child] = value
+        parent: object = manifest
+        for key in field.split(".")[:-1]:
+            parent = parent[key]
+        parent[field.split(".")[-1]] = value
     else:
         manifest[field] = value
     (root / "experiment_manifest.json").write_text(json.dumps(manifest))
@@ -110,7 +116,7 @@ def test_proposed_resume_validator_rejects_each_missing_or_wrong_final5_identity
     assert not result.valid and result.state == "BLOCKED_EXISTING_INVALID"
 
 
-@pytest.mark.parametrize("field", ("subject_id", "profile_id", "case_id", "anchor_batch_size", "training_psf_samples", "endpoint_policy", "sparse_manifest", "dependency_sha256"))
+@pytest.mark.parametrize("field", ("subject_id", "profile_id", "case_id", "route", "training_psf_samples", "endpoint_policy", "sparse_manifest", "dependency_sha256"))
 def test_proposed_resume_validator_never_admits_missing_required_provenance(tmp_path: Path, field: str) -> None:
     sparse = tmp_path / "sparse.json"; sparse.write_text("{}")
     record = runner.CaseRecord("CYJ", "L50_fold0", "L50", 0, 2, sparse, runner.sha256(sparse), "a" * 40, tmp_path)
@@ -161,6 +167,24 @@ def test_commands_are_serial_gpu_and_sparse_fit_uses_subject_l100_mask(tmp_path:
     assert "central_only" in commands["proposed_reconstruction"]
     assert set(commands) == {"proposed_reconstruction", "fit_first_reconstruction"}
     assert runner.MAX_GPU_JOBS == 1
+
+
+def test_all_seventy_cases_use_frozen_q002s640_and_exp1_1_commands(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(runner, "validate_sparse_profile_manifest", _validated)
+    records = runner.load_final5_registry(_registry(tmp_path))
+    assert len(records) == 70
+    for record in records:
+        commands = runner.case_commands(record, tmp_path / "final", device="0", python="python", nesvor="nesvor")
+        proposed = commands["proposed_reconstruction"]
+        assert proposed[proposed.index("--experiment-id") + 1] == "Q002S640_B6_roi_same_anchor_mse"
+        assert proposed[proposed.index("--anchor-batch-size") + 1] == "640"
+        assert proposed[proposed.index("--endpoint-policy") + 1] == "central_only"
+        assert proposed[proposed.index("--device") + 1] == "cuda:0"
+        fit = commands["fit_first_reconstruction"]
+        assert fit["argv"][-1].endswith("run_exp1_1_fit_first.sh")
+        assert fit["env"]["SUBJECT"] == record.subject
+        assert fit["env"]["DEVICE"] == "0"
+        assert "PREPARED_ROOT" not in fit["env"] and "STANDARDIZED_REUSE_MANIFEST" not in fit["env"]
 
 
 def test_l100_dispatch_uses_subprocess_only_for_reconstructions(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -383,6 +407,24 @@ def test_execute_resume_refuses_preexisting_invalid_artifact(tmp_path: Path, mon
     monkeypatch.setattr(runner, "build_batch_plan", lambda *_args, **_kwargs: {"cases": {"CYJ/L100": {"stages": {"proposed_reconstruction": {"state": "BLOCKED_EXISTING_INVALID", "reason": "partial"}}}}})
     with pytest.raises(RuntimeError, match="preflight"):
         runner.execute_batch(tmp_path / "registry.json", tmp_path / "final", device="0", python="python", nesvor="nesvor")
+
+
+def test_execute_keeps_global_preflight_and_reports_invalid_subject_case_stage_path_and_reason(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    current = runner.CaseRecord("CYJ", "L100", "L100", None, 1, tmp_path / "sparse.json", "a" * 64, "b" * 40, tmp_path)
+    other = runner.CaseRecord("HJL", "L50_fold0", "L50", 0, 2, tmp_path / "other.json", "a" * 64, "b" * 40, tmp_path)
+    monkeypatch.setattr(runner, "load_final5_registry", lambda _registry: [current, other])
+    monkeypatch.setattr(
+        runner,
+        "build_batch_plan",
+        lambda *_args, **_kwargs: {
+            "cases": {
+                "CYJ/L100": {"stages": {"proposed_reconstruction": {"state": "READY", "reason": "output absent", "artifact_path": "/final/CYJ/L100"}}},
+                "HJL/L50_fold0": {"stages": {"fit_first_reconstruction": {"state": "BLOCKED_EXISTING_INVALID", "reason": "legacy route", "artifact_path": "/final/HJL/L50_fold0"}}},
+            }
+        },
+    )
+    with pytest.raises(RuntimeError, match=r"HJL/L50_fold0 fit_first_reconstruction path=/final/HJL/L50_fold0 reason=legacy route"):
+        runner.execute_batch(tmp_path / "registry.json", tmp_path / "final", device="0", python="python", nesvor="nesvor", subject="CYJ", case="L100")
 
 
 def test_execute_keeps_preflight_valid_artifacts_as_skip_valid(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
