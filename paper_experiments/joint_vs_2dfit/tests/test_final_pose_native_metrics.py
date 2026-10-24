@@ -40,7 +40,7 @@ def test_final_metrics_freeze_current_native_primary_on_single_common_support(mo
     manifest = json.loads((output / "manifest.json").read_text(encoding="utf-8"))
     assert aggregate["primary_mask"] == "primary_native_mask"
     assert aggregate["primary_aggregate"]["t1"]["common_support_voxels"] == 4
-    assert manifest["primary_support_equation"] == "primary_native_mask AND finite(reference) AND proposed_valid AND fit_first_valid AND finite(proposed, fit_first)"
+    assert manifest["primary_support_equation"] == "primary_native_mask AND finite(reference) AND proposed_valid AND fit_first_volume_geometry_valid AND fit_first_query_effective_mask AND finite(proposed, fit_first)"
     assert manifest["sensitivity_masks"] == ["phase4r_l100"]
     assert manifest["subject"] == "DYL_2"
 

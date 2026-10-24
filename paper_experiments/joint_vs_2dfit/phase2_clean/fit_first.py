@@ -252,7 +252,10 @@ def export_nesvor_native_inputs(native_maps: str|Path, output: str|Path, normali
         if not np.isfinite(values).all(): raise ValueError(f'non-finite NeSVoR export for {parameter}')
         folder = target/parameter; folder.mkdir()
         nib.save(nib.Nifti1Image(np.moveaxis(values, 0, 2), affine_ras), str(folder/'stack.nii.gz'))
-        export_provenance[parameter] = {'nonfinite_native_pixel_count': int(invalid.sum()), 'finite_output': True}
+        support = (~invalid).astype(np.uint8)
+        mask_path = folder/'stack_mask.nii.gz'
+        nib.save(nib.Nifti1Image(np.moveaxis(support, 0, 2), affine_ras), str(mask_path))
+        export_provenance[parameter] = {'nonfinite_native_pixel_count': int(invalid.sum()), 'finite_output': True, 'support_mask': {'path': str(mask_path.resolve()), 'sha256': sha256(mask_path), 'policy': 'authoritative finite native dictionary support; binary; geometry-identical stack mask'}}
     write_immutable_json(target/'manifest.json', {'input_native_maps': {'path': str(source.resolve()), 'sha256': sha256(source/'native_maps.npz')}, 'group_idx': [int(x) for x in maps['group_idx']], 'affine_ras': affine_ras.tolist(), 'geometry': 'current prepared LPS row/column geometry converted to RAS; groups become stack slices', 'normalization_before_nesvor': normalization or {'t1':1.0,'t2':1.0}, 'denormalization_after_nesvor_ms': normalization or {'t1':1.0,'t2':1.0}, 'nesvor_background_policy': 'non-finite native dictionary pixels are exported as zero-valued background; finite matched values unchanged', 'nesvor_export': export_provenance, 'pose_policy': BASELINE_POSE_POLICY, 'parameters': ['t1', 't2']})
     return target
 

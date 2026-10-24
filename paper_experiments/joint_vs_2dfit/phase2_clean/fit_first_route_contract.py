@@ -9,8 +9,9 @@ from typing import Any
 from .contracts import sha256
 
 PARAMETERS = ("t1", "t2")
-INTENSITY_SCHEMA = "phase4r_intensity_preserving_fit_first/v1"
-INTENSITY_AUDIT_SCHEMA = "fit_first_intensity_preserving_final_pose_audit/v1"
+INTENSITY_SCHEMA = "phase4r_intensity_preserving_fit_first/v2"
+INTENSITY_INPUT_SCHEMA = "phase4r_fit_first_registered_quantitative_inputs/v2"
+INTENSITY_AUDIT_SCHEMA = "fit_first_intensity_preserving_final_pose_audit/v2"
 
 
 def _record(path: Path) -> dict[str, str]:
@@ -89,7 +90,7 @@ def _intensity_preserving(root: Path, manifest_path: Path, manifest: dict[str, A
         raise ValueError("intensity-preserving route lacks no-refit/no-pose-copying evidence")
     gate_path, audit_path = root / "registered_quantitative_inputs_gate.json", root / "final_pose_audit.json"
     gate = json.loads(gate_path.read_text(encoding="utf-8"))
-    if gate.get("status") != "REGISTERED_QUANTITATIVE_INPUTS_VALID":
+    if gate.get("schema") != INTENSITY_INPUT_SCHEMA or gate.get("status") != "REGISTERED_QUANTITATIVE_INPUTS_VALID":
         raise ValueError("registered quantitative input gate is not valid")
     audit = json.loads(audit_path.read_text(encoding="utf-8"))
     if audit.get("schema") != INTENSITY_AUDIT_SCHEMA or audit.get("status") != "POSE_STAGE1_AND_QUANTITATIVE_STAGE2_VALID":

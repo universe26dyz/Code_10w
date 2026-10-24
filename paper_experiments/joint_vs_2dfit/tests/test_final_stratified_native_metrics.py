@@ -13,12 +13,17 @@ from paper_experiments.joint_vs_2dfit.phase2_clean.contracts import sha256
 
 def _endpoint(root: Path, method: str) -> Path:
     root.mkdir(parents=True)
+    parameters = {}
     for parameter, value in (("t1", 900.0), ("t2", 70.0)):
         path = root / (f"{parameter.upper()}_3D.nii.gz" if method == "Proposed" else f"{parameter}/volume_ms.nii.gz")
         path.parent.mkdir(parents=True, exist_ok=True)
         nib.save(nib.Nifti1Image(np.full((4, 4, 4), value, np.float32), np.eye(4)), str(path))
+        if method == "Fit-first":
+            query_mask = path.parent / "query_effective_mask.nii.gz"
+            nib.save(nib.Nifti1Image(np.ones((4, 4, 4), np.uint8), np.eye(4)), str(query_mask))
+            parameters[parameter] = {"effective_query_mask": {"path": str(query_mask.resolve()), "sha256": sha256(query_mask)}}
     schema = "phase4r_formal_proposed_export/v1" if method == "Proposed" else "phase4r_fixed_l100_fit_first_export_bundle/v1"
-    (root / "manifest.json").write_text(json.dumps({"schema": schema, "subject": "DYL_2", "condition": "L50_fold0", "endpoint": "central"}), encoding="utf-8")
+    (root / "manifest.json").write_text(json.dumps({"schema": schema, "subject": "DYL_2", "condition": "L50_fold0", "endpoint": "central", "parameters": parameters}), encoding="utf-8")
     return root
 
 

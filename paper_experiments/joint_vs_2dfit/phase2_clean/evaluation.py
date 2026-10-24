@@ -23,6 +23,15 @@ def reproject_volume_to_native_plane(volume: np.ndarray, volume_affine: np.ndarr
     values, valid = _world_sample(volume, volume_affine, world.reshape(4, *plane_shape), order=1)
     return values, valid
 
+
+def reproject_binary_mask_to_native_plane(mask: np.ndarray, mask_affine: np.ndarray, native_affine: np.ndarray, plane_shape: tuple[int, int], slice_index: int = 0) -> np.ndarray:
+    """Map a formal query mask to native geometry with nearest-neighbour sampling."""
+    row, col = np.indices(plane_shape, dtype=float)
+    indices = np.vstack((row.ravel(), col.ravel(), np.full(row.size, slice_index), np.ones(row.size)))
+    world = np.asarray(native_affine, float) @ indices
+    values, inside = _world_sample(mask, mask_affine, world.reshape(4, *plane_shape), order=0)
+    return np.asarray(inside, bool) & np.isfinite(values) & (np.asarray(values) > .5)
+
 def _metrics(reference: np.ndarray, prediction: np.ndarray, mask: np.ndarray, constant_normalization: float | None = None) -> dict:
     r,p=np.asarray(reference,float)[mask],np.asarray(prediction,float)[mask]
     if not len(r): raise ValueError("empty evaluation support")

@@ -14,6 +14,7 @@ from .contracts import sha256, write_immutable_json
 from .evaluation import _world_sample
 from .fit_first_native_geometry import final_world_grid_original_order
 from .fit_first_route_contract import INTENSITY_AUDIT_SCHEMA, resolve_fit_first_route
+from .matched_output import verified_fit_first_effective_query_mask
 
 
 def _record(path: Path) -> dict[str, str]:
@@ -72,6 +73,13 @@ def build_fit_first_native_prediction_bundle(*, audit_root: str | Path | None = 
                 raise FileNotFoundError(f"{parameter}: missing denormalised NeSVoR volume {volume_path}")
             image = nib.load(str(volume_path))
             volume = image.get_fdata()
+            effective_mask_path, effective_mask_record = verified_fit_first_effective_query_mask(endpoint_root, parameter)
+            effective_mask_image = nib.load(str(effective_mask_path))
+            effective_mask = effective_mask_image.get_fdata()
+            if effective_mask.shape != volume.shape or not np.allclose(effective_mask_image.affine, image.affine, atol=1e-6, rtol=0):
+                raise ValueError(f"{parameter}: formal effective query mask geometry differs from endpoint volume")
+            if not np.all(np.isin(effective_mask, (0.0, 1.0))):
+                raise ValueError(f"{parameter}: formal effective query mask is not binary")
             if route.route_kind == "legacy_fit_first":
                 group_records = audit["parameters"][parameter]["groups"]
             else:
@@ -88,16 +96,19 @@ def build_fit_first_native_prediction_bundle(*, audit_root: str | Path | None = 
                 shape = _r0_shape(r0_root, stack, group, parameter)
                 final_path = Path(group_record["final_output_slice"]["path"])
                 world = final_world_grid_original_order(final_path, shape, group_record["reindex_flip"])
-                prediction, valid = _world_sample(volume, image.affine, world, order=1)
+                prediction, volume_geometry_valid = _world_sample(volume, image.affine, world, order=1)
+                effective_mask_values, effective_mask_geometry_valid = _world_sample(effective_mask, effective_mask_image.affine, world, order=0)
+                query_effective_mask = np.asarray(effective_mask_geometry_valid, bool) & np.isfinite(effective_mask_values) & (np.asarray(effective_mask_values) > .5)
+                valid = np.asarray(volume_geometry_valid, bool) & query_effective_mask & np.isfinite(prediction)
                 target = staging / "planes" / parameter / stack / f"group{group:03d}.npz"
                 target.parent.mkdir(parents=True, exist_ok=True)
-                np.savez_compressed(target, prediction_ms=np.asarray(prediction, np.float32), valid=np.asarray(valid, bool), world_ras_mm=np.asarray(world[:3], np.float32))
-                plane_record = {"parameter": parameter, "stack": stack, "original_group_idx": group, "shape_rc": list(shape), "path": str(target.relative_to(staging)), "sha256": sha256(target), "volume_ms": _record(volume_path), "final_output_slice": group_record["final_output_slice"], "output_slice_index": group_record["output_slice_index"], "reindex_flip": group_record["reindex_flip"]}
+                np.savez_compressed(target, prediction_ms=np.asarray(prediction, np.float32), volume_geometry_valid=np.asarray(volume_geometry_valid, bool), query_effective_mask=np.asarray(query_effective_mask, bool), valid=np.asarray(valid, bool), world_ras_mm=np.asarray(world[:3], np.float32))
+                plane_record = {"parameter": parameter, "stack": stack, "original_group_idx": group, "shape_rc": list(shape), "path": str(target.relative_to(staging)), "sha256": sha256(target), "volume_ms": _record(volume_path), "formal_effective_query_mask": effective_mask_record, "effective_mask_native_mapping": "nearest-neighbor order=0 on original native plane", "final_output_slice": group_record["final_output_slice"], "output_slice_index": group_record["output_slice_index"], "reindex_flip": group_record["reindex_flip"]}
                 if route.route_kind == "intensity_preserving_fit_first":
                     plane_record.update({"standardized_group_idx": group_record["standardized_group_idx"], "original_prestandardization_group_idx": group_record["original_prestandardization_group_idx"]})
                 planes.append(plane_record)
-        schema = "fit_first_native_prediction_bundle/v2" if route.route_kind == "legacy_fit_first" else "fit_first_native_prediction_bundle/v3"
-        write_immutable_json(staging / "manifest.json", {"schema": schema, "route": route.provenance(), "audit_manifest": _record(audit_path), "reconstruction_input_geometry_gate": "RECONSTRUCTION_INPUT_GEOMETRY_VALID" if route.route_kind == "legacy_fit_first" else "REGISTERED_QUANTITATIVE_INPUTS_VALID", "endpoint": endpoint, "endpoint_source_manifest": _record(endpoint_manifest_path), "coordinate_contract": "original native [row,col] lattice -> proven NeSVoR reindex/negative-determinant flip -> parameter-specific final output-slice physical RAS -> endpoint-specific volume_ms linear sample -> original [row,col] ordering", "output_slices_role": "geometry only; Stage-1 registration pixels are never quantitative predictions; prediction values are sampled from formal Stage-2 endpoint volume_ms", "parameter_pose_policy": "T1 and T2 use independently optimised/frozen parameter-specific final poses", "planes": planes, "no_training": True, "no_reconstruction": True, "no_metrics_modified": True})
+        schema = "fit_first_native_prediction_bundle/v2" if route.route_kind == "legacy_fit_first" else "fit_first_native_prediction_bundle/v4"
+        write_immutable_json(staging / "manifest.json", {"schema": schema, "route": route.provenance(), "audit_manifest": _record(audit_path), "reconstruction_input_geometry_gate": "RECONSTRUCTION_INPUT_GEOMETRY_VALID" if route.route_kind == "legacy_fit_first" else "REGISTERED_QUANTITATIVE_INPUTS_VALID", "endpoint": endpoint, "endpoint_source_manifest": _record(endpoint_manifest_path), "coordinate_contract": "original native [row,col] lattice -> proven NeSVoR reindex/negative-determinant flip -> parameter-specific final output-slice physical RAS -> endpoint-specific volume_ms linear sample -> original [row,col] ordering", "effective_mask_contract": "formal endpoint effective query mask SHA-verified and mapped to each native plane with nearest-neighbour order=0; valid = volume_geometry_valid AND query_effective_mask AND finite(prediction)", "output_slices_role": "geometry only; Stage-1 registration pixels are never quantitative predictions; prediction values are sampled from formal Stage-2 endpoint volume_ms", "parameter_pose_policy": "T1 and T2 use independently optimised/frozen parameter-specific final poses", "planes": planes, "no_training": True, "no_reconstruction": True, "no_metrics_modified": True})
         staging.rename(output)
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True)

@@ -57,20 +57,27 @@ def test_registered_quantitative_inputs_restore_values_and_keep_independent_pose
     assert gate["status"] == "REGISTERED_QUANTITATIVE_INPUTS_VALID"
     assert gate["parameters"]["t1"]["scale"] == SCALES["t1"]
     assert gate["parameters"]["t2"]["scale"] == SCALES["t2"]
+    assert gate["parameters"]["t1"]["masks"][0]["sha256"] == sha256(output / "t1/slices/mask_0.nii.gz")
     t1 = nib.load(output / "t1/slices/0.nii.gz")
     t2 = nib.load(output / "t2/slices/0.nii.gz")
+    t1_mask = nib.load(output / "t1/slices/mask_0.nii.gz")
     assert not np.allclose(t1.affine, t2.affine)  # independently registered poses
     assert np.allclose(t1.get_fdata()[::-1, :, 0], [[1000 / 2500, 0], [1250 / 2500, 1500 / 2500]])
+    assert t1.shape == t1_mask.shape
+    assert np.array_equal(t1.affine, t1_mask.affine)
+    assert np.array_equal(t1_mask.get_fdata()[::-1, :, 0], [[1, 0], [1, 1]])
+    assert set(np.unique(t1_mask.get_fdata())) <= {0, 1}
 
 
-@pytest.mark.parametrize("mutation", ["pixel", "affine"])
+@pytest.mark.parametrize("mutation", ["pixel", "affine", "mask"])
 def test_gate_rejects_mutated_quantitative_slice(tmp_path: Path, mutation: str) -> None:
     native, stage1 = _case(tmp_path)
     output = rebuild_registered_quantitative_inputs(native_maps_root=native, registration_root=stage1, output=tmp_path / "registered", active_stacks=["sax", "2ch"])
-    path = output / "t1/slices/0.nii.gz"; image = nib.load(path)
+    path = output / "t1/slices" / ("mask_0.nii.gz" if mutation == "mask" else "0.nii.gz"); image = nib.load(path)
     values, affine = image.get_fdata(), image.affine.copy()
     if mutation == "pixel": values[0, 0, 0] += VALUE_TOLERANCE * 2
-    else: affine[0, 3] += VALUE_TOLERANCE * 2
+    elif mutation == "affine": affine[0, 3] += VALUE_TOLERANCE * 2
+    else: values[0, 0, 0] = .5
     nib.save(nib.Nifti1Image(values, affine), path)
     with pytest.raises(ValueError):
         validate_registered_quantitative_inputs(native_maps_root=native, registration_root=stage1, inputs_root=output, active_stacks=["sax", "2ch"])
@@ -79,6 +86,7 @@ def test_gate_rejects_mutated_quantitative_slice(tmp_path: Path, mutation: str) 
 def test_stage_commands_keep_registration_and_reconstruction_separate(tmp_path: Path) -> None:
     stage1 = build_registration_commands(tmp_path / "inputs", ["sax", "4ch"], tmp_path / "reg", nesvor_executable="nesvor", device="-1")
     assert all(" register " in f" {command} " and "--registration stack" in command for command in stage1)
+    assert all("--stack-masks" in command and "/stack_mask.nii.gz" in command for command in stage1)
     legacy = build_independent_nesvor_commands("/inputs", "/output", nesvor_executable="nesvor")[0]
     assert "--input-stacks" in legacy and "--registration stack" in legacy
     sample_mask = tmp_path / "sax.nii.gz"
@@ -167,8 +175,8 @@ def test_prepared_root_must_equal_sparse_prepared_root(tmp_path: Path) -> None:
 @pytest.mark.parametrize("field", ["no_transformation_optimization", "no_slice_scale"])
 def test_final_audit_rejects_missing_stage2_freeze_evidence(tmp_path: Path, field: str) -> None:
     root = tmp_path / "route"; root.mkdir()
-    (root / "manifest.json").write_text(json.dumps({"schema": "phase4r_intensity_preserving_fit_first/v1"}))
-    (root / "registered_quantitative_inputs_gate.json").write_text(json.dumps({"status": "REGISTERED_QUANTITATIVE_INPUTS_VALID"}))
+    (root / "manifest.json").write_text(json.dumps({"schema": "phase4r_intensity_preserving_fit_first/v2"}))
+    (root / "registered_quantitative_inputs_gate.json").write_text(json.dumps({"schema": INPUT_SCHEMA, "status": "REGISTERED_QUANTITATIVE_INPUTS_VALID"}))
     for parameter in ("t1", "t2"):
         stage1, stage2 = root / f"stage1_registration/{parameter}", root / f"stage2_reconstruction/{parameter}"
         stage1.mkdir(parents=True); stage2.mkdir(parents=True)
@@ -185,8 +193,8 @@ def test_final_audit_rejects_true_stage2_geometry_drift(
     tmp_path: Path, translation_shift_mm: float
 ) -> None:
     root = tmp_path / "route"; root.mkdir()
-    (root / "manifest.json").write_text(json.dumps({"schema": "phase4r_intensity_preserving_fit_first/v1"}))
-    (root / "registered_quantitative_inputs_gate.json").write_text(json.dumps({"status": "REGISTERED_QUANTITATIVE_INPUTS_VALID"}))
+    (root / "manifest.json").write_text(json.dumps({"schema": "phase4r_intensity_preserving_fit_first/v2"}))
+    (root / "registered_quantitative_inputs_gate.json").write_text(json.dumps({"schema": INPUT_SCHEMA, "status": "REGISTERED_QUANTITATIVE_INPUTS_VALID"}))
     for parameter in ("t1", "t2"):
         input_folder = root / f"registered_quantitative_inputs/{parameter}/slices"; output_folder = root / f"stage2_reconstruction/{parameter}/slices"
         input_folder.mkdir(parents=True); output_folder.mkdir(parents=True)
@@ -204,8 +212,8 @@ def test_final_audit_rejects_true_stage2_geometry_drift(
 
 def test_final_audit_accepts_realistic_float32_affine_round_trip_error(tmp_path: Path) -> None:
     root = tmp_path / "route"; root.mkdir()
-    (root / "manifest.json").write_text(json.dumps({"schema": "phase4r_intensity_preserving_fit_first/v1"}))
-    (root / "registered_quantitative_inputs_gate.json").write_text(json.dumps({"status": "REGISTERED_QUANTITATIVE_INPUTS_VALID"}))
+    (root / "manifest.json").write_text(json.dumps({"schema": "phase4r_intensity_preserving_fit_first/v2"}))
+    (root / "registered_quantitative_inputs_gate.json").write_text(json.dumps({"schema": INPUT_SCHEMA, "status": "REGISTERED_QUANTITATIVE_INPUTS_VALID"}))
     for parameter in ("t1", "t2"):
         input_folder = root / f"registered_quantitative_inputs/{parameter}/slices"; output_folder = root / f"stage2_reconstruction/{parameter}/slices"
         input_folder.mkdir(parents=True); output_folder.mkdir(parents=True)

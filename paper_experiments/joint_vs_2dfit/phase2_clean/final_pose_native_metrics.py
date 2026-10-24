@@ -18,7 +18,7 @@ from .current_native_central_component_mask import load_validated_current_native
 
 PRIMARY_MASK = "primary_native_mask"
 MASKS = (PRIMARY_MASK, "phase4r_l100")
-COMMON_SUPPORT_EQUATION = "primary_native_mask AND finite(reference) AND proposed_valid AND fit_first_valid AND finite(proposed, fit_first)"
+COMMON_SUPPORT_EQUATION = "primary_native_mask AND finite(reference) AND proposed_valid AND fit_first_volume_geometry_valid AND fit_first_query_effective_mask AND finite(proposed, fit_first)"
 
 
 def _record(path: Path) -> dict[str, str]:
@@ -33,7 +33,7 @@ def build_final_pose_native_metrics(*, direct_bundle_root: str | Path, fit_first
     sparse_identity = validate_formal_l100_sparse_manifest(sparse_manifest)
     if direct_manifest.get("schema") != "direct_native_prediction_bundle/v1":
         raise ValueError("direct bundle schema mismatch")
-    if fit_manifest.get("schema") not in ("fit_first_native_prediction_bundle/v2", "fit_first_native_prediction_bundle/v3"):
+    if fit_manifest.get("schema") not in ("fit_first_native_prediction_bundle/v2", "fit_first_native_prediction_bundle/v4"):
         raise ValueError("Fit-first bundle schema mismatch")
     if direct_manifest.get("endpoint") != fit_manifest.get("endpoint"):
         raise ValueError("endpoint mismatch: direct and Fit-first final-pose bundles must match")
@@ -59,14 +59,21 @@ def build_final_pose_native_metrics(*, direct_bundle_root: str | Path, fit_first
                     masks, mask_provenance = load_validated_current_native_mask_plane(mask_root, parameter=parameter, stack=stack, original_group_idx=group, shape_rc=tuple(reference.shape), source_support=source)
                     with np.load(fit_path, allow_pickle=False) as fit:
                         proposed, fit_first = np.asarray(direct[f"{parameter}_ms"], float), np.asarray(fit["prediction_ms"], float)
-                        proposed_valid, fit_valid = np.isfinite(proposed), np.asarray(fit["valid"], bool) & np.isfinite(fit_first)
+                        proposed_valid = np.isfinite(proposed)
+                        if fit_manifest.get("schema") == "fit_first_native_prediction_bundle/v4":
+                            volume_geometry_valid = np.asarray(fit["volume_geometry_valid"], bool)
+                            query_effective_mask = np.asarray(fit["query_effective_mask"], bool)
+                            fit_valid = volume_geometry_valid & query_effective_mask & np.isfinite(fit_first)
+                        else:
+                            volume_geometry_valid, query_effective_mask = np.asarray(fit["valid"], bool), np.ones_like(fit_first, bool)
+                            fit_valid = volume_geometry_valid & np.isfinite(fit_first)
                         if not (reference.shape == proposed.shape == fit_first.shape == source.shape == proposed_valid.shape == fit_valid.shape):
                             raise ValueError(f"{parameter}/{stack}/group{group:03d}: native plane geometry mismatch")
-                        record: dict[str, Any] = {"parameter": parameter, "stack": stack, "original_group_idx": group, "masks": {}}
+                        record: dict[str, Any] = {"parameter": parameter, "stack": stack, "original_group_idx": group, "fit_first_volume_geometry_valid_voxels": int(volume_geometry_valid.sum()), "fit_first_query_effective_mask_voxels": int(query_effective_mask.sum()), "masks": {}}
                         for name in MASKS:
                             support = np.asarray(masks[name], bool) & np.isfinite(reference) & proposed_valid & fit_valid
                             metrics = None if not support.any() else {"proposed": _metrics(reference, proposed, support), "fit_first": _metrics(reference, fit_first, support)}
-                            record["masks"][name] = {"common_support_voxels": int(support.sum()), "support_equation": COMMON_SUPPORT_EQUATION if name == PRIMARY_MASK else f"{name} AND finite(reference) AND proposed_valid AND fit_first_valid AND finite(proposed, fit_first)", "metrics": metrics}
+                            record["masks"][name] = {"common_support_voxels": int(support.sum()), "support_equation": COMMON_SUPPORT_EQUATION if name == PRIMARY_MASK else f"{name} AND finite(reference) AND proposed_valid AND fit_first_volume_geometry_valid AND fit_first_query_effective_mask AND finite(proposed, fit_first)", "metrics": metrics}
                             if support.any():
                                 for label, values in (("reference", reference), ("proposed", proposed), ("fit_first", fit_first)):
                                     aggregate[parameter][name][label].append(values[support])

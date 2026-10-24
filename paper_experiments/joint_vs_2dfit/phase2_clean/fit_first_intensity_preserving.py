@@ -28,9 +28,9 @@ from .sparse_profile_manifest import validate_sparse_profile_manifest
 PARAMETERS = ("t1", "t2")
 SCALES = {"t1": 2500.0, "t2": 200.0}
 VALUE_TOLERANCE = _VALUE_CORRESPONDENCE_TOL
-REGISTRATION_SCHEMA = "phase4r_fit_first_registration_stage/v1"
-INPUT_SCHEMA = "phase4r_fit_first_registered_quantitative_inputs/v1"
-ROUTE_SCHEMA = "phase4r_intensity_preserving_fit_first/v1"
+REGISTRATION_SCHEMA = "phase4r_fit_first_registration_stage/v2"
+INPUT_SCHEMA = "phase4r_fit_first_registered_quantitative_inputs/v2"
+ROUTE_SCHEMA = "phase4r_intensity_preserving_fit_first/v2"
 
 
 def q99_normalisation_multiplier(values: np.ndarray, foreground: np.ndarray | None = None) -> float:
@@ -148,7 +148,7 @@ def build_registration_commands(nesvor_inputs: Path, active_stacks: list[str], r
     commands = []
     for parameter in PARAMETERS:
         target = registration_root / parameter
-        args = [str(nesvor_executable), "register", "--input-stacks", *[str(nesvor_inputs / stack / parameter / "stack.nii.gz") for stack in active_stacks], "--thicknesses", *(["8"] * len(active_stacks)), "--registration", "stack", "--scanner-space", "--output-slices", str(target / "slices"), "--output-json", str(target / "result.json"), "--output-log", str(target / "nesvor.log"), "--device", str(device)]
+        args = [str(nesvor_executable), "register", "--input-stacks", *[str(nesvor_inputs / stack / parameter / "stack.nii.gz") for stack in active_stacks], "--stack-masks", *[str(nesvor_inputs / stack / parameter / "stack_mask.nii.gz") for stack in active_stacks], "--thicknesses", *(["8"] * len(active_stacks)), "--registration", "stack", "--scanner-space", "--output-slices", str(target / "slices"), "--output-json", str(target / "result.json"), "--output-log", str(target / "nesvor.log"), "--device", str(device)]
         commands.append(" ".join(shlex.quote(value) for value in args))
     return commands
 
@@ -187,11 +187,14 @@ def rebuild_registered_quantitative_inputs(*, native_maps_root: str | Path, regi
                 image = nib.load(str(final_slice)); affine = np.asarray(image.affine, float)
                 if image.shape[:2] != values_ms.shape or image.shape[2:] != (1,):
                     raise ValueError(f"{parameter}/{stack}/{group}: Stage-1 slice shape is not source geometry")
-                expected = np.where(np.isfinite(values_ms), values_ms / SCALES[parameter], 0.0).astype(np.float32)
+                support = np.isfinite(values_ms)
+                expected = np.where(support, values_ms / SCALES[parameter], 0.0).astype(np.float32)
                 stored = expected[::-1] if _flip_for_affine(affine) else expected
+                stored_mask = (support[::-1] if _flip_for_affine(affine) else support).astype(np.uint8)
                 target = folder / f"{index}.nii.gz"; nib.save(nib.Nifti1Image(stored[:, :, None], affine), str(target))
-                records[parameter].append({"index": index, "stack": stack, "standardized_group_idx": group, "original_prestandardization_group_idx": prestandardized_group, "stage1_final_slice": _record(final_slice), "registered_input_slice": _record(target), "affine_ras": affine.tolist(), "flip_original_row": _flip_for_affine(affine), "source_support_voxels": int(np.isfinite(values_ms).sum())})
-        write_immutable_json(staging / "manifest.json", {"schema": INPUT_SCHEMA, "native_maps_root": str(native.resolve()), "registration_stage": str(registration.resolve()), "parameters": records, "value_policy": "finite dictionary ms / parameter scale; nonfinite dictionary background is exactly zero", "geometry_policy": "each Stage-2 affine is copied from its corresponding Stage-1 final registered slice", "immutable": True})
+                mask_target = folder / f"mask_{index}.nii.gz"; nib.save(nib.Nifti1Image(stored_mask[:, :, None], affine), str(mask_target))
+                records[parameter].append({"index": index, "stack": stack, "standardized_group_idx": group, "original_prestandardization_group_idx": prestandardized_group, "stage1_final_slice": _record(final_slice), "registered_input_slice": _record(target), "registered_input_mask": _record(mask_target), "affine_ras": affine.tolist(), "flip_original_row": _flip_for_affine(affine), "source_support_voxels": int(support.sum()), "support_policy": "authoritative finite native dictionary support; binary mask follows exact Stage-2 image reindex/row-flip"})
+        write_immutable_json(staging / "manifest.json", {"schema": INPUT_SCHEMA, "native_maps_root": str(native.resolve()), "registration_stage": str(registration.resolve()), "parameters": records, "value_policy": "finite dictionary ms / parameter scale; nonfinite dictionary background is exactly zero", "mask_policy": "every Stage-2 image has a geometry-identical mask_<id>.nii.gz from authoritative finite native dictionary support", "geometry_policy": "each Stage-2 image and mask affine is copied from its corresponding Stage-1 final registered slice", "immutable": True})
         staging.rename(destination)
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True); raise
@@ -226,22 +229,33 @@ def validate_registered_quantitative_inputs(*, native_maps_root: str | Path, reg
         if not isinstance(records, list) or len(records) != len(expected) or len(slices) != len(expected) or len(stage1) != len(expected):
             raise ValueError(f"{parameter}: identity/order/count gate failed")
         max_error = 0.0
+        mask_records: list[dict[str, Any]] = []
         for index, ((stack, group, prestandardized_group, values_ms), record, path, registered) in enumerate(zip(expected, records, slices, stage1)):
             if (record.get("index"), record.get("stack"), record.get("standardized_group_idx"), record.get("original_prestandardization_group_idx")) != (index, stack, group, prestandardized_group):
                 raise ValueError(f"{parameter}: stack/group order gate failed")
-            if record.get("registered_input_slice", {}).get("sha256") != sha256(path) or record.get("stage1_final_slice", {}).get("sha256") != sha256(registered):
+            mask_path = path.with_name(f"mask_{index}.nii.gz")
+            if not mask_path.is_file():
+                raise ValueError(f"{parameter}/{stack}/{group}: Stage-2 input mask is missing")
+            if record.get("registered_input_slice", {}).get("sha256") != sha256(path) or record.get("registered_input_mask", {}).get("sha256") != sha256(mask_path) or record.get("stage1_final_slice", {}).get("sha256") != sha256(registered):
                 raise ValueError(f"{parameter}/{stack}/{group}: immutable slice provenance mismatch")
-            got = np.asarray(nib.load(str(path)).get_fdata(), float)
+            got_image, got_mask_image = nib.load(str(path)), nib.load(str(mask_path))
+            got = np.asarray(got_image.get_fdata(), float)
+            got_mask = np.asarray(got_mask_image.get_fdata(), float)
             final = np.asarray(nib.load(str(registered)).affine, float)
-            if got.shape != (*values_ms.shape, 1) or not np.allclose(np.asarray(nib.load(str(path)).affine, float), final, atol=VALUE_TOLERANCE, rtol=0):
+            if got.shape != (*values_ms.shape, 1) or got_mask.shape != got.shape or not np.allclose(np.asarray(got_image.affine, float), final, atol=VALUE_TOLERANCE, rtol=0) or not np.array_equal(np.asarray(got_mask_image.affine, float), np.asarray(got_image.affine, float)):
                 raise ValueError(f"{parameter}/{stack}/{group}: registered affine gate failed")
+            if not np.all(np.isin(got_mask, (0.0, 1.0))):
+                raise ValueError(f"{parameter}/{stack}/{group}: Stage-2 input mask is not binary")
             expected_values = np.where(np.isfinite(values_ms), values_ms / SCALES[parameter], 0.0)
             original_order = got[::-1, :, 0] if _flip_for_affine(final) else got[:, :, 0]
+            expected_support = np.isfinite(values_ms)
+            original_mask = got_mask[::-1, :, 0] if _flip_for_affine(final) else got_mask[:, :, 0]
             error = float(np.max(np.abs(original_order - expected_values)))
-            if error > VALUE_TOLERANCE or not np.isfinite(got).all():
+            if error > VALUE_TOLERANCE or not np.isfinite(got).all() or not np.array_equal(original_mask.astype(bool), expected_support):
                 raise ValueError(f"{parameter}/{stack}/{group}: quantitative pixel gate failed")
             max_error = max(max_error, error)
-        result["parameters"][parameter] = {"slice_count": len(expected), "max_abs_value_error": max_error, "scale": SCALES[parameter]}
+            mask_records.append({"index": index, "stack": stack, "standardized_group_idx": group, "path": str(mask_path.resolve()), "sha256": sha256(mask_path), "source_support_voxels": int(expected_support.sum()), "geometry": "shape/affine exactly match registered image; strict binary; original-row support verified after inverse flip"})
+        result["parameters"][parameter] = {"slice_count": len(expected), "max_abs_value_error": max_error, "scale": SCALES[parameter], "masks": mask_records}
     return result
 
 
@@ -256,7 +270,7 @@ def audit_intensity_preserving_final_pose(*, root: str | Path) -> Path:
     route = json.loads((base / "manifest.json").read_text(encoding="utf-8"))
     gate_path = base / "registered_quantitative_inputs_gate.json"
     gate = json.loads(gate_path.read_text(encoding="utf-8"))
-    if route.get("schema") != ROUTE_SCHEMA or gate.get("status") != "REGISTERED_QUANTITATIVE_INPUTS_VALID":
+    if route.get("schema") != ROUTE_SCHEMA or gate.get("schema") != INPUT_SCHEMA or gate.get("status") != "REGISTERED_QUANTITATIVE_INPUTS_VALID":
         raise ValueError("intensity-preserving final-pose audit requires a valid route and quantitative-input gate")
     records: dict[str, Any] = {}
     for parameter in PARAMETERS:
@@ -293,7 +307,7 @@ def audit_intensity_preserving_final_pose(*, root: str | Path) -> Path:
             geometry_records.append(geometry)
         records[parameter] = {"stage1_registration": _record(stage1_result), "stage2_reconstruction": _record(stage2_result), "stage1_pose_semantics": "authoritative final rigid pose; optimisation enabled", "stage2_pose_semantics": "no registration and no transformation optimisation; frozen Stage-1 affine is consumed through --input-slices", "stage2_input_slices": expected, "stage2_input_vs_final": {"geometry_equivalence_tolerance_mm": _GEOMETRY_EQUIVALENCE_TOL_MM, "max_world_error_mm": max(item["max_world_error_mm"] for item in geometry_records), "corner_max_error_mm": max(item["corner_max_error_mm"] for item in geometry_records), "center_error_mm": max(item["center_error_mm"] for item in geometry_records), "spacing_error_mm": max(item["spacing_error_mm"] for item in geometry_records), "raw_affine_max_abs_error": max(item["raw_affine_max_abs_error"] for item in geometry_records), "status": "PASS_GEOMETRY_EQUIVALENT"}, "no_transformation_optimization": True, "no_slice_scale": True}
     output = base / "final_pose_audit.json"
-    write_immutable_json(output, {"schema": "fit_first_intensity_preserving_final_pose_audit/v1", "status": "POSE_STAGE1_AND_QUANTITATIVE_STAGE2_VALID", "route_manifest": _record(base / "manifest.json"), "quantitative_input_gate": _record(gate_path), "pose_authority": "Stage-1 final registered slices", "quantitative_value_authority": "standardized native dictionary maps", "parameters": records, "stage2_registration_assertion": "Stage-2 receives --input-slices, bypasses Reconstruct._register, and result.json proves no_transformation_optimization=true", "immutable": True})
+    write_immutable_json(output, {"schema": "fit_first_intensity_preserving_final_pose_audit/v2", "status": "POSE_STAGE1_AND_QUANTITATIVE_STAGE2_VALID", "route_manifest": _record(base / "manifest.json"), "quantitative_input_gate": _record(gate_path), "pose_authority": "Stage-1 final registered slices", "quantitative_value_authority": "standardized native dictionary maps", "parameters": records, "stage2_registration_assertion": "Stage-2 receives --input-slices, bypasses Reconstruct._register, and result.json proves no_transformation_optimization=true", "immutable": True})
     return output
 
 
@@ -317,8 +331,8 @@ def prepare_intensity_preserving_fit_first(*, subject_id: str, standardized_nati
             export_nesvor_native_inputs(native / stack, destination / "nesvor_inputs" / stack, SCALES)
         commands = build_registration_commands(destination / "nesvor_inputs", active, destination / "stage1_registration", nesvor_executable=nesvor_executable, device=device)
         (destination / "stage1_registration_commands.sh").write_text("#!/usr/bin/env bash\nset -euo pipefail\n" + "\n".join(commands) + "\n", encoding="utf-8")
-        write_immutable_json(destination / "stage1_registration_manifest.json", {"schema": REGISTRATION_SCHEMA, "subject_id": subject_id, "active_stacks": active, "commands": _record(destination / "stage1_registration_commands.sh"), "registration": "stack", "t1_t2_independent": True, "value_role": "pose estimation only; q99-normalised registration pixels are never Stage-2 values", "immutable": True})
-        sample_masks = {parameter: destination / "nesvor_inputs" / "sax" / parameter / "stack.nii.gz" for parameter in PARAMETERS}
+        write_immutable_json(destination / "stage1_registration_manifest.json", {"schema": REGISTRATION_SCHEMA, "subject_id": subject_id, "active_stacks": active, "commands": _record(destination / "stage1_registration_commands.sh"), "registration": "stack", "stack_masks": {parameter: {stack: _record(destination / "nesvor_inputs" / stack / parameter / "stack_mask.nii.gz") for stack in active} for parameter in PARAMETERS}, "t1_t2_independent": True, "value_role": "pose estimation only; q99-normalised registration pixels are never Stage-2 values", "mask_role": "explicit authoritative native dictionary valid support; zero-valued quantitative background is excluded", "immutable": True})
+        sample_masks = {parameter: destination / "nesvor_inputs" / "sax" / parameter / "stack_mask.nii.gz" for parameter in PARAMETERS}
         if "sax" not in active or any(not path.is_file() for path in sample_masks.values()):
             raise ValueError("intensity-preserving sparse route requires active SAX parameter-matched sample masks")
         write_immutable_json(destination / "manifest.json", {"schema": ROUTE_SCHEMA, "subject_id": subject_id, "prepared_root": None if validated_prepared_root is None else str(validated_prepared_root), "sparse_manifest": None if sparse is None else _record(Path(sparse["_manifest_path"])), "standardized_reuse_manifest": _record(Path(standardized_reuse_manifest)), "active_stacks": active, "selected_native_maps": selected, "stage1": _record(destination / "stage1_registration_manifest.json"), "stage2": {"schema": INPUT_SCHEMA, "purpose": "frozen Stage-1 affines plus authoritative dictionary values", "registration": "none; reconstruct --input-slices; --no-transformation-optimization", "raw_output_sampling_mask": {"policy": "explicit_parameter_matched_sax_native_support", "scope": "post_training_raw_volume_sampling_only", "training_affected": False, "registration_affected": False, "pose_optimization_affected": False, "formal_endpoint_affected": False, "sample_masks": {parameter: _record(path) for parameter, path in sample_masks.items()}}}, "no_dictionary_refit": True, "no_pose_copying": True, "code_git_sha": _git_sha(), "immutable": True})
@@ -340,7 +354,7 @@ def execute_intensity_preserving_fit_first(**kwargs: Any) -> Path:
     commands = []
     for parameter in PARAMETERS:
         target = root / "stage2_reconstruction" / parameter; target.mkdir(parents=True)
-        sample_mask = root / "nesvor_inputs" / "sax" / parameter / "stack.nii.gz"
+        sample_mask = root / "nesvor_inputs" / "sax" / parameter / "stack_mask.nii.gz"
         args = _reconstruct_args(registered / parameter / "slices", target, parameter, nesvor_executable=kwargs.get("nesvor_executable", HISTORICAL_NESVOR_EXECUTABLE_DEFAULT), device=kwargs.get("device", "-1"), sample_mask=sample_mask)
         commands.append(" ".join(shlex.quote(value) for value in args) + f" && {shlex.quote(sys.executable)} -m paper_experiments.joint_vs_2dfit.phase2_clean.fit_first_denormalize --input {shlex.quote(str(target / 'volume_normalized.nii.gz'))} --scale {SCALES[parameter]} --output {shlex.quote(str(target / 'volume_ms.nii.gz'))}")
     (root / "stage2_reconstruction_commands.sh").write_text("#!/usr/bin/env bash\nset -euo pipefail\n" + "\n".join(commands) + "\n", encoding="utf-8")

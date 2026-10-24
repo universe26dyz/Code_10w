@@ -235,16 +235,23 @@ def test_nesvor_export_replaces_only_nonfinite_native_background(tmp_path: Path)
     np.savez_compressed(native / "geometry.npz", affine_lps_rc=np.eye(4)[None], pixel_spacing_rc_mm=np.ones((1, 2)), slice_thickness_mm=np.array([8.0]))
     exported = export_nesvor_native_inputs(native, tmp_path / "export", {"t1": 2500.0, "t2": 200.0})
     for parameter, source, scale in (("t1", t1, 2500.0), ("t2", t2, 200.0)):
-        actual = np.moveaxis(nib.load(str(exported / parameter / "stack.nii.gz")).get_fdata(), 2, 0)
+        stack = nib.load(str(exported / parameter / "stack.nii.gz"))
+        mask = nib.load(str(exported / parameter / "stack_mask.nii.gz"))
+        actual = np.moveaxis(stack.get_fdata(), 2, 0)
         invalid = ~np.isfinite(source)
         assert np.isfinite(actual).all()
         assert np.array_equal(actual[invalid], np.zeros(invalid.sum()))
         assert np.allclose(actual[~invalid], (source / scale)[~invalid])
+        assert stack.shape == mask.shape
+        assert np.array_equal(stack.affine, mask.affine)
+        assert set(np.unique(mask.get_fdata())) <= {0, 1}
+        assert np.array_equal(np.moveaxis(mask.get_fdata(), 2, 0).astype(bool), ~invalid)
     original = np.load(native / "native_maps.npz")
     assert np.isnan(original["t1_ms"][0, 0, 1]) and np.isnan(original["t2_ms"][0, 0, 1])
     manifest = json.loads((exported / "manifest.json").read_text())
     assert manifest["nesvor_background_policy"] == "non-finite native dictionary pixels are exported as zero-valued background; finite matched values unchanged"
     assert manifest["nesvor_export"]["t1"]["finite_output"] is True
+    assert manifest["nesvor_export"]["t1"]["support_mask"]["path"].endswith("stack_mask.nii.gz")
 
 
 def test_baseline_execute_creates_nesvor_output_dirs_before_first_command(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

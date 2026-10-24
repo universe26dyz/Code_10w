@@ -8,13 +8,14 @@ import nibabel as nib
 import numpy as np
 
 from paper_experiments.joint_vs_2dfit.phase2_clean.fit_first_native_bundles import build_fit_first_native_prediction_bundle
+from paper_experiments.joint_vs_2dfit.phase2_clean.contracts import sha256
 
 
 def _route(root: Path, r0: Path, endpoint: Path) -> None:
     root.mkdir()
-    (root / "manifest.json").write_text(json.dumps({"schema": "phase4r_intensity_preserving_fit_first/v1", "no_dictionary_refit": True, "no_pose_copying": True}))
-    (root / "registered_quantitative_inputs_gate.json").write_text(json.dumps({"status": "REGISTERED_QUANTITATIVE_INPUTS_VALID"}))
-    (root / "final_pose_audit.json").write_text(json.dumps({"schema": "fit_first_intensity_preserving_final_pose_audit/v1", "status": "POSE_STAGE1_AND_QUANTITATIVE_STAGE2_VALID"}))
+    (root / "manifest.json").write_text(json.dumps({"schema": "phase4r_intensity_preserving_fit_first/v2", "no_dictionary_refit": True, "no_pose_copying": True}))
+    (root / "registered_quantitative_inputs_gate.json").write_text(json.dumps({"schema": "phase4r_fit_first_registered_quantitative_inputs/v2", "status": "REGISTERED_QUANTITATIVE_INPUTS_VALID"}))
+    (root / "final_pose_audit.json").write_text(json.dumps({"schema": "fit_first_intensity_preserving_final_pose_audit/v2", "status": "POSE_STAGE1_AND_QUANTITATIVE_STAGE2_VALID"}))
     registered = {"parameters": {}}
     for parameter, translation in (("t1", 1.0), ("t2", 2.0)):
         target = root / "stage2_reconstruction" / parameter; target.mkdir(parents=True)
@@ -35,7 +36,9 @@ def _route(root: Path, r0: Path, endpoint: Path) -> None:
     for parameter in ("t1", "t2"):
         target = endpoint / parameter; target.mkdir(parents=True)
         nib.save(nib.Nifti1Image(volume, np.eye(4)), target / "volume_ms.nii.gz")
-    (endpoint / "manifest.json").write_text(json.dumps({"schema": "phase4r_fixed_l100_fit_first_export_bundle/v1", "endpoint": "central"}))
+        nib.save(nib.Nifti1Image(np.zeros(volume.shape, np.uint8) if parameter == "t1" else np.ones(volume.shape, np.uint8), np.eye(4)), target / "query_effective_mask.nii.gz")
+    parameters = {parameter: {"effective_query_mask": {"path": str((endpoint / parameter / "query_effective_mask.nii.gz").resolve()), "sha256": sha256(endpoint / parameter / "query_effective_mask.nii.gz")}} for parameter in ("t1", "t2")}
+    (endpoint / "manifest.json").write_text(json.dumps({"schema": "phase4r_fixed_l100_fit_first_export_bundle/v1", "endpoint": "central", "parameters": parameters}))
 
 
 def test_intensity_preserving_bundle_uses_stage2_pose_and_endpoint_values_not_stage1_pixels(tmp_path: Path) -> None:
@@ -43,7 +46,9 @@ def test_intensity_preserving_bundle_uses_stage2_pose_and_endpoint_values_not_st
     _route(root, r0, endpoint)
     bundle = build_fit_first_native_prediction_bundle(baseline_root=root, r0_native_maps_root=r0, endpoint="central", endpoint_source_root=endpoint, output=tmp_path / "bundle")
     manifest = json.loads((bundle / "manifest.json").read_text())
-    assert manifest["schema"] == "fit_first_native_prediction_bundle/v3"
+    assert manifest["schema"] == "fit_first_native_prediction_bundle/v4"
     assert manifest["route"]["route_kind"] == "intensity_preserving_fit_first"
     assert np.load(bundle / "planes/t1/sax/group000.npz")["prediction_ms"].item() == 1.0
     assert np.load(bundle / "planes/t2/sax/group000.npz")["prediction_ms"].item() == 2.0
+    assert not np.load(bundle / "planes/t1/sax/group000.npz")["query_effective_mask"].item()
+    assert not np.load(bundle / "planes/t1/sax/group000.npz")["valid"].item()

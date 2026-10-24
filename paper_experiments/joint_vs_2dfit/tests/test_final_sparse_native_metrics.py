@@ -21,7 +21,11 @@ def _endpoint(root: Path, method: str, endpoint: str, *, subject: str = "CYJ") -
     for parameter, value in (("t1", 900.0), ("t2", 70.0)):
         target = root / (f"{parameter.upper()}_3D.nii.gz" if method == "Proposed" else f"{parameter}/volume_ms.nii.gz")
         _volume(target, value)
-    (root / "manifest.json").write_text(json.dumps({"schema": "phase4r_formal_proposed_export/v1" if method == "Proposed" else "phase4r_fixed_l100_fit_first_export_bundle/v1", "subject": subject, "condition": "L50_fold0", "method": method, "endpoint": endpoint}), encoding="utf-8")
+        if method == "Fit-first":
+            mask = root / parameter / "query_effective_mask.nii.gz"
+            _volume(mask, 1.0)
+    parameters = {} if method == "Proposed" else {parameter: {"effective_query_mask": {"path": str((root / parameter / "query_effective_mask.nii.gz").resolve()), "sha256": sha256(root / parameter / "query_effective_mask.nii.gz")}} for parameter in ("t1", "t2")}
+    (root / "manifest.json").write_text(json.dumps({"schema": "phase4r_formal_proposed_export/v1" if method == "Proposed" else "phase4r_fixed_l100_fit_first_export_bundle/v1", "subject": subject, "condition": "L50_fold0", "method": method, "endpoint": endpoint, "parameters": parameters}), encoding="utf-8")
     return root
 
 
@@ -59,6 +63,22 @@ def test_sparse_evaluator_rejects_endpoint_mismatch(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="endpoint mismatch"):
         sparse.validate_sparse_endpoint_roots(_endpoint(tmp_path / "proposed", "Proposed", "central"), _endpoint(tmp_path / "fit", "Fit-first", "psf128"), "L50_fold0")
+
+
+def test_sparse_evaluator_excludes_effective_mask_background_from_both_methods(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from paper_experiments.joint_vs_2dfit.phase2_clean import final_sparse_native_metrics as sparse
+
+    proposed, fit = _endpoint(tmp_path / "proposed", "Proposed", "central"), _endpoint(tmp_path / "fit", "Fit-first", "central")
+    manifest = tmp_path / "sparse.json"
+    manifest.write_text(json.dumps({"subject": "CYJ", "condition": "L50", "phase": 0, "status": "ELIGIBLE", "stacks": {stack: {"heldout_original_group_ids": [3]} for stack in ("2ch", "4ch")}}), encoding="utf-8")
+    cache = {"group_idx": np.array([3]), "source_support": np.ones((1, 2, 2), bool), "affine_lps_rc": np.eye(4)[None], "t1_ms": np.full((1, 2, 2), 1000.0), "t2_ms": np.full((1, 2, 2), 80.0)}
+    monkeypatch.setattr(sparse, "select_verified_native_cache_groups", lambda *_args: cache)
+    monkeypatch.setattr(sparse, "reproject_volume_to_native_plane", lambda *_args: (np.full((2, 2), 900.0), np.ones((2, 2), bool)))
+    monkeypatch.setattr(sparse, "reproject_binary_mask_to_native_plane", lambda *_args: np.array([[True, False], [True, False]]))
+    output = sparse.build_final_sparse_native_metrics(proposed_endpoint_root=proposed, fit_first_endpoint_root=fit, native_mask_root=_mask_root(tmp_path / "masks"), r0_native_maps_root=tmp_path / "r0", sparse_manifest=manifest, output=tmp_path / "out")
+    payload = json.loads((output / "aggregate_metrics.json").read_text(encoding="utf-8"))
+    assert payload["regions"]["t1"]["all_lax"]["proposed"]["support_voxels"] == 4
+    assert "fit_first_query_effective_mask" in payload["primary_support_equation"]
 
 
 def test_sparse_endpoint_validation_accepts_the_explicit_dyl2_subject(tmp_path: Path) -> None:

@@ -12,10 +12,10 @@ import numpy as np
 
 from .contracts import sha256, write_immutable_json
 from .current_native_central_component_mask import load_validated_current_native_mask_plane
-from .evaluation import _metrics, reproject_volume_to_native_plane
+from .evaluation import _metrics, reproject_binary_mask_to_native_plane, reproject_volume_to_native_plane
 from .fit_first import select_verified_native_cache_groups
 from .heldout import _heldout_ids
-from .matched_output import require_matched_endpoints
+from .matched_output import require_matched_endpoints, verified_fit_first_effective_query_mask
 
 
 def _record(path: Path) -> dict[str, str]:
@@ -82,7 +82,8 @@ def validate_sparse_endpoint_roots(proposed_root: str | Path, fit_first_root: st
         for path in paths[parameter].values():
             if not path.is_file():
                 raise FileNotFoundError(path)
-    return paths, {"endpoint": proposed["endpoint"], "proposed_manifest": _record(proposed_path), "fit_first_manifest": _record(fit_path)}
+    effective_masks = {parameter: verified_fit_first_effective_query_mask(fit_first_root, parameter) for parameter in paths}
+    return paths, {"endpoint": proposed["endpoint"], "proposed_manifest": _record(proposed_path), "fit_first_manifest": _record(fit_path), "fit_first_effective_query_masks": {parameter: record for parameter, (_path, record) in effective_masks.items()}}
 
 
 def _aggregate(values: dict[str, list[np.ndarray]]) -> dict[str, Any]:
@@ -109,6 +110,13 @@ def build_final_sparse_native_metrics(*, proposed_endpoint_root: str | Path, fit
         raise FileExistsError(f"refusing overwrite: {output}")
     volume_paths, endpoint_provenance = validate_sparse_endpoint_roots(proposed_endpoint_root, fit_first_endpoint_root, condition, subject=subject)
     images = {parameter: {name: nib.load(str(path)) for name, path in volumes.items()} for parameter, volumes in volume_paths.items()}
+    effective_masks = {parameter: nib.load(str(verified_fit_first_effective_query_mask(fit_first_endpoint_root, parameter)[0])) for parameter in volume_paths}
+    for parameter, mask in effective_masks.items():
+        fit_volume = images[parameter]["fit_first"]
+        if mask.shape != fit_volume.shape or not np.allclose(mask.affine, fit_volume.affine, atol=1e-6, rtol=0):
+            raise ValueError(f"{parameter}: formal effective query mask geometry differs from Fit-first endpoint volume")
+        if not np.all(np.isin(mask.get_fdata(), (0.0, 1.0))):
+            raise ValueError(f"{parameter}: formal effective query mask is not binary")
     output.parent.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(prefix=f".{output.name}.staging-", dir=output.parent))
     try:
@@ -128,17 +136,18 @@ def build_final_sparse_native_metrics(*, proposed_endpoint_root: str | Path, fit
                     reference = np.asarray(cache[f"{parameter}_ms"][index], float); source = np.asarray(cache["source_support"][index], bool)
                     masks, mask_provenance = load_validated_current_native_mask_plane(native_mask_root, parameter=parameter, stack=stack, original_group_idx=int(group), shape_rc=tuple(reference.shape), source_support=source)
                     proposed, proposed_valid = reproject_volume_to_native_plane(images[parameter]["proposed"].get_fdata(), images[parameter]["proposed"].affine, affine, reference.shape)
-                    fit_first, fit_valid = reproject_volume_to_native_plane(images[parameter]["fit_first"].get_fdata(), images[parameter]["fit_first"].affine, affine, reference.shape)
-                    support = np.asarray(masks["primary_native_mask"], bool) & np.isfinite(reference) & proposed_valid & fit_valid & np.isfinite(proposed) & np.isfinite(fit_first)
+                    fit_first, fit_volume_geometry_valid = reproject_volume_to_native_plane(images[parameter]["fit_first"].get_fdata(), images[parameter]["fit_first"].affine, affine, reference.shape)
+                    fit_effective_mask = reproject_binary_mask_to_native_plane(effective_masks[parameter].get_fdata(), effective_masks[parameter].affine, affine, reference.shape)
+                    support = np.asarray(masks["primary_native_mask"], bool) & np.isfinite(reference) & proposed_valid & fit_volume_geometry_valid & fit_effective_mask & np.isfinite(proposed) & np.isfinite(fit_first)
                     metrics = None if not support.any() else {name: _metrics(reference, values, support) for name, values in (("proposed", proposed), ("fit_first", fit_first))}
-                    plane["parameters"][parameter] = {"primary_mask": "primary_native_mask", "common_support_voxels": int(support.sum()), "coverage_fraction": float(support.sum() / np.asarray(masks["primary_native_mask"], bool).sum()) if np.asarray(masks["primary_native_mask"], bool).any() else 0.0, "metrics": metrics, "mask_provenance": mask_provenance}
+                    plane["parameters"][parameter] = {"primary_mask": "primary_native_mask", "common_support_voxels": int(support.sum()), "coverage_fraction": float(support.sum() / np.asarray(masks["primary_native_mask"], bool).sum()) if np.asarray(masks["primary_native_mask"], bool).any() else 0.0, "metrics": metrics, "mask_provenance": mask_provenance, "fit_first_effective_query_mask": endpoint_provenance["fit_first_effective_query_masks"][parameter], "fit_first_effective_query_mask_mapping": "nearest-neighbor order=0 to native plane"}
                     if support.any():
                         for target in (stack, "all_lax"):
                             for name, values in (("reference", reference), ("proposed", proposed), ("fit_first", fit_first)):
                                 aggregate[parameter][target][name].append(np.asarray(values)[support])
                 records.append(plane)
         regions = {parameter: {stack: _aggregate(values) for stack, values in stacks.items()} for parameter, stacks in aggregate.items()}
-        metrics_payload = {"schema": "final_sparse_native_common_support_metrics/v1", "primary_mask": "primary_native_mask", "primary_support_equation": "primary_native_mask AND finite(reference) AND proposed_endpoint_valid AND fit_first_endpoint_valid AND finite(proposed, fit_first)", "regions": regions, "per_plane_records": records, "heldout_only": True, "native_geometry": "original held-out R0 native affine; no_final_pose_lookup"}
+        metrics_payload = {"schema": "final_sparse_native_common_support_metrics/v1", "primary_mask": "primary_native_mask", "primary_support_equation": "primary_native_mask AND finite(reference) AND proposed_valid AND fit_first_volume_geometry_valid AND fit_first_query_effective_mask AND finite(proposed, fit_first)", "regions": regions, "per_plane_records": records, "heldout_only": True, "native_geometry": "original held-out R0 native affine; no_final_pose_lookup"}
         write_immutable_json(staging / "aggregate_metrics.json", metrics_payload)
         write_immutable_json(staging / "manifest.json", {"schema": "final_sparse_native_bundle_metrics/v1", "subject": subject, "condition": condition, "endpoint": endpoint_provenance["endpoint"], "endpoint_provenance": endpoint_provenance, "sparse_manifest": _record(sparse_manifest), "native_mask_manifest": _record(native_mask_root / "manifest.json"), "aggregate_metrics": _record(staging / "aggregate_metrics.json"), "primary_mask": "primary_native_mask", "heldout_only": True, "no_learned_pose": True, "no_training": True, "no_reconstruction": True})
         staging.rename(output)

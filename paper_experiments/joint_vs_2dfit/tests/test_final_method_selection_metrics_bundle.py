@@ -22,7 +22,9 @@ def _endpoint(root: Path, *, method: str, endpoint: str = "central", condition: 
         path.parent.mkdir(parents=True, exist_ok=True)
         nib.save(nib.Nifti1Image(np.full((4, 4, 4), value, np.float32), np.eye(4)), str(path))
         if method == "Fit-first":
-            parameter_manifest = {"schema": "phase4r_fixed_l100_fit_first_export/v1", "subject": "CYJ", "condition": condition, "endpoint": endpoint, "method": "Fit-first", "parameter": parameter, "training_route": "Fit-first sparse checkpoint query", "output_volume_ms": {"path": str(path.resolve()), "sha256": sha256(path)}}
+            query_mask = path.parent / "query_effective_mask.nii.gz"
+            nib.save(nib.Nifti1Image(np.ones((4, 4, 4), np.uint8), np.eye(4)), str(query_mask))
+            parameter_manifest = {"schema": "phase4r_fixed_l100_fit_first_export/v1", "subject": "CYJ", "condition": condition, "endpoint": endpoint, "method": "Fit-first", "parameter": parameter, "training_route": "Fit-first sparse checkpoint query", "output_volume_ms": {"path": str(path.resolve()), "sha256": sha256(path)}, "effective_query_mask": {"path": str(query_mask.resolve()), "sha256": sha256(query_mask)}}
             (path.parent / "manifest.json").write_text(json.dumps(parameter_manifest), encoding="utf-8")
             fit_parameters[parameter] = parameter_manifest
     if method == "Fit-first":

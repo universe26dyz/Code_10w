@@ -60,6 +60,13 @@ def test_existing_invalid_output_is_blocked_without_delete(tmp_path: Path, monke
     assert invalid.is_dir()
 
 
+def test_maskless_v3_fit_first_bundle_cannot_skip_valid(tmp_path: Path) -> None:
+    bundle = tmp_path / "fit_bundle"; bundle.mkdir()
+    (bundle / "manifest.json").write_text(json.dumps({"schema": "fit_first_native_prediction_bundle/v3"}))
+    result = runner._schema(bundle, "fit_first_native_prediction_bundle/v4")
+    assert not result.valid and result.state == "BLOCKED_EXISTING_INVALID"
+
+
 def test_commands_are_serial_gpu_and_sparse_fit_uses_subject_l100_mask(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(runner, "validate_sparse_profile_manifest", _validated)
     cases = runner.load_final5_registry(_registry(tmp_path))

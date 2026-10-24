@@ -15,9 +15,9 @@ def _result(input_slices: Path, *, frozen: bool = True, scaled: bool = True) -> 
 
 def _new_route(root: Path, *, gate: str = "REGISTERED_QUANTITATIVE_INPUTS_VALID", audit: str = "POSE_STAGE1_AND_QUANTITATIVE_STAGE2_VALID", frozen: bool = True, scaled: bool = True) -> None:
     root.mkdir()
-    (root / "manifest.json").write_text(json.dumps({"schema": "phase4r_intensity_preserving_fit_first/v1", "no_dictionary_refit": True, "no_pose_copying": True}))
-    (root / "registered_quantitative_inputs_gate.json").write_text(json.dumps({"status": gate}))
-    (root / "final_pose_audit.json").write_text(json.dumps({"schema": "fit_first_intensity_preserving_final_pose_audit/v1", "status": audit}))
+    (root / "manifest.json").write_text(json.dumps({"schema": "phase4r_intensity_preserving_fit_first/v2", "no_dictionary_refit": True, "no_pose_copying": True}))
+    (root / "registered_quantitative_inputs_gate.json").write_text(json.dumps({"schema": "phase4r_fit_first_registered_quantitative_inputs/v2", "status": gate}))
+    (root / "final_pose_audit.json").write_text(json.dumps({"schema": "fit_first_intensity_preserving_final_pose_audit/v2", "status": audit}))
     for parameter in ("t1", "t2"):
         target = root / "stage2_reconstruction" / parameter; target.mkdir(parents=True)
         (target / "model.pt").write_bytes(parameter.encode())
@@ -66,3 +66,11 @@ def test_new_route_rejects_missing_gate_and_unknown_schema(tmp_path: Path) -> No
     unknown = tmp_path / "unknown"; unknown.mkdir(); (unknown / "manifest.json").write_text(json.dumps({"schema": "unknown/v1"}))
     with pytest.raises(ValueError, match="unknown"):
         resolve_fit_first_route(unknown)
+
+
+def test_new_route_rejects_maskless_v1_route_schema(tmp_path: Path) -> None:
+    root = tmp_path / "old"; _new_route(root)
+    manifest = json.loads((root / "manifest.json").read_text()); manifest["schema"] = "phase4r_intensity_preserving_fit_first/v1"
+    (root / "manifest.json").write_text(json.dumps(manifest))
+    with pytest.raises(ValueError, match="unknown"):
+        resolve_fit_first_route(root)

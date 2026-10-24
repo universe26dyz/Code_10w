@@ -931,7 +931,7 @@ def _render_native_stack(config: Mapping[str, Any], output: Path, inputs: dict[s
                 root = Path(configured["fit_first_native_bundle"])
                 manifest_path = root / "manifest.json"
                 manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-                if manifest.get("schema") != "fit_first_native_prediction_bundle/v2" or manifest.get("endpoint") != config["endpoint"]:
+                if manifest.get("schema") not in ("fit_first_native_prediction_bundle/v2", "fit_first_native_prediction_bundle/v4") or manifest.get("endpoint") != config["endpoint"]:
                     raise ValueError(f"{method}: Fit-first final-pose bundle schema mismatch")
                 method_sources[method] = ("fit_first_native_bundle", root)
                 inputs.setdefault(f"{method}_fit_first_native_bundle_manifest", _file_record(manifest_path))
