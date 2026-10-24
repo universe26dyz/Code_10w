@@ -142,12 +142,13 @@ def select_frozen_native_maps(native_root: str | Path, sparse_manifest: str | Pa
     return selected
 
 
-def build_exp1_1_nesvor_commands(nesvor_inputs: list[str | Path], output: str | Path, *, device: str | int, nesvor_executable: str | Path) -> list[str]:
-    """Return the historical independent one-stage T1/T2 commands without masks."""
-    return build_independent_nesvor_commands(nesvor_inputs, output, device=device, nesvor_executable=nesvor_executable)
+def build_exp1_1_nesvor_commands(nesvor_inputs: list[str | Path], output: str | Path, *, device: str | int,
+                                 nesvor_executable: str | Path, sample_masks: dict[str, str | Path] | None = None) -> list[str]:
+    """Return independent one-stage T1/T2 commands with optional output sample masks."""
+    return build_independent_nesvor_commands(nesvor_inputs, output, device=device, nesvor_executable=nesvor_executable, sample_masks=sample_masks)
 
 
-def _finalize(output: Path, profile: dict[str, Any], selected_root: Path, commands: list[str]) -> Path:
+def _finalize(output: Path, profile: dict[str, Any], selected_root: Path, commands: list[str], output_sampling: dict[str, Any]) -> Path:
     parameters = {}
     for parameter in ("t1", "t2"):
         target = output / "nesvor" / parameter
@@ -163,6 +164,7 @@ def _finalize(output: Path, profile: dict[str, Any], selected_root: Path, comman
         "sparse_manifest": _sparse_provenance(profile), "dictionary_refit": False,
         "no_dictionary_refit": True, "independent_t1_t2": True, "transformation_optimization_enabled": True,
         "no_slice_scale": True, "active_stacks": [stack for stack in STACKS if (selected_root / stack).is_dir()],
+        "output_sampling": output_sampling,
         "selected_native_maps": _record(selected_manifest), "normalization": {"t1_divide_multiply_ms": 2500, "t2_divide_multiply_ms": 200},
         "commands": _record(output / "commands.sh"), "exact_nesvor_commands": commands,
         "nesvor_version": "nesvor_v5_128_w1", "parameters": parameters,
@@ -184,7 +186,23 @@ def run_exp1_1_fit_first(*, subject: str, sparse_manifest: str | Path, standardi
         exports = []
         for stack in active:
             exports.append(export_nesvor_native_inputs(output / "selected_native_maps" / stack, output / "nesvor_inputs" / stack, NORMALIZATION))
-        commands = build_exp1_1_nesvor_commands(exports, output / "nesvor", device=device, nesvor_executable=nesvor_executable)
+        sample_masks = None
+        output_sampling: dict[str, Any] = {
+            "policy": "nesvor_default_estimated_mask",
+            "scope": "NeSVoR output INR sampling only; not a reconstruction/training input mask",
+        }
+        if len(active) == 1:
+            single_stack = active[0]
+            sample_masks = {
+                parameter: output / "nesvor_inputs" / single_stack / parameter / "stack_mask.nii.gz"
+                for parameter in ("t1", "t2")
+            }
+            output_sampling = {
+                "policy": "explicit_single_stack_native_finite_support",
+                "scope": "NeSVoR output INR sampling only; not a reconstruction/training input mask",
+                "sample_masks": {parameter: _record(path) for parameter, path in sample_masks.items()},
+            }
+        commands = build_exp1_1_nesvor_commands(exports, output / "nesvor", device=device, nesvor_executable=nesvor_executable, sample_masks=sample_masks)
         (output / "commands.sh").write_text("\n".join(commands) + "\n", encoding="utf-8")
         write_immutable_json(output / "input_manifest.json", {"schema": SCHEMA, "subject": subject, "case_id": profile["case_id"], "dictionary_refit": False, "sparse_manifest": _sparse_provenance(profile), "selected_native_maps": _record(output / "selected_native_maps" / "manifest.json"), "commands": _record(output / "commands.sh")})
         if execute:
@@ -192,7 +210,7 @@ def run_exp1_1_fit_first(*, subject: str, sparse_manifest: str | Path, standardi
                 (output / "nesvor" / parameter).mkdir(parents=True, exist_ok=False)
             for command in commands:
                 subprocess.run(command, shell=True, check=True)
-            _finalize(output, profile, output / "selected_native_maps", commands)
+            _finalize(output, profile, output / "selected_native_maps", commands, output_sampling)
         return output
     except BaseException:
         raise

@@ -247,8 +247,22 @@ def _exp1_1(root: Path, manifest: dict[str, Any]) -> FitFirstFormalRoute:
     if not _matches_record(command, root / "commands.sh") or selected_path is None or not _matches_record(selected, selected_path):
         raise ValueError("Experiment 1.1 command/selected-map provenance mismatch")
     command_text = (root / "commands.sh").read_text(encoding="utf-8")
-    if "--registration stack" not in command_text or "--no-transformation-optimization" in command_text or "--sample-mask" in command_text:
+    if "--registration stack" not in command_text or "--no-transformation-optimization" in command_text:
         raise ValueError("Experiment 1.1 command contradicts historical one-stage semantics")
+    output_sampling = manifest.get("output_sampling")
+    expected_scope = "NeSVoR output INR sampling only; not a reconstruction/training input mask"
+    if len(active_stacks) == 1:
+        if not isinstance(output_sampling, dict) or output_sampling.get("scope") != expected_scope:
+            raise ValueError("Experiment 1.1 single-stack output-sampling provenance is absent")
+        masks = output_sampling.get("sample_masks")
+        if output_sampling.get("policy") != "explicit_single_stack_native_finite_support" or not isinstance(masks, dict):
+            raise ValueError("Experiment 1.1 single-stack output-sampling provenance is invalid")
+        for parameter in PARAMETERS:
+            mask = root / "nesvor_inputs" / active_stacks[0] / parameter / "stack_mask.nii.gz"
+            if not _matches_record(masks.get(parameter), mask) or f"--sample-mask {mask}" not in command_text:
+                raise ValueError(f"Experiment 1.1 {parameter} single-stack output-sampling mask mismatch")
+    elif "--sample-mask" in command_text or (output_sampling is not None and (not isinstance(output_sampling, dict) or output_sampling.get("policy") != "nesvor_default_estimated_mask" or output_sampling.get("scope") != expected_scope)):
+        raise ValueError("Experiment 1.1 multi-stack output-sampling provenance is invalid")
     parameters = manifest.get("parameters")
     if not isinstance(parameters, dict):
         raise ValueError("Experiment 1.1 parameter provenance is absent")

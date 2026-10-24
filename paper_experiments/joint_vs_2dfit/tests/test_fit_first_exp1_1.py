@@ -71,14 +71,35 @@ def test_frozen_native_map_selection_uses_manifest_ids_and_never_refits(tmp_path
 
 def test_exp1_1_commands_are_independent_one_stage_without_sample_masks(tmp_path: Path) -> None:
     from paper_experiments.joint_vs_2dfit.phase2_clean.fit_first_exp1_1 import build_exp1_1_nesvor_commands
+    from paper_experiments.joint_vs_2dfit.phase2_clean.fit_first import build_independent_nesvor_commands
 
     inputs = [tmp_path / "selected" / "sax", tmp_path / "selected" / "2ch"]
     commands = build_exp1_1_nesvor_commands(inputs, tmp_path / "output" / "nesvor", device="1", nesvor_executable="nesvor")
 
+    assert commands == build_independent_nesvor_commands(inputs, tmp_path / "output" / "nesvor", device="1", nesvor_executable="nesvor")
     assert len(commands) == 2
     assert all("--registration stack" in command and "--no-slice-scale" in command for command in commands)
     assert all("--no-transformation-optimization" not in command and "--sample-mask" not in command for command in commands)
     assert all("--n-iter 10000" in command and "--n-samples 256" in command and "--n-inference-samples 128" in command for command in commands)
+    assert "--scale 2500" in commands[0] and "--scale 200" in commands[1]
+
+
+def test_exp1_1_single_stack_commands_use_only_explicit_output_sampling_masks(tmp_path: Path) -> None:
+    from paper_experiments.joint_vs_2dfit.phase2_clean.fit_first_exp1_1 import build_exp1_1_nesvor_commands
+
+    masks = {}
+    for parameter in ("t1", "t2"):
+        mask = tmp_path / "nesvor_inputs" / "sax" / parameter / "stack_mask.nii.gz"
+        mask.parent.mkdir(parents=True, exist_ok=True); mask.write_bytes(parameter.encode())
+        masks[parameter] = mask
+    commands = build_exp1_1_nesvor_commands([tmp_path / "selected" / "sax"], tmp_path / "output" / "nesvor", device="1", nesvor_executable="nesvor", sample_masks=masks)
+
+    assert len(commands) == 2
+    for parameter, command in zip(("t1", "t2"), commands):
+        assert f"--sample-mask {masks[parameter]}" in command
+        assert "--registration stack" in command and "--no-slice-scale" in command
+        assert "--no-transformation-optimization" not in command
+        assert "--n-iter 10000" in command and "--n-samples 256" in command and "--n-inference-samples 128" in command
     assert "--scale 2500" in commands[0] and "--scale 200" in commands[1]
 
 
@@ -154,6 +175,11 @@ def test_execute_creates_nesvor_output_dirs_and_final_manifest_admits(
     manifest = json.loads((output / "manifest.json").read_text())
     assert manifest["sparse_manifest"]["generator_git_sha"] == "a" * 40
     assert tuple(manifest["active_stacks"]) == expected_stacks
+    expected_policy = "explicit_single_stack_native_finite_support" if len(expected_stacks) == 1 else "nesvor_default_estimated_mask"
+    assert manifest["output_sampling"]["policy"] == expected_policy
+    assert manifest["output_sampling"]["scope"] == "NeSVoR output INR sampling only; not a reconstruction/training input mask"
+    if len(expected_stacks) == 1:
+        assert set(manifest["output_sampling"]["sample_masks"]) == {"t1", "t2"}
     record = runner.CaseRecord("CYJ", case_id, profile_id, fold_id, fold_count, sparse, _sha256(sparse), "a" * 40, tmp_path)
     result = runner.validate_fit_first_reconstruction(output, record)
     assert result.valid and result.state == "SKIP_VALID"
