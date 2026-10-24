@@ -33,6 +33,20 @@ def _record(path: Path) -> dict[str, str]:
     return {"path": str(path.resolve()), "sha256": sha256(path)}
 
 
+def _sparse_provenance(profile: dict[str, Any]) -> dict[str, str]:
+    """Build one fail-closed sparse identity used by input and final manifests."""
+    path = Path(str(profile.get("_manifest_path", "")))
+    expected_sha, generator_git_sha = profile.get("_manifest_sha256"), profile.get("git_sha")
+    if not path.is_file() or not isinstance(expected_sha, str) or len(expected_sha) != 64 or any(char not in "0123456789abcdef" for char in expected_sha):
+        raise ValueError("formal Fit-first profile lacks a valid sparse-manifest SHA256")
+    if not isinstance(generator_git_sha, str) or len(generator_git_sha) != 40 or any(char not in "0123456789abcdef" for char in generator_git_sha):
+        raise ValueError("formal Fit-first profile lacks a valid sparse generator git SHA")
+    record = _record(path)
+    if record["sha256"] != expected_sha:
+        raise ValueError("formal Fit-first sparse-manifest SHA256 disagrees with validated profile")
+    return {**record, "generator_git_sha": generator_git_sha}
+
+
 def _read_json(path: Path) -> dict[str, Any]:
     if not path.is_file():
         raise FileNotFoundError(path)
@@ -116,7 +130,7 @@ def select_frozen_native_maps(native_root: str | Path, sparse_manifest: str | Pa
         write_immutable_json(staging / "manifest.json", {
             "schema": SELECTION_SCHEMA, "subject": profile["subject"], "case_id": profile["case_id"],
             "profile_id": profile["profile_id"], "fold_id": profile.get("fold_id"), "fold_count": profile.get("fold_count"),
-            "sparse_manifest": _record(manifest_path), "dictionary_refit": False,
+            "sparse_manifest": _sparse_provenance(profile), "dictionary_refit": False,
             "selection_semantics": "sparse_manifest retained_original_group_ids matched directly to frozen native_maps group_idx",
             "stacks": records,
         })
@@ -146,7 +160,7 @@ def _finalize(output: Path, profile: dict[str, Any], selected_root: Path, comman
         "schema": SCHEMA, "scientific_route": "CYJ Experiment 1.1 mapping-to-one-stage-NeSVoR",
         "subject": profile["subject"], "case_id": profile["case_id"], "profile_id": profile["profile_id"],
         "fold_id": profile.get("fold_id"), "fold_count": profile.get("fold_count"),
-        "sparse_manifest": _record(Path(profile["_manifest_path"])), "dictionary_refit": False,
+        "sparse_manifest": _sparse_provenance(profile), "dictionary_refit": False,
         "no_dictionary_refit": True, "independent_t1_t2": True, "transformation_optimization_enabled": True,
         "no_slice_scale": True, "active_stacks": [stack for stack in STACKS if (selected_root / stack).is_dir()],
         "selected_native_maps": _record(selected_manifest), "normalization": {"t1_divide_multiply_ms": 2500, "t2_divide_multiply_ms": 200},
@@ -172,8 +186,10 @@ def run_exp1_1_fit_first(*, subject: str, sparse_manifest: str | Path, standardi
             exports.append(export_nesvor_native_inputs(output / "selected_native_maps" / stack, output / "nesvor_inputs" / stack, NORMALIZATION))
         commands = build_exp1_1_nesvor_commands(exports, output / "nesvor", device=device, nesvor_executable=nesvor_executable)
         (output / "commands.sh").write_text("\n".join(commands) + "\n", encoding="utf-8")
-        write_immutable_json(output / "input_manifest.json", {"schema": SCHEMA, "subject": subject, "case_id": profile["case_id"], "dictionary_refit": False, "selected_native_maps": _record(output / "selected_native_maps" / "manifest.json"), "commands": _record(output / "commands.sh")})
+        write_immutable_json(output / "input_manifest.json", {"schema": SCHEMA, "subject": subject, "case_id": profile["case_id"], "dictionary_refit": False, "sparse_manifest": _sparse_provenance(profile), "selected_native_maps": _record(output / "selected_native_maps" / "manifest.json"), "commands": _record(output / "commands.sh")})
         if execute:
+            for parameter in ("t1", "t2"):
+                (output / "nesvor" / parameter).mkdir(parents=True, exist_ok=False)
             for command in commands:
                 subprocess.run(command, shell=True, check=True)
             _finalize(output, profile, output / "selected_native_maps", commands)

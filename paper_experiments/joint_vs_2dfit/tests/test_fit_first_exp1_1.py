@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 
 def _sha256(path: Path) -> str:
@@ -51,6 +52,7 @@ def test_frozen_native_map_selection_uses_manifest_ids_and_never_refits(tmp_path
     fourch_source, _, _ = _native_stack(native, "4ch", [4, 5])
     sparse = _profile(tmp_path, {"sax": sax_source, "2ch": twoch_source, "4ch": fourch_source}, {"sax": [0, 1], "2ch": [10, 30], "4ch": []})
     profile = json.loads(sparse.read_text())
+    profile.update({"_manifest_path": str(sparse.resolve()), "_manifest_sha256": _sha256(sparse)})
     monkeypatch.setattr(route, "validate_sparse_profile_manifest", lambda *_args, **_kwargs: profile)
     monkeypatch.setattr(route, "fit_native", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("formal frozen-map route must not refit")), raising=False)
 
@@ -91,9 +93,49 @@ def test_l100_selection_preserves_all_standardized_12_15_10_maps(tmp_path: Path,
         sources[stack], retained[stack] = source, list(range(count))
     sparse = _profile(tmp_path, sources, retained)
     profile = json.loads(sparse.read_text())
-    profile.update({"profile_id": "L100", "case_id": "L100", "fold_id": None, "fold_count": 1})
+    profile.update({"profile_id": "L100", "case_id": "L100", "fold_id": None, "fold_count": 1, "_manifest_path": str(sparse.resolve()), "_manifest_sha256": _sha256(sparse)})
     monkeypatch.setattr(route, "validate_sparse_profile_manifest", lambda *_args, **_kwargs: profile)
 
     selected = route.select_frozen_native_maps(native, sparse, tmp_path / "selected", subject="CYJ")
 
     assert {stack: len(groups) for stack, groups in selected.items()} == {"sax": 12, "2ch": 15, "4ch": 10}
+
+
+def test_execute_creates_nesvor_output_dirs_and_final_manifest_admits(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Exercise the actual producer finalization and Final5 admission together."""
+    from paper_experiments.joint_vs_2dfit.phase2_clean import fit_first_exp1_1 as route
+    from paper_experiments.joint_vs_2dfit.phase2_clean import final5_batch_runner as runner
+    from paper_experiments.joint_vs_2dfit.phase2_clean.fit_first_route_contract import SCMR_ONE_STAGE_FIXED_ARGS
+
+    native = tmp_path / "native"
+    sources = {}
+    for stack, groups in (("sax", [0]), ("2ch", [0]), ("4ch", [0])):
+        source, _maps, _values = _native_stack(native, stack, groups)
+        sources[stack] = source
+    sparse = _profile(tmp_path, sources, {stack: [0] for stack in sources})
+    profile = json.loads(sparse.read_text())
+    profile.update({"_manifest_path": str(sparse.resolve()), "_manifest_sha256": _sha256(sparse)})
+    monkeypatch.setattr(route, "validate_sparse_profile_manifest", lambda *_args, **_kwargs: profile)
+    output = tmp_path / "fit"
+
+    def fake_run(command: str, *, shell: bool, check: bool) -> None:
+        assert shell and check
+        assert (output / "nesvor" / "t1").is_dir()
+        assert (output / "nesvor" / "t2").is_dir()
+        parameter = "t1" if "/nesvor/t1/" in command else "t2"
+        target = output / "nesvor" / parameter
+        (target / "model.pt").write_bytes(parameter.encode())
+        (target / "slices").mkdir()
+        (target / "slices" / "0.nii.gz").write_bytes(b"slice")
+        (target / "volume_ms.nii.gz").write_bytes(b"volume")
+        inputs = [str((output / "nesvor_inputs" / stack / parameter / "stack.nii.gz").resolve()) for stack in ("sax", "2ch", "4ch")]
+        (target / "result.json").write_text(json.dumps({"input_stacks": inputs, "thicknesses": [8, 8, 8], "registration": "stack", "no_slice_scale": True, "no_transformation_optimization": False, **SCMR_ONE_STAGE_FIXED_ARGS}))
+
+    monkeypatch.setattr(route.subprocess, "run", fake_run)
+    route.run_exp1_1_fit_first(subject="CYJ", sparse_manifest=sparse, standardized_native_dictionary_root=native, output=output, nesvor_executable="nesvor", device="0", expected_generator_git_sha="a" * 40, expected_manifest_sha256=_sha256(sparse), execute=True)
+
+    manifest = json.loads((output / "manifest.json").read_text())
+    assert manifest["sparse_manifest"]["generator_git_sha"] == "a" * 40
+    record = runner.CaseRecord("CYJ", "L50_fold0", "L50", 0, 2, sparse, _sha256(sparse), "a" * 40, tmp_path)
+    result = runner.validate_fit_first_reconstruction(output, record)
+    assert result.valid and result.state == "SKIP_VALID"

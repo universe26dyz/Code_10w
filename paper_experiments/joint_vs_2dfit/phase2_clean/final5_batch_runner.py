@@ -157,12 +157,22 @@ def validate_proposed_reconstruction(path: Path, record: CaseRecord) -> Validati
     if not all(item.is_file() for item in required) or not manifest.is_file():
         return _invalid(path, "Proposed output is incomplete")
     data = _read(manifest)
-    samples = data.get("training_psf_samples", data.get("route", {}).get("sampling", {}).get("shared_training_psf_samples"))
-    if data.get("experiment_id") != "Q002S640_B6_roi_same_anchor_mse" or int(samples or -1) != 8:
+    route = data.get("route") if isinstance(data.get("route"), dict) else {}
+    sampling = route.get("sampling") if isinstance(route.get("sampling"), dict) else {}
+    samples = data.get("training_psf_samples")
+    if data.get("experiment_id") != "Q002S640_B6_roi_same_anchor_mse" or data.get("anchor_batch_size") != 640 or samples != 8 or sampling.get("shared_training_psf_samples") != 8:
         return _invalid(path, "Proposed route is not Q002S640/K8")
-    if data.get("subject", record.subject) != record.subject or data.get("case_id", data.get("condition", record.case_id)) not in (record.case_id, "L100_fold0" if record.case_id == "L100" else record.case_id):
+    if data.get("subject_id") != record.subject or ("subject" in data and data["subject"] != record.subject):
         return _invalid(path, "Proposed subject/case identity mismatch")
-    if data.get("endpoint_policy", "central_only") != "central_only":
+    if data.get("profile_id") != record.profile_id or data.get("case_id") != record.case_id or ("fold_id" in data and data["fold_id"] != record.fold_id):
+        return _invalid(path, "Proposed subject/case identity mismatch")
+    sparse = data.get("sparse_manifest")
+    if not isinstance(sparse, dict) or Path(str(sparse.get("path", ""))).resolve() != record.sparse_manifest.resolve() or sparse.get("sha256") != record.sparse_manifest_sha256 or sparse.get("generator_git_sha") != record.generator_git_sha:
+        return _invalid(path, "Proposed sparse-manifest provenance mismatch")
+    dependencies = data.get("dependency_sha256")
+    if not isinstance(dependencies, dict) or dependencies.get("B6_model") != PROPOSED_B6_SHA256 or dependencies.get("frozen_decoder") != DECODER_SHA256 or dependencies.get("protocol") != PROTOCOL_SHA256:
+        return _invalid(path, "Proposed frozen dependency provenance mismatch")
+    if data.get("endpoint_policy") != "central_only":
         return _invalid(path, "Proposed endpoint policy is not central_only")
     return ValidationResult(True, "SKIP_VALID", "valid Q002S640/K8 central-only reconstruction")
 

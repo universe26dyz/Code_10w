@@ -65,6 +65,62 @@ def test_existing_invalid_output_is_blocked_without_delete(tmp_path: Path, monke
     assert invalid.is_dir()
 
 
+def _proposed_manifest(root: Path, record: runner.CaseRecord) -> dict[str, object]:
+    root.mkdir(parents=True, exist_ok=True)
+    for name in ("model.pt", "T1_3D.nii.gz", "T2_3D.nii.gz", "support_mask_3D.nii.gz"):
+        (root / name).write_bytes(name.encode())
+    return {
+        "experiment_id": "Q002S640_B6_roi_same_anchor_mse", "subject_id": record.subject,
+        "profile_id": record.profile_id, "case_id": record.case_id, "fold_id": record.fold_id,
+        "anchor_batch_size": 640, "training_psf_samples": 8, "endpoint_policy": "central_only",
+        "route": {"sampling": {"shared_training_psf_samples": 8}},
+        "sparse_manifest": {"path": str(record.sparse_manifest.resolve()), "sha256": record.sparse_manifest_sha256, "generator_git_sha": record.generator_git_sha},
+        "dependency_sha256": {"B6_model": runner.PROPOSED_B6_SHA256, "frozen_decoder": runner.DECODER_SHA256, "protocol": runner.PROTOCOL_SHA256},
+    }
+
+
+def test_proposed_resume_validator_admits_only_complete_final5_provenance(tmp_path: Path) -> None:
+    sparse = tmp_path / "sparse.json"; sparse.write_text("{}")
+    record = runner.CaseRecord("CYJ", "L50_fold0", "L50", 0, 2, sparse, runner.sha256(sparse), "a" * 40, tmp_path)
+    root = tmp_path / "proposed"
+    (root / "experiment_manifest.json").parent.mkdir(parents=True)
+    (root / "experiment_manifest.json").write_text(json.dumps(_proposed_manifest(root, record)))
+    result = runner.validate_proposed_reconstruction(root, record)
+    assert result.valid and result.state == "SKIP_VALID"
+
+
+@pytest.mark.parametrize(("field", "value"), [
+    ("subject_id", "DYZ"), ("case_id", "L50_fold1"),
+    ("sparse_manifest.path", "/wrong/sparse.json"), ("sparse_manifest.sha256", "0" * 64),
+    ("sparse_manifest.generator_git_sha", "0" * 40), ("dependency_sha256.B6_model", "0" * 64),
+    ("dependency_sha256.frozen_decoder", "0" * 64), ("dependency_sha256.protocol", "0" * 64),
+    ("anchor_batch_size", 64), ("training_psf_samples", 1), ("endpoint_policy", "legacy"),
+    ("experiment_id", "Q005S640_K4_B6_roi_same_anchor_mse"),
+])
+def test_proposed_resume_validator_rejects_each_missing_or_wrong_final5_identity(tmp_path: Path, field: str, value: object) -> None:
+    sparse = tmp_path / "sparse.json"; sparse.write_text("{}")
+    record = runner.CaseRecord("CYJ", "L50_fold0", "L50", 0, 2, sparse, runner.sha256(sparse), "a" * 40, tmp_path)
+    root = tmp_path / "proposed"; manifest = _proposed_manifest(root, record)
+    if "." in field:
+        parent, child = field.split("."); manifest[parent][child] = value
+    else:
+        manifest[field] = value
+    (root / "experiment_manifest.json").write_text(json.dumps(manifest))
+    result = runner.validate_proposed_reconstruction(root, record)
+    assert not result.valid and result.state == "BLOCKED_EXISTING_INVALID"
+
+
+@pytest.mark.parametrize("field", ("subject_id", "profile_id", "case_id", "anchor_batch_size", "training_psf_samples", "endpoint_policy", "sparse_manifest", "dependency_sha256"))
+def test_proposed_resume_validator_never_admits_missing_required_provenance(tmp_path: Path, field: str) -> None:
+    sparse = tmp_path / "sparse.json"; sparse.write_text("{}")
+    record = runner.CaseRecord("CYJ", "L50_fold0", "L50", 0, 2, sparse, runner.sha256(sparse), "a" * 40, tmp_path)
+    root = tmp_path / "proposed"; manifest = _proposed_manifest(root, record)
+    manifest.pop(field)
+    (root / "experiment_manifest.json").write_text(json.dumps(manifest))
+    result = runner.validate_proposed_reconstruction(root, record)
+    assert not result.valid and result.state == "BLOCKED_EXISTING_INVALID"
+
+
 def test_pre_scmr_fit_first_bundle_v4_cannot_skip_valid(tmp_path: Path) -> None:
     record = runner.CaseRecord("CYJ", "L100", "L100", None, 1, tmp_path / "sparse.json", "a" * 64, "b" * 40, tmp_path)
     bundle = runner._paths(tmp_path / "final", record)["fit_bundle"]; bundle.mkdir(parents=True)
