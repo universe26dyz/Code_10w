@@ -68,6 +68,10 @@ def test_commands_are_serial_gpu_and_sparse_fit_uses_subject_l100_mask(tmp_path:
     assert commands["proposed_reconstruction"][0] == "python"
     assert commands["proposed_reconstruction"][commands["proposed_reconstruction"].index("--device") + 1] == "cuda:0"
     assert commands["fit_first_reconstruction"]["env"]["DEVICE"] == "0"
+    assert "--signal-simulator" in commands["proposed_reconstruction"]
+    assert "--expected-decoder-sha256" not in commands["proposed_reconstruction"]
+    for flag in ("--expected-b6-model-sha256", "--expected-protocol-sha256", "--expected-sparse-generator-git-sha", "--expected-sparse-manifest-sha256"):
+        assert flag in commands["proposed_reconstruction"]
     assert "central_only" in commands["proposed_reconstruction"]
     assert set(commands) == {"proposed_reconstruction", "fit_first_reconstruction"}
     assert runner.MAX_GPU_JOBS == 1
@@ -97,3 +101,18 @@ def test_sparse_fit_first_endpoint_is_direct_dispatch(tmp_path: Path, monkeypatc
     monkeypatch.setattr(runner, "_run_direct_stage", lambda stage, *_args, **_kwargs: calls.append(("direct", stage)))
     runner.execute_batch(tmp_path / "registry.json", tmp_path / "final", device="0", python="python", nesvor="nesvor", subject="CYJ", case="L50_fold0")
     assert ("direct", "fit_first_endpoint") in calls and ("subprocess", "fit_first_endpoint") not in calls
+
+
+def test_sparse_metric_requires_l100_mask_and_both_case_endpoints(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(runner, "validate_sparse_profile_manifest", _validated)
+    monkeypatch.setattr(runner, "validate_proposed_reconstruction", lambda path, record: runner.ValidationResult(record.case_id != "L50_fold0", "SKIP_VALID" if record.case_id != "L50_fold0" else "READY", "test"))
+    monkeypatch.setattr(runner, "validate_fit_first_reconstruction", lambda _path, _record: runner.ValidationResult(True, "SKIP_VALID", "test"))
+    def schema(path: Path, expected: str) -> runner.ValidationResult:
+        if expected == "final_sparse_native_bundle_metrics/v1":
+            return runner.ValidationResult(False, "READY", "metric absent")
+        if expected == "phase4r_formal_proposed_export/v1" and "L50_fold0" in str(path):
+            return runner.ValidationResult(False, "READY", "endpoint absent")
+        return runner.ValidationResult(True, "SKIP_VALID", "test")
+    monkeypatch.setattr(runner, "_schema", schema)
+    plan = runner.build_batch_plan(_registry(tmp_path), tmp_path / "final")
+    assert plan["cases"]["CYJ/L50_fold0"]["stages"]["sparse_metrics"]["state"] == "BLOCKED_DEPENDENCY"
