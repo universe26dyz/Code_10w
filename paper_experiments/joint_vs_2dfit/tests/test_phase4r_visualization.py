@@ -41,6 +41,21 @@ def test_one_crop_and_support_are_used_for_every_panel() -> None:
     assert all(np.array_equal(panel.mask, panels["native"].mask) for panel in panels.values())
 
 
+def test_final5_paired_support_requires_primary_mask_and_both_native_bundle_validities() -> None:
+    reference = np.array([[1000.0, 1000.0], [np.nan, 1000.0]])
+    proposed = np.array([[1001.0, np.nan], [1001.0, 1001.0]])
+    fit_first = np.full((2, 2), 999.0)
+    support = viz.final5_paired_display_support(
+        reference, proposed, fit_first, np.ones((2, 2), bool),
+        np.array([[True, True], [True, False]]),
+        np.array([[True, True], [True, True]]),
+        np.array([[True, True], [False, True]]),
+    )
+    assert np.array_equal(support, np.array([[True, False], [False, False]]))
+    panels, _ = viz.prepare_native_comparison_panels(reference, proposed, fit_first, support)
+    assert all(np.array_equal(panel.mask, support) for panel in panels.values())
+
+
 def test_display_support_keeps_valid_foreground_outside_myocardium() -> None:
     reference = np.full((5, 5), 1000.0)
     proposed, fit_first = reference + 10.0, reference - 10.0

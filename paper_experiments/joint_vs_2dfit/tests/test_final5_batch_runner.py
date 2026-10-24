@@ -157,6 +157,7 @@ def _write_fit_first_bundle_inputs(root: Path, record: runner.CaseRecord) -> tup
     bundle_manifest.write_text(json.dumps({
         "schema": "fit_first_native_prediction_bundle/v6",
         "endpoint": "central",
+        "effective_mask_contract": runner.FIT_FIRST_NATIVE_EFFECTIVE_MASK_CONTRACT,
         "endpoint_source_manifest": _fit_bundle_record(endpoint_manifest),
         "route_manifest": _fit_bundle_record(fit_manifest),
         "route": {"route_kind": "exp1_1_fit_first", "route_schema": "phase4r_exp1_1_fit_first/v1", "source_fit_first_root": str(paths["fit_first"].resolve())},
@@ -184,6 +185,16 @@ def test_stale_v6_fit_first_bundle_upstream_provenance_is_blocked(tmp_path: Path
     monkeypatch.setattr(runner, "resolve_fit_first_route", lambda path: _exp1_1_route(Path(path)))
     result = runner.validate_fit_first_native_bundle(bundle_manifest.parent, record, root)
     assert not result.valid and result.state == "BLOCKED_EXISTING_INVALID"
+
+
+def test_v6_fit_first_bundle_rejects_wrong_effective_mask_contract(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    record = runner.CaseRecord("CYJ", "L100", "L100", None, 1, tmp_path / "sparse.json", "a" * 64, "b" * 40, tmp_path)
+    root = tmp_path / "final"; _fit_manifest, _endpoint_manifest, bundle_manifest = _write_fit_first_bundle_inputs(root, record)
+    payload = json.loads(bundle_manifest.read_text(encoding="utf-8")); payload["effective_mask_contract"] = "linear interpolation"
+    bundle_manifest.write_text(json.dumps(payload), encoding="utf-8")
+    monkeypatch.setattr(runner, "resolve_fit_first_route", lambda path: _exp1_1_route(Path(path)))
+    result = runner.validate_fit_first_native_bundle(bundle_manifest.parent, record, root)
+    assert not result.valid and "effective-query-mask" in result.reason
 
 
 def test_plan_blocks_stale_fit_first_bundle_before_execute(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -40,6 +40,7 @@ FIT_FIRST_PARAMETER_ENDPOINT_SCHEMA = "phase4r_fixed_l100_fit_first_export/v2"
 L100_METRIC_SCHEMA = "final_pose_native_bundle_metrics/v5"
 SPARSE_METRIC_SCHEMA = "final_sparse_native_bundle_metrics/v2"
 FIT_FIRST_COMMON_SUPPORT_TERM = "fit_first_query_effective_mask"
+FIT_FIRST_NATIVE_EFFECTIVE_MASK_CONTRACT = "formal endpoint effective query mask SHA-verified and mapped to each native plane with nearest-neighbour order=0; valid = volume_geometry_valid AND query_effective_mask AND finite(prediction)"
 SUBPROCESS_STAGES = ("proposed_reconstruction", "fit_first_reconstruction")
 DIRECT_STAGES = ("proposed_endpoint", "fit_first_endpoint", "proposed_native_bundle", "fit_first_native_bundle", "l100_native_support", "current_native_mask", "l100_metrics", "sparse_metrics")
 PROPOSED_B6 = "/data/dengyz/dataset/Code_10w_v1/Code_10w_runs/CYJ_decoder_comparison_20260924_clean_v1/runs/frozen_mlp_B6/model.pt"
@@ -258,6 +259,8 @@ def validate_fit_first_native_bundle(path: Path, record: CaseRecord, root: Path)
         route_manifest = paths["fit_first"] / "manifest.json"
         if manifest.get("schema") != "fit_first_native_prediction_bundle/v6" or manifest.get("endpoint") != "central":
             return _invalid(path, "Fit-first native bundle schema/endpoint mismatch")
+        if manifest.get("effective_mask_contract") != FIT_FIRST_NATIVE_EFFECTIVE_MASK_CONTRACT:
+            return _invalid(path, "Fit-first native bundle effective-query-mask contract mismatch")
         if not _matches_record(manifest.get("endpoint_source_manifest"), endpoint_manifest):
             return _invalid(path, "Fit-first native bundle endpoint provenance mismatch")
         route = resolve_fit_first_route(paths["fit_first"])

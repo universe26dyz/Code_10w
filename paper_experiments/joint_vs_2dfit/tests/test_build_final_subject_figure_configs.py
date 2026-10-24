@@ -39,6 +39,24 @@ def test_builder_accepts_explicit_custom_cases_without_legacy_level_inference(tm
     assert config["case_id"] == "CYJ_SAX100_2CH0_4CH0"
 
 
+def test_builder_writes_explicit_final5_l100_layout_without_path_discovery(tmp_path: Path) -> None:
+    from paper_experiments.joint_vs_2dfit.phase2_clean.build_final_subject_figure_configs import build_final5_subject_figure_config
+
+    sparse = tmp_path / "sparse_manifest.json"
+    sparse.write_text(json.dumps({"subject": "DYL_2", "profile_id": "L100", "case_id": "L100", "fold_id": None, "fold_count": 1, "generator_git_sha": "a" * 40, "prepared_root": str(tmp_path / "prepared")}), encoding="utf-8")
+    final5 = tmp_path / "final5"
+    output = build_final5_subject_figure_config(
+        subject="DYL_2", case_id="L100", final5_root=final5, sparse_manifest=sparse,
+        r0_native_maps_root=tmp_path / "r0", output=tmp_path / "configs",
+    )
+    config = json.loads((output / "DYL_2" / "L100" / "central.json").read_text(encoding="utf-8"))
+    assert config["final5"]["root"] == str(final5.resolve())
+    assert config["methods"]["Q002S640"]["native_bundle"] == str((final5 / "05_formal_endpoints/central/proposed_native_bundle/DYL_2/L100").resolve())
+    assert config["methods"]["Fit-first"]["fit_first_native_bundle"] == str((final5 / "05_formal_endpoints/central/fit_first_native_bundle/DYL_2/L100").resolve())
+    assert config["native_mask_root"] == str((final5 / "06_metrics/current_native_mask/DYL_2/L100").resolve())
+    assert config["native"]["mode"] == "all_source_groups" and config["native"]["stacks"] == ["sax", "2ch", "4ch"]
+
+
 def test_builder_accepts_fit_first_plus_one_proposed_method_and_future_q005(tmp_path: Path) -> None:
     from paper_experiments.joint_vs_2dfit.phase2_clean.build_final_subject_figure_configs import build_final_subject_figure_configs
 

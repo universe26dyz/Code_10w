@@ -111,6 +111,38 @@ def native_display_support(
     )
 
 
+def final5_paired_display_support(
+    reference: np.ndarray,
+    proposed: np.ndarray,
+    fit_first: np.ndarray,
+    primary_native_mask: np.ndarray,
+    proposed_valid: np.ndarray,
+    fit_first_volume_geometry_valid: np.ndarray,
+    fit_first_query_effective_mask: np.ndarray,
+) -> np.ndarray:
+    """Return Final5's one shared native-plane display support.
+
+    This is deliberately the same finite/validity intersection used for all
+    five Proposed-vs-Fit-first panels.  The validity masks are output-sampling
+    provenance carried by the native bundles; no support is estimated here.
+    """
+    arrays = (
+        reference, proposed, fit_first, primary_native_mask, proposed_valid,
+        fit_first_volume_geometry_valid, fit_first_query_effective_mask,
+    )
+    if len({np.asarray(item).shape for item in arrays}) != 1:
+        raise ValueError("Final5 paired display arrays must share one plane shape")
+    return (
+        np.asarray(primary_native_mask, bool)
+        & np.isfinite(reference)
+        & np.asarray(proposed_valid, bool)
+        & np.asarray(fit_first_volume_geometry_valid, bool)
+        & np.asarray(fit_first_query_effective_mask, bool)
+        & np.isfinite(proposed)
+        & np.isfinite(fit_first)
+    )
+
+
 def crop_myocardium_contour(
     myocardium_mask: np.ndarray, crop: tuple[int, int, int, int]
 ) -> np.ndarray:

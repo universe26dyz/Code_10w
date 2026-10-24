@@ -9,6 +9,7 @@ below each corresponding case directory as ``native_bundle``.
 from __future__ import annotations
 
 import argparse
+import json
 import shutil
 import tempfile
 from pathlib import Path
@@ -100,14 +101,82 @@ def build_final_subject_figure_configs(*, subject: str, formal_grid_root: str | 
     return output
 
 
+def build_final5_subject_figure_config(*, subject: str, case_id: str, final5_root: str | Path, sparse_manifest: str | Path, r0_native_maps_root: str | Path, output: str | Path) -> Path:
+    """Write the explicit central Final5 config for one subject/case.
+
+    Final5 paths are intentionally constructed from its published layout;
+    this helper never searches for manifests, images, or native planes.
+    """
+    if not isinstance(subject, str) or not subject or not isinstance(case_id, str) or not case_id:
+        raise ValueError("subject and case_id must be explicit and non-empty")
+    root, sparse_manifest, output = Path(final5_root), Path(sparse_manifest), Path(output)
+    sparse = json.loads(sparse_manifest.read_text(encoding="utf-8"))
+    if not isinstance(sparse, dict) or sparse.get("case_id") != case_id:
+        raise ValueError("Final5 sparse manifest case_id must match the requested case")
+    if sparse.get("subject") != subject:
+        raise ValueError("Final5 sparse manifest subject must match the requested subject")
+    profile_id = sparse.get("profile_id")
+    if not isinstance(profile_id, str) or not profile_id or not isinstance(sparse.get("generator_git_sha", sparse.get("git_sha")), str) or not isinstance(sparse.get("prepared_root"), str):
+        raise ValueError("Final5 sparse manifest requires profile_id, generator_git_sha, and prepared_root")
+    if output.exists():
+        raise FileExistsError(f"refusing overwrite: {output}")
+    endpoint = root / "05_formal_endpoints" / "central"
+    payload = {
+        "schema": "phase4r_final5_subject_figure_config/v1",
+        "subject": subject, "condition": case_id, "profile_id": profile_id, "case_id": case_id,
+        "endpoint": "central",
+        "final5": {"root": str(root.resolve()), "sparse_manifest": str(sparse_manifest.resolve())},
+        "methods": {
+            "Fit-first": {
+                "t1": str((endpoint / "fit_first" / subject / case_id / "t1" / "volume_ms.nii.gz").resolve()),
+                "t2": str((endpoint / "fit_first" / subject / case_id / "t2" / "volume_ms.nii.gz").resolve()),
+                "fit_first_native_bundle": str((endpoint / "fit_first_native_bundle" / subject / "L100").resolve()),
+            },
+            "Q002S640": {
+                "t1": str((endpoint / "proposed" / subject / case_id / "T1_3D.nii.gz").resolve()),
+                "t2": str((endpoint / "proposed" / subject / case_id / "T2_3D.nii.gz").resolve()),
+                "native_bundle": str((endpoint / "proposed_native_bundle" / subject / "L100").resolve()),
+            },
+        },
+        "l100_masks": {
+            "t1": str((root / "04_reconstruction" / "proposed" / subject / "L100" / "support_mask_3D.nii.gz").resolve()),
+            "t2": str((root / "04_reconstruction" / "proposed" / subject / "L100" / "support_mask_3D.nii.gz").resolve()),
+        },
+        "longitudinal": {"axis": 1, "index": "support_median", "common_support_contract": COMMON_SUPPORT_CONTRACT},
+        "native_mask_root": str((root / "06_metrics" / "current_native_mask" / subject / "L100").resolve()),
+        "native": {"mode": "all_source_groups", "stacks": ["sax", "2ch", "4ch"], "sparse_manifest": str(sparse_manifest.resolve()), "r0_native_maps_root": str((Path(r0_native_maps_root) / subject).resolve())},
+        "scmr_longitudinal": {"sparse_manifest": str(sparse_manifest.resolve()), "r0_native_maps_root": str((Path(r0_native_maps_root) / subject).resolve()), "reconstruction_spacing_mm": 1.0, "common_support_contract": "source comparison domain AND in_volume(all configured comparison methods) AND finite(all configured comparison methods)"},
+    }
+    output.parent.mkdir(parents=True, exist_ok=True)
+    staging = Path(tempfile.mkdtemp(prefix=f".{output.name}.staging-", dir=output.parent))
+    try:
+        write_immutable_json(staging / subject / case_id / "central.json", payload)
+        staging.rename(output)
+    except BaseException:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
+    return output
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--subject", required=True); parser.add_argument("--formal-grid-root", required=True)
-    parser.add_argument("--sparse-root", required=True); parser.add_argument("--r0-native-maps-root", required=True)
-    parser.add_argument("--native-mask-root", required=True); parser.add_argument("--method-root", action="append", required=True, metavar="METHOD=ROOT")
+    parser.add_argument("--subject", required=True); parser.add_argument("--formal-grid-root")
+    parser.add_argument("--sparse-root"); parser.add_argument("--r0-native-maps-root", required=True)
+    parser.add_argument("--native-mask-root"); parser.add_argument("--method-root", action="append", metavar="METHOD=ROOT")
     parser.add_argument("--custom-case", action="append", default=[], metavar="PROFILE_ID=CASE_ID")
+    parser.add_argument("--final5-root"); parser.add_argument("--final5-case"); parser.add_argument("--sparse-manifest")
     parser.add_argument("--output", required=True)
-    args = parser.parse_args(); methods: dict[str, str] = {}
+    args = parser.parse_args()
+    if args.final5_root:
+        if not args.final5_case or not args.sparse_manifest:
+            parser.error("--final5-root requires --final5-case and --sparse-manifest")
+        if args.method_root or args.formal_grid_root or args.sparse_root or args.native_mask_root or args.custom_case:
+            parser.error("Final5 config accepts only explicit --final5-root/--final5-case/--sparse-manifest inputs")
+        print(build_final5_subject_figure_config(subject=args.subject, case_id=args.final5_case, final5_root=args.final5_root, sparse_manifest=args.sparse_manifest, r0_native_maps_root=args.r0_native_maps_root, output=args.output))
+        return
+    if not all((args.formal_grid_root, args.sparse_root, args.native_mask_root, args.method_root)):
+        parser.error("legacy configs require --formal-grid-root, --sparse-root, --native-mask-root, and --method-root")
+    methods: dict[str, str] = {}
     for item in args.method_root:
         method, separator, root = item.partition("=")
         if not separator or not method or not root or method in methods:

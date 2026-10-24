@@ -444,6 +444,27 @@ def test_native_mosaic_reads_fit_first_final_pose_bundle_without_r0_reprojection
     assert next(panel for panel in rendered[0][0]["panels"] if panel["label"] == "Fit-first")["values"][0, 0] == 777.0
 
 
+def test_final5_v6_bundle_admission_uses_strict_batch_validator(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from paper_experiments.joint_vs_2dfit.phase2_clean import final5_batch_runner as runner
+    from paper_experiments.joint_vs_2dfit.phase2_clean import final_cyj_reporting as reporting
+
+    sparse = tmp_path / "sparse.json"
+    sparse.write_text(json.dumps({"subject": "DYL_2", "profile_id": "L100", "case_id": "L100", "fold_id": None, "fold_count": 1, "generator_git_sha": "a" * 40, "prepared_root": str(tmp_path / "prepared")}), encoding="utf-8")
+    config = {"subject": "DYL_2", "case_id": "L100", "profile_id": "L100", "final5": {"root": str(tmp_path / "final5"), "sparse_manifest": str(sparse)}}
+    seen: list[tuple[Path, str, str]] = []
+
+    def accept(path: Path, record: object, root: Path) -> object:
+        seen.append((path, record.case_id, str(root)))
+        return runner.ValidationResult(True, "SKIP_VALID", "valid")
+
+    monkeypatch.setattr(runner, "validate_fit_first_native_bundle", accept)
+    reporting._validate_final5_native_bundle(config, kind="fit_first", path=tmp_path / "fit_bundle")
+    assert seen == [(tmp_path / "fit_bundle", "L100", str(tmp_path / "final5"))]
+    monkeypatch.setattr(runner, "validate_fit_first_native_bundle", lambda *_args: runner.ValidationResult(False, "BLOCKED_EXISTING_INVALID", "wrong route"))
+    with pytest.raises(ValueError, match="wrong route"):
+        reporting._validate_final5_native_bundle(config, kind="fit_first", path=tmp_path / "fit_bundle")
+
+
 def _nifti(path: Path, values: np.ndarray, affine: np.ndarray) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     nib.save(nib.Nifti1Image(values.astype(np.float32), affine), path)

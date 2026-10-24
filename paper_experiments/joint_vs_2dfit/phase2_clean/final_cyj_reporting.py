@@ -18,7 +18,7 @@ from .evaluation import _world_sample, reproject_volume_to_native_plane
 from .current_native_central_component_mask import load_validated_current_native_mask_plane
 from .fit_first import NATIVE_FIT_METHOD, _complete_source_group, _dictionary_contract, select_verified_native_cache_groups
 from .heldout import _heldout_ids
-from .visualization import DISPLAY_RANGES_MS, colorbars
+from .visualization import DISPLAY_RANGES_MS, colorbars, final5_paired_display_support
 
 
 PROPOSED_METHODS = ("Q002S640", "Q002S640_K256", "Q005S640_K4", "Q004S640")
@@ -631,6 +631,44 @@ def _file_record(path: str | Path) -> dict[str, str]:
     return {"path": str(item.resolve()), "sha256": sha256(item)}
 
 
+def _final5_case_record(config: Mapping[str, Any]) -> tuple[Path, Any]:
+    """Recover the exact Final5 CaseRecord from the explicit config source."""
+    final5 = config.get("final5")
+    if not isinstance(final5, Mapping):
+        raise ValueError("Final5 validation requires an explicit final5 config section")
+    root_value, sparse_value = final5.get("root"), final5.get("sparse_manifest")
+    if not isinstance(root_value, str) or not isinstance(sparse_value, str):
+        raise ValueError("Final5 config requires explicit root and sparse_manifest paths")
+    sparse_path = Path(sparse_value)
+    sparse = json.loads(sparse_path.read_text(encoding="utf-8"))
+    if not isinstance(sparse, Mapping):
+        raise ValueError("Final5 sparse manifest must be a JSON object")
+    subject, case_id, profile_id = config.get("subject"), config.get("case_id"), config.get("profile_id")
+    if not all(isinstance(value, str) and value for value in (subject, case_id, profile_id)):
+        raise ValueError("Final5 config requires subject, case_id, and profile_id")
+    if (sparse.get("subject") not in (None, subject) or sparse.get("case_id") != case_id or sparse.get("profile_id") != profile_id):
+        raise ValueError("Final5 config and sparse manifest identity mismatch")
+    generator_git_sha, prepared_root = sparse.get("generator_git_sha", sparse.get("git_sha")), sparse.get("prepared_root")
+    fold_id, fold_count = sparse.get("fold_id"), sparse.get("fold_count")
+    if not isinstance(generator_git_sha, str) or not generator_git_sha or not isinstance(prepared_root, str) or not prepared_root:
+        raise ValueError("Final5 sparse manifest requires generator_git_sha and prepared_root")
+    if fold_id is not None and not isinstance(fold_id, int) or fold_count is not None and not isinstance(fold_count, int):
+        raise ValueError("Final5 sparse manifest fold identity is invalid")
+    from .final5_batch_runner import CaseRecord
+    return Path(root_value), CaseRecord(subject, case_id, profile_id, fold_id, fold_count, sparse_path, sha256(sparse_path), generator_git_sha, Path(prepared_root))
+
+
+def _validate_final5_native_bundle(config: Mapping[str, Any], *, kind: str, path: Path) -> None:
+    """Delegate Final5 bundle admission to the production provenance validators."""
+    if "final5" not in config:
+        return
+    root, record = _final5_case_record(config)
+    from .final5_batch_runner import validate_fit_first_native_bundle, validate_proposed_native_bundle
+    result = validate_fit_first_native_bundle(path, record, root) if kind == "fit_first" else validate_proposed_native_bundle(path, record, root)
+    if not result.valid:
+        raise ValueError(f"Final5 {kind} native bundle provenance rejected: {result.reason}")
+
+
 def _load_all_verified_native_cache_groups(native_root: str | Path, sparse_manifest: str | Path, stack: str) -> dict[str, Any]:
     """Read every cached source group after the existing sparse provenance check passes.
 
@@ -931,8 +969,10 @@ def _render_native_stack(config: Mapping[str, Any], output: Path, inputs: dict[s
                 root = Path(configured["fit_first_native_bundle"])
                 manifest_path = root / "manifest.json"
                 manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-                if manifest.get("schema") not in ("fit_first_native_prediction_bundle/v2", "fit_first_native_prediction_bundle/v4") or manifest.get("endpoint") != config["endpoint"]:
+                if manifest.get("schema") not in ("fit_first_native_prediction_bundle/v2", "fit_first_native_prediction_bundle/v4", "fit_first_native_prediction_bundle/v6") or manifest.get("endpoint") != config["endpoint"]:
                     raise ValueError(f"{method}: Fit-first final-pose bundle schema mismatch")
+                if manifest.get("schema") == "fit_first_native_prediction_bundle/v6":
+                    _validate_final5_native_bundle(config, kind="fit_first", path=root)
                 method_sources[method] = ("fit_first_native_bundle", root)
                 inputs.setdefault(f"{method}_fit_first_native_bundle_manifest", _file_record(manifest_path))
             elif "native_bundle" in configured:
@@ -941,6 +981,8 @@ def _render_native_stack(config: Mapping[str, Any], output: Path, inputs: dict[s
                 manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
                 if manifest.get("schema") != "direct_native_prediction_bundle/v1" or manifest.get("endpoint") != config["endpoint"]:
                     raise ValueError(f"{method}: direct-native bundle endpoint/schema mismatch")
+                if "final5" in config:
+                    _validate_final5_native_bundle(config, kind="proposed", path=root)
                 method_sources[method] = ("direct_native_bundle", root)
                 inputs.setdefault(f"{method}_direct_native_bundle_manifest", _file_record(manifest_path))
             else:
@@ -956,8 +998,11 @@ def _render_native_stack(config: Mapping[str, Any], output: Path, inputs: dict[s
             masks, mask_provenance = load_validated_current_native_mask_plane(formal_mask_root, parameter=parameter, stack=stack, original_group_idx=group, shape_rc=tuple(reference.shape), source_support=source_support)
             support = np.asarray(masks["primary_native_mask"], bool)
             mask_artifacts.append(mask_provenance)
-            panels = [{"label": "Native reference", "kind": "reference_ms", "displayed_quantity": "quantitative_map_ms", "values": reference, "support": support & np.isfinite(reference), "cmap": cmap, "range_ms": limits}]
-            method_panels: list[tuple[str, np.ndarray, np.ndarray]] = []
+            panels: list[dict[str, Any]] = []
+            method_values: dict[str, np.ndarray] = {}
+            method_valid: dict[str, np.ndarray] = {}
+            fit_first_volume_geometry_valid: np.ndarray | None = None
+            fit_first_query_effective_mask: np.ndarray | None = None
             for method, (kind, source) in method_sources.items():
                 if kind == "direct_native_bundle":
                     plane_path = source / "planes" / stack / f"group{group:03d}.npz"
@@ -975,13 +1020,37 @@ def _render_native_stack(config: Mapping[str, Any], output: Path, inputs: dict[s
                         if not {"prediction_ms", "valid"}.issubset(bundle.files):
                             raise ValueError(f"{plane_path}: missing Fit-first prediction_ms/valid")
                         values, valid = np.asarray(bundle["prediction_ms"], float), np.asarray(bundle["valid"], bool)
+                        if "final5" in config:
+                            if not {"volume_geometry_valid", "query_effective_mask"}.issubset(bundle.files):
+                                raise ValueError(f"{plane_path}: Final5 v6 bundle is missing output-sampling validity fields")
+                            fit_first_volume_geometry_valid = np.asarray(bundle["volume_geometry_valid"], bool)
+                            fit_first_query_effective_mask = np.asarray(bundle["query_effective_mask"], bool)
                     if values.shape != source_support.shape or valid.shape != source_support.shape:
                         raise ValueError(f"{plane_path}: final-pose native plane shape does not match current reference")
+                    if fit_first_volume_geometry_valid is not None and (fit_first_volume_geometry_valid.shape != source_support.shape or fit_first_query_effective_mask is None or fit_first_query_effective_mask.shape != source_support.shape):
+                        raise ValueError(f"{plane_path}: Final5 v6 validity shape does not match current reference")
+                    if "final5" in config and not np.array_equal(valid, fit_first_volume_geometry_valid & fit_first_query_effective_mask & np.isfinite(values)):
+                        raise ValueError(f"{plane_path}: Final5 v6 valid must equal volume_geometry_valid AND query_effective_mask AND finite(prediction)")
                 else:
                     image = source
                     values, valid = reproject_volume_to_native_plane(image.get_fdata(), image.affine, affine, source_support.shape)
-                available = support & valid & np.isfinite(reference) & np.isfinite(values)
-                method_panels.append((method, values, available))
+                method_values[method], method_valid[method] = values, valid
+            if "final5" in config:
+                proposed_methods = [method for method, (kind, _source) in method_sources.items() if kind == "direct_native_bundle"]
+                if len(proposed_methods) != 1 or "Fit-first" not in method_values or fit_first_volume_geometry_valid is None or fit_first_query_effective_mask is None:
+                    raise ValueError("Final5 native figures require one Proposed native bundle and one v6 Fit-first native bundle")
+                proposed_method = proposed_methods[0]
+                paired_support = final5_paired_display_support(
+                    reference, method_values[proposed_method], method_values["Fit-first"], support,
+                    method_valid[proposed_method], fit_first_volume_geometry_valid, fit_first_query_effective_mask,
+                )
+                panels.append({"label": "Native reference", "kind": "reference_ms", "displayed_quantity": "quantitative_map_ms", "values": reference, "support": paired_support, "cmap": cmap, "range_ms": limits})
+                method_panels = [(proposed_method, method_values[proposed_method], paired_support), ("Fit-first", method_values["Fit-first"], paired_support)]
+                display_support_definition = "primary_native_mask AND finite(reference) AND proposed_valid AND fit_first_volume_geometry_valid AND fit_first_query_effective_mask AND finite(proposed, fit_first)"
+            else:
+                panels.append({"label": "Native reference", "kind": "reference_ms", "displayed_quantity": "quantitative_map_ms", "values": reference, "support": support & np.isfinite(reference), "cmap": cmap, "range_ms": limits})
+                method_panels = [(method, values, support & method_valid[method] & np.isfinite(reference) & np.isfinite(values)) for method, values in method_values.items()]
+                display_support_definition = "primary_native_mask AND finite(reference); per-method panels additionally require endpoint-valid AND finite(prediction)"
             panels.extend({"label": method, "kind": "map_ms", "method": method, "displayed_quantity": "quantitative_map_ms", "values": values, "support": available, "cmap": cmap, "range_ms": limits} for method, values, available in method_panels)
             panels.extend({"label": f"|{method} − Native|", "kind": "absolute_error_ms", "method": method, "displayed_quantity": "absolute_error_ms", "values": np.abs(values - reference), "support": available, "cmap": cmap, "range_ms": limits} for method, values, available in method_panels)
             spacing = np.asarray(selected["pixel_spacing_rc_mm"][index], float)
@@ -991,7 +1060,7 @@ def _render_native_stack(config: Mapping[str, Any], output: Path, inputs: dict[s
         filename = f"native_{stack}_group{display_groups[0]}_{display_parameter}.png" if mode == "single" else f"native_{stack}_{mode}_{display_parameter}.png"
         assets = _plot_native_mosaic(output / filename, mosaic_rows, title=f"{config['subject']} {config['condition']} {config['endpoint']} — {stack} native {mode} {display_parameter}", component_directory=output / "components" / Path(filename).stem)
         inputs.setdefault("native_mask_manifest", _file_record(formal_mask_root / "manifest.json"))
-        records.append({"parameter": display_parameter, "file": filename, "component_directory": f"components/{Path(filename).stem}", "components": [{**component, "parameter": display_parameter, "stack": stack, "support_semantics": "primary_native_mask AND finite(reference); per-method panels additionally require endpoint-valid AND finite(prediction)"} for component in assets["components"]], "colorbar_component": assets["colorbar"], "stack": stack, "mode": mode, "original_group_idx": display_groups[0] if mode == "single" else None, "original_group_ids": display_groups, "displayed_groups": [{"group_idx": group, "status": group_statuses[group], "label": native_group_label(group, group_statuses[group])} for group in display_groups], "native_reference": provenance, "primary_native_mask": "primary_native_mask", "mask_artifacts": mask_artifacts, "plane_shapes_rc": shapes, "display_support": "primary_native_mask AND finite(reference); per-method panels additionally require endpoint-valid AND finite(prediction)", "interpolation": {"map": "linear", "mask": "artifact-defined native-plane support"}, "no_auto_crop": True, "physical_aspect_ratio_preserved": True, "colorbars": {"shared_parameter": "dedicated_axis", "range_ms": list(limits), "colormap": "same_parameter_map_lut"}, "error_display": {"quantity": "absolute_error_ms", "colormap": "same_parameter_map_lut", "range_ms": list(limits), "no_residual_colorbar": True}})
+        records.append({"parameter": display_parameter, "file": filename, "component_directory": f"components/{Path(filename).stem}", "components": [{**component, "parameter": display_parameter, "stack": stack, "support_semantics": display_support_definition} for component in assets["components"]], "colorbar_component": assets["colorbar"], "stack": stack, "mode": mode, "original_group_idx": display_groups[0] if mode == "single" else None, "original_group_ids": display_groups, "displayed_groups": [{"group_idx": group, "status": group_statuses[group], "label": native_group_label(group, group_statuses[group])} for group in display_groups], "native_reference": provenance, "primary_native_mask": "primary_native_mask", "mask_artifacts": mask_artifacts, "plane_shapes_rc": shapes, "display_support": display_support_definition, "interpolation": {"map": "linear", "mask": "artifact-defined native-plane support"}, "no_auto_crop": True, "physical_aspect_ratio_preserved": True, "colorbars": {"shared_parameter": "dedicated_axis", "range_ms": list(limits), "colormap": "same_parameter_map_lut"}, "error_display": {"quantity": "absolute_error_ms", "colormap": "same_parameter_map_lut", "range_ms": list(limits), "no_residual_colorbar": True}})
     return records
 
 
@@ -1023,7 +1092,7 @@ def render_final_figures(config_path: str | Path, output: str | Path) -> Path:
             raise ValueError(f"{method} contains unsupported map/bundle keys")
         if not (set(PARAMETERS).issubset(maps) or "native_bundle" in maps or "fit_first_native_bundle" in maps):
             raise ValueError(f"{method} must provide t1/t2 maps or a native bundle")
-        if method == "Fit-first" and config["condition"] == "L100_fold0" and "fit_first_native_bundle" not in maps:
+        if method == "Fit-first" and config["condition"] in {"L100_fold0", "L100"} and "fit_first_native_bundle" not in maps:
             raise ValueError("formal Fit-first figures require fit_first_native_bundle; R0 volume reprojection is not a formal endpoint")
     if "native" not in config or "longitudinal" not in config or "l100_masks" not in config:
         raise ValueError("figure config requires longitudinal, native, and frozen L100-mask inputs")
