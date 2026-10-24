@@ -31,12 +31,11 @@ def _r0_shape(root: Path, stack: str, group: int, parameter: str) -> tuple[int, 
 
 def _scmr_output_slices(root: Path, parameter: str, expected_count: int) -> list[Path]:
     folder = root / "nesvor" / parameter / "slices"
-    paths = list(folder.glob("*.nii.gz"))
-    try:
-        indexed = sorted(((int(path.name.removesuffix(".nii.gz")), path) for path in paths if path.name.removesuffix(".nii.gz").isdigit()), key=lambda item: item[0])
-    except ValueError as exc:
-        raise ValueError(f"SCMR one-stage {parameter}: output-slice IDs are invalid") from exc
-    if len(indexed) != len(paths) or [index for index, _path in indexed] != list(range(expected_count)):
+    indexed = sorted(
+        ((int(path.name.removesuffix(".nii.gz")), path) for path in folder.glob("*.nii.gz") if path.name.removesuffix(".nii.gz").isdigit()),
+        key=lambda item: item[0],
+    )
+    if [index for index, _path in indexed] != list(range(expected_count)):
         raise ValueError(f"SCMR one-stage {parameter}: output-slice IDs must be exactly 0..{expected_count - 1}")
     return [path for _index, path in indexed]
 
@@ -161,7 +160,7 @@ def build_fit_first_native_prediction_bundle(*, audit_root: str | Path | None = 
                 if route.route_kind in ("intensity_preserving_fit_first", "scmr_one_stage_fit_first"):
                     plane_record.update({"standardized_group_idx": group_record["standardized_group_idx"], "original_prestandardization_group_idx": group_record["original_prestandardization_group_idx"]})
                 planes.append(plane_record)
-        schema = "fit_first_native_prediction_bundle/v2" if route.route_kind == "legacy_fit_first" else "fit_first_native_prediction_bundle/v5" if route.route_kind == "scmr_one_stage_fit_first" else "fit_first_native_prediction_bundle/v4"
+        schema = "fit_first_native_prediction_bundle/v2" if route.route_kind == "legacy_fit_first" else "fit_first_native_prediction_bundle/v6" if route.route_kind == "scmr_one_stage_fit_first" else "fit_first_native_prediction_bundle/v4"
         route_evidence = _record(audit_path)
         write_immutable_json(staging / "manifest.json", {"schema": schema, "route": route.provenance(), "route_manifest": route_evidence, "reconstruction_input_geometry_gate": "RECONSTRUCTION_INPUT_GEOMETRY_VALID" if route.route_kind == "legacy_fit_first" else "SCMR_ONE_STAGE_ROUTE_VALID" if route.route_kind == "scmr_one_stage_fit_first" else "REGISTERED_QUANTITATIVE_INPUTS_VALID", "endpoint": endpoint, "endpoint_source_manifest": _record(endpoint_manifest_path), "coordinate_contract": "original native [row,col] lattice -> proven NeSVoR reindex/negative-determinant flip -> parameter-specific final output-slice physical RAS -> endpoint-specific volume_ms linear sample -> original [row,col] ordering", "effective_mask_contract": "formal endpoint effective query mask SHA-verified and mapped to each native plane with nearest-neighbour order=0; valid = volume_geometry_valid AND query_effective_mask AND finite(prediction)", "output_slices_role": "geometry only; predictions are sampled from formal endpoint volume_ms, never output-slice pixels", "parameter_pose_policy": "T1 and T2 use independently optimised parameter-specific one-stage poses", "planes": planes, "no_training": True, "no_reconstruction": True, "no_metrics_modified": True})
         staging.rename(output)

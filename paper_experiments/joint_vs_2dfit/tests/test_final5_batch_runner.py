@@ -73,6 +73,22 @@ def test_pre_scmr_fit_first_bundle_v4_cannot_skip_valid(tmp_path: Path) -> None:
     assert not result.valid and result.state == "BLOCKED_EXISTING_INVALID"
 
 
+def test_buggy_pre_reindex_scmr_fit_first_bundle_v5_cannot_skip_valid(tmp_path: Path) -> None:
+    record = runner.CaseRecord("CYJ", "L100", "L100", None, 1, tmp_path / "sparse.json", "a" * 64, "b" * 40, tmp_path)
+    bundle = runner._paths(tmp_path / "final", record)["fit_bundle"]; bundle.mkdir(parents=True)
+    (bundle / "manifest.json").write_text(json.dumps({"schema": "fit_first_native_prediction_bundle/v5"}))
+    result = runner._validate_stage_output("fit_first_native_bundle", record, tmp_path / "final")
+    assert not result.valid and result.state == "BLOCKED_EXISTING_INVALID"
+
+
+def test_reindex_corrected_scmr_fit_first_bundle_v6_can_skip_valid(tmp_path: Path) -> None:
+    record = runner.CaseRecord("CYJ", "L100", "L100", None, 1, tmp_path / "sparse.json", "a" * 64, "b" * 40, tmp_path)
+    bundle = runner._paths(tmp_path / "final", record)["fit_bundle"]; bundle.mkdir(parents=True)
+    (bundle / "manifest.json").write_text(json.dumps({"schema": "fit_first_native_prediction_bundle/v6"}))
+    result = runner._validate_stage_output("fit_first_native_bundle", record, tmp_path / "final")
+    assert result.valid and result.state == "SKIP_VALID"
+
+
 def test_commands_are_serial_gpu_and_sparse_fit_uses_subject_l100_mask(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(runner, "validate_sparse_profile_manifest", _validated)
     cases = runner.load_final5_registry(_registry(tmp_path))

@@ -142,7 +142,7 @@ def test_scmr_one_stage_bundle_uses_parameter_final_slice_geometry_and_endpoint_
     (endpoint / "manifest.json").write_text(json.dumps({"schema": "phase4r_fixed_l100_fit_first_export_bundle/v2", "endpoint": "central", "parameters": parameters}))
     bundle = build_fit_first_native_prediction_bundle(baseline_root=root, r0_native_maps_root=r0, endpoint="central", endpoint_source_root=endpoint, output=tmp_path / "bundle")
     manifest = json.loads((bundle / "manifest.json").read_text())
-    assert manifest["schema"] == "fit_first_native_prediction_bundle/v5"
+    assert manifest["schema"] == "fit_first_native_prediction_bundle/v6"
     assert manifest["route"]["route_kind"] == "scmr_one_stage_fit_first"
     assert np.load(bundle / "planes/t1/sax/group000.npz")["prediction_ms"].item() == 1000.0
 
@@ -179,11 +179,16 @@ def test_scmr_output_slice_lattice_requires_exact_37_output_ids(tmp_path: Path) 
     slices = root / "nesvor/t1/slices"; slices.mkdir(parents=True)
     for index in range(37):
         (slices / f"{index}.nii.gz").write_bytes(b"slice")
+        (slices / f"mask_{index}.nii.gz").write_bytes(b"companion mask")
     assert [path.name for path in _scmr_output_slices(root, "t1", 37)] == [f"{index}.nii.gz" for index in range(37)]
     (slices / "18.nii.gz").unlink()
     with pytest.raises(ValueError, match="exactly 0..36"):
         _scmr_output_slices(root, "t1", 37)
     (slices / "18.nii.gz").write_bytes(b"slice")
+    (slices / "37.nii.gz").write_bytes(b"extra numeric")
+    with pytest.raises(ValueError, match="exactly 0..36"):
+        _scmr_output_slices(root, "t1", 37)
+    (slices / "37.nii.gz").unlink()
     (slices / "00.nii.gz").write_bytes(b"duplicate zero")
     with pytest.raises(ValueError, match="exactly 0..36"):
         _scmr_output_slices(root, "t1", 37)
