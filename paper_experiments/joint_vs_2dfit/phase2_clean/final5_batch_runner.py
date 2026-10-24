@@ -237,6 +237,8 @@ def validate_fit_first_endpoint(path: Path, record: CaseRecord, records: dict[tu
                 return _invalid(path, f"{parameter}: parameter endpoint schema mismatch")
             if any(item.get(field) != manifest.get(field) for field in ("subject", "condition", "endpoint")):
                 return _invalid(path, f"{parameter}: parameter endpoint identity mismatch")
+            if item.get("fit_first_routes") != routes:
+                return _invalid(path, f"{parameter}: parameter/top-level Fit-first route provenance mismatch")
             if _read(path / parameter / "manifest.json") != item:
                 return _invalid(path, f"{parameter}: embedded endpoint manifest disagrees with disk")
             if not _matches_record(item.get("output_volume_ms"), volume) or not _matches_record(item.get("effective_query_mask"), mask):

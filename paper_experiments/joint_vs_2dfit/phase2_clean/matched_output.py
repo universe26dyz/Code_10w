@@ -265,6 +265,9 @@ def export_fixed_l100_fit_first(*, subject: str, condition: str, l100_fit_first_
     output.parent.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(prefix=f".{output.name}.staging-", dir=output.parent))
     try:
+        def endpoint_output_record(path: Path) -> dict[str, str]:
+            return {"path": str((output / path.relative_to(staging)).resolve()), "sha256": sha256(path)}
+
         manifests: dict[str, Any] = {}
         for parameter, scale in NORMALIZATION_SCALES.items():
             l100_checkpoint = l100_route.models[parameter]
@@ -292,15 +295,18 @@ def export_fixed_l100_fit_first(*, subject: str, condition: str, l100_fit_first_
                 "parameter": parameter,
                 "normalization_scale_ms": scale,
                 "l100_checkpoint": _record(l100_checkpoint),
-                "sparse_checkpoint_mask": _record(sparse_mask),
-                "effective_query_mask": _record(effective_mask),
-                "output_volume_ms": _record(volume_ms),
+                "query_mask_source": endpoint_output_record(l100_mask),
+                "sparse_checkpoint_mask": endpoint_output_record(sparse_mask),
+                "effective_query_mask": endpoint_output_record(effective_mask),
+                "output_volume_ms": endpoint_output_record(volume_ms),
             })
             manifests[parameter] = manifest
             write_immutable_json(target / "manifest.json", manifest)
         write_immutable_json(staging / "manifest.json", {
             "schema": "phase4r_fixed_l100_fit_first_export_bundle/v2", "subject": subject, "condition": condition,
-            "method": "Fit-first", "endpoint": endpoint, "parameters": manifests,
+            "method": "Fit-first", "endpoint": endpoint,
+            "fit_first_routes": {"l100": l100_route.provenance(), "sparse": sparse_route.provenance()},
+            "parameters": manifests,
             "no_training": True, "no_refitting": True, "no_reconstruction": True,
         })
         staging.rename(output)

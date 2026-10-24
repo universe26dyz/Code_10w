@@ -205,6 +205,9 @@ def test_mask_aware_v2_fit_first_endpoint_is_admitted(tmp_path: Path, monkeypatc
         parameters[parameter] = {"schema": "phase4r_fixed_l100_fit_first_export/v2", "subject": "CYJ", "condition": "L100", "endpoint": "central", "parameter": parameter, "output_volume_ms": {"path": str(volume.resolve()), "sha256": runner.sha256(volume)}, "effective_query_mask": {"path": str(mask.resolve()), "sha256": runner.sha256(mask)}}
         (paths["fit_endpoint"] / parameter / "manifest.json").write_text(json.dumps(parameters[parameter]))
     route = {"route_schema": "phase4r_intensity_preserving_fit_first/v2", "source_fit_first_root": str(source.resolve()), "final_pose_audit": {"path": str(audit.resolve()), "sha256": runner.sha256(audit)}, "formal_reconstruction_model": {parameter: {"path": str(models[parameter].resolve()), "sha256": runner.sha256(models[parameter])} for parameter in models}, "parameter_results": {parameter: {"path": str(results[parameter].resolve()), "sha256": runner.sha256(results[parameter])} for parameter in results}}
+    for parameter in ("t1", "t2"):
+        parameters[parameter]["fit_first_routes"] = {"l100": route, "sparse": route}
+        (paths["fit_endpoint"] / parameter / "manifest.json").write_text(json.dumps(parameters[parameter]))
     (paths["fit_endpoint"] / "manifest.json").write_text(json.dumps({"schema": "phase4r_fixed_l100_fit_first_export_bundle/v2", "subject": "CYJ", "condition": "L100", "method": "Fit-first", "endpoint": "central", "fit_first_routes": {"l100": route, "sparse": route}, "parameters": parameters}))
     result = runner.validate_fit_first_endpoint(paths["fit_endpoint"], record, {("CYJ", "L100"): record}, root)
     assert result.valid and result.state == "SKIP_VALID"
