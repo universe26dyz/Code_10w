@@ -245,7 +245,7 @@ def validate_fit_first_endpoint(path: Path, record: CaseRecord, records: dict[tu
 
 
 def validate_l100_metric(path: Path, record: CaseRecord, root: Path) -> ValidationResult:
-    """Admit only v5 metrics with v6 reindex-corrected Fit-first-bundle provenance."""
+    """Admit only v5 metrics with formal SCMR v5 Fit-first-bundle provenance."""
     if not path.exists():
         return _invalid(path, "output absent")
     try:
@@ -264,7 +264,7 @@ def validate_l100_metric(path: Path, record: CaseRecord, root: Path) -> Validati
         if aggregate.get("schema") != "final_pose_native_common_support_metrics/v4" or FIT_FIRST_COMMON_SUPPORT_TERM not in str(aggregate.get("primary_support_equation", "")):
             return _invalid(path, "L100 aggregate does not record mask-aware common support")
         fit_bundle = _read(paths["fit_bundle"] / "manifest.json")
-        if fit_bundle.get("schema") != "fit_first_native_prediction_bundle/v6" or not _matches_record(fit_bundle.get("endpoint_source_manifest"), paths["fit_endpoint"] / "manifest.json"):
+        if fit_bundle.get("schema") != "fit_first_native_prediction_bundle/v5" or not _matches_record(fit_bundle.get("endpoint_source_manifest"), paths["fit_endpoint"] / "manifest.json"):
             return _invalid(path, "L100 Fit-first bundle endpoint provenance mismatch")
     except (FileNotFoundError, ValueError, TypeError) as exc:
         return _invalid(path, str(exc))
@@ -293,7 +293,7 @@ def validate_sparse_metric(path: Path, record: CaseRecord, root: Path) -> Valida
             return _invalid(path, "sparse aggregate does not record mask-aware common support")
     except (FileNotFoundError, ValueError, TypeError) as exc:
         return _invalid(path, str(exc))
-    return ValidationResult(True, "SKIP_VALID", "valid mask-aware v2 sparse metric")
+    return ValidationResult(True, "SKIP_VALID", "valid formal SCMR one-stage sparse metric")
 
 
 def _stage(result: ValidationResult, *, dependency: bool = False) -> dict[str, str]:
@@ -312,7 +312,7 @@ def build_batch_plan(registry: str | Path, final_root: str | Path, *, device: st
         paths = _paths(root, record)
         proposed, fit = validate_proposed_reconstruction(paths["proposed"], record), validate_fit_first_reconstruction(paths["fit_first"], record)
         endpoints = _schema(paths["proposed_endpoint"], "phase4r_formal_proposed_export/v1"), validate_fit_first_endpoint(paths["fit_endpoint"], record, records_by_key, root)
-        bundles = _schema(paths["direct_bundle"], "direct_native_prediction_bundle/v1"), _schema(paths["fit_bundle"], "fit_first_native_prediction_bundle/v6")
+        bundles = _schema(paths["direct_bundle"], "direct_native_prediction_bundle/v1"), _schema(paths["fit_bundle"], "fit_first_native_prediction_bundle/v5")
         support, mask, metric = _schema(paths["native_support"], "q004_direct_native_endpoint_audit/v2"), _schema(paths["native_mask"], "phase4r_current_native_central_component_mask/v1"), validate_l100_metric(paths["l100_metrics"], record, root)
         stages = {"proposed_reconstruction": _stage(proposed), "fit_first_reconstruction": _stage(fit), "proposed_endpoint": _stage(endpoints[0], dependency=not proposed.valid), "fit_first_endpoint": _stage(endpoints[1], dependency=not fit.valid), "proposed_native_bundle": _stage(bundles[0], dependency=not proposed.valid), "fit_first_native_bundle": _stage(bundles[1], dependency=not (fit.valid and endpoints[1].valid)), "l100_native_support": _stage(support, dependency=not (proposed.valid and endpoints[0].valid)), "current_native_mask": _stage(mask, dependency=not support.valid), "l100_metrics": _stage(metric, dependency=not (bundles[0].valid and bundles[1].valid and mask.valid))}
         l100_ready[record.subject] = all(value["state"] == "SKIP_VALID" for value in stages.values())
@@ -354,7 +354,7 @@ def _validate_stage_output(stage: str, record: CaseRecord, root: Path, records: 
     expected = {
         "proposed_endpoint": ("proposed_endpoint", "phase4r_formal_proposed_export/v1"),
         "proposed_native_bundle": ("direct_bundle", "direct_native_prediction_bundle/v1"),
-        "fit_first_native_bundle": ("fit_bundle", "fit_first_native_prediction_bundle/v6"),
+        "fit_first_native_bundle": ("fit_bundle", "fit_first_native_prediction_bundle/v5"),
         "l100_native_support": ("native_support", "q004_direct_native_endpoint_audit/v2"),
         "current_native_mask": ("native_mask", "phase4r_current_native_central_component_mask/v1"),
     }
@@ -399,6 +399,18 @@ def _validate_stage_locally(stage: str, record: CaseRecord, root: Path, records:
         if not dependency.valid:
             return ValidationResult(False, "BLOCKED_DEPENDENCY", f"{dependency_record.subject}/{dependency_record.case_id} {dependency_stage}: {dependency.reason}")
     return result
+
+
+def _runtime_dependency_reason(stage: str, record: CaseRecord, plan: dict[str, Any], records: dict[tuple[str, str], CaseRecord]) -> str | None:
+    """Use the execute-process state after its one strict preflight."""
+    for dependency_stage, dependency_record in _stage_dependencies(stage, record, records):
+        try:
+            dependency = plan["cases"][f"{dependency_record.subject}/{dependency_record.case_id}"]["stages"][dependency_stage]
+        except KeyError:
+            return f"missing in-memory dependency state: {dependency_record.subject}/{dependency_record.case_id} {dependency_stage}"
+        if dependency.get("state") != "SKIP_VALID":
+            return f"{dependency_record.subject}/{dependency_record.case_id} {dependency_stage}: {dependency.get('reason', dependency.get('state', 'not valid'))}"
+    return None
 
 
 def case_commands(record: CaseRecord, final_root: str | Path, *, device: str, python: str, nesvor: str) -> dict[str, Any]:
@@ -479,14 +491,12 @@ def execute_batch(registry: str | Path, final_root: str | Path, *, device: str, 
                 stage_plan = case_plan["stages"][stage]
                 if stage_plan["state"] == "SKIP_VALID":
                     continue
-                local = _validate_stage_locally(stage, record, root, records_by_key)
-                stage_plan.update(_stage(local))
-                if local.valid:
+                dependency_reason = _runtime_dependency_reason(stage, record, result, records_by_key)
+                if dependency_reason is not None:
+                    stage_plan.update({"state": "BLOCKED_DEPENDENCY", "reason": dependency_reason})
                     continue
                 log = _state_root(root) / "logs" / record.subject / record.case_id / f"{stage}.log"
-                if local.state != "READY":
-                    continue
-                elif stage in SUBPROCESS_STAGES:
+                if stage in SUBPROCESS_STAGES:
                     code = _run_stage(stage, record, commands[stage], log)
                 elif stage in DIRECT_STAGES:
                     try:
@@ -498,7 +508,7 @@ def execute_batch(registry: str | Path, final_root: str | Path, *, device: str, 
                 else:
                     raise RuntimeError(f"unknown final5 stage: {stage}")
                 if code == 0:
-                    post = _validate_stage_locally(stage, record, root, records_by_key)
+                    post = _validate_stage_output(stage, record, root, records_by_key)
                     if post.valid:
                         stage_plan.update(_stage(post))
                     else:

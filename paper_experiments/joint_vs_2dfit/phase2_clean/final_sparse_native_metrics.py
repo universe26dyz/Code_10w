@@ -16,11 +16,15 @@ from .evaluation import _metrics, reproject_binary_mask_to_native_plane, reproje
 from .fit_first import select_verified_native_cache_groups
 from .heldout import _heldout_ids
 from .matched_output import require_matched_endpoints, verified_fit_first_effective_query_mask
-from .fit_first_route_contract import INTENSITY_SCHEMA
+from .fit_first_route_contract import SCMR_ONE_STAGE_SCHEMA
 
 
 def _record(path: Path) -> dict[str, str]:
     return {"path": str(path.resolve()), "sha256": sha256(path)}
+
+
+def _published_record(staging_path: Path, published_path: Path) -> dict[str, str]:
+    return {"path": str(published_path.resolve()), "sha256": sha256(staging_path)}
 
 
 def _manifest(root: Path) -> tuple[Path, dict[str, Any]]:
@@ -72,8 +76,8 @@ def validate_sparse_endpoint_roots(proposed_root: str | Path, fit_first_root: st
     if fit.get("schema") != "phase4r_fixed_l100_fit_first_export_bundle/v2":
         raise ValueError("Fit-first formal endpoint schema mismatch")
     routes = fit.get("fit_first_routes")
-    if not isinstance(routes, dict) or any(not isinstance(routes.get(name), dict) or routes[name].get("route_schema") != INTENSITY_SCHEMA for name in ("l100", "sparse")):
-        raise ValueError("Fit-first formal endpoint is not bound to mask-aware v2 reconstruction routes")
+    if not isinstance(routes, dict) or any(not isinstance(routes.get(name), dict) or routes[name].get("route_schema") != SCMR_ONE_STAGE_SCHEMA for name in ("l100", "sparse")):
+        raise ValueError("Fit-first formal endpoint is not bound to formal SCMR one-stage reconstruction routes")
     for name, payload in (("Proposed", proposed), ("Fit-first", fit)):
         if payload.get("subject") != subject or payload.get("condition") != condition:
             raise ValueError(f"{name} endpoint subject/condition mismatch")
@@ -151,9 +155,10 @@ def build_final_sparse_native_metrics(*, proposed_endpoint_root: str | Path, fit
                                 aggregate[parameter][target][name].append(np.asarray(values)[support])
                 records.append(plane)
         regions = {parameter: {stack: _aggregate(values) for stack, values in stacks.items()} for parameter, stacks in aggregate.items()}
-        metrics_payload = {"schema": "final_sparse_native_common_support_metrics/v2", "primary_mask": "primary_native_mask", "primary_support_equation": "primary_native_mask AND finite(reference) AND proposed_valid AND fit_first_volume_geometry_valid AND fit_first_query_effective_mask AND finite(proposed, fit_first)", "regions": regions, "per_plane_records": records, "heldout_only": True, "native_geometry": "original held-out R0 native affine; no_final_pose_lookup", "fit_first_mask_semantics": "Fit-first effective query mask is part of pairwise common support; corrected Fit-first route is mask-aware v2"}
-        write_immutable_json(staging / "aggregate_metrics.json", metrics_payload)
-        write_immutable_json(staging / "manifest.json", {"schema": "final_sparse_native_bundle_metrics/v2", "subject": subject, "condition": condition, "endpoint": endpoint_provenance["endpoint"], "endpoint_provenance": endpoint_provenance, "sparse_manifest": _record(sparse_manifest), "native_mask_manifest": _record(native_mask_root / "manifest.json"), "aggregate_metrics": _record(staging / "aggregate_metrics.json"), "primary_mask": "primary_native_mask", "primary_support_equation": "primary_native_mask AND finite(reference) AND proposed_valid AND fit_first_volume_geometry_valid AND fit_first_query_effective_mask AND finite(proposed, fit_first)", "metric_contract": "Fit-first effective query mask is part of pairwise common support; corrected Fit-first route is mask-aware v2", "heldout_only": True, "no_learned_pose": True, "no_training": True, "no_reconstruction": True})
+        metrics_payload = {"schema": "final_sparse_native_common_support_metrics/v2", "primary_mask": "primary_native_mask", "primary_support_equation": "primary_native_mask AND finite(reference) AND proposed_valid AND fit_first_volume_geometry_valid AND fit_first_query_effective_mask AND finite(proposed, fit_first)", "regions": regions, "per_plane_records": records, "heldout_only": True, "native_geometry": "original held-out R0 native affine; no_final_pose_lookup", "fit_first_mask_semantics": "formal SCMR one-stage Fit-first; effective query mask is part of pairwise common support"}
+        aggregate_staging, aggregate_final = staging / "aggregate_metrics.json", output / "aggregate_metrics.json"
+        write_immutable_json(aggregate_staging, metrics_payload)
+        write_immutable_json(staging / "manifest.json", {"schema": "final_sparse_native_bundle_metrics/v2", "subject": subject, "condition": condition, "endpoint": endpoint_provenance["endpoint"], "endpoint_provenance": endpoint_provenance, "sparse_manifest": _record(sparse_manifest), "native_mask_manifest": _record(native_mask_root / "manifest.json"), "aggregate_metrics": _published_record(aggregate_staging, aggregate_final), "primary_mask": "primary_native_mask", "primary_support_equation": "primary_native_mask AND finite(reference) AND proposed_valid AND fit_first_volume_geometry_valid AND fit_first_query_effective_mask AND finite(proposed, fit_first)", "metric_contract": "formal SCMR one-stage Fit-first; effective query mask is part of pairwise common support", "heldout_only": True, "no_learned_pose": True, "no_training": True, "no_reconstruction": True})
         staging.rename(output)
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True)

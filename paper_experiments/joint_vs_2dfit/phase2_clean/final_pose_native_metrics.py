@@ -25,6 +25,10 @@ def _record(path: Path) -> dict[str, str]:
     return {"path": str(path.resolve()), "sha256": sha256(path)}
 
 
+def _published_record(staging_path: Path, published_path: Path) -> dict[str, str]:
+    return {"path": str(published_path.resolve()), "sha256": sha256(staging_path)}
+
+
 def build_final_pose_native_metrics(*, direct_bundle_root: str | Path, fit_first_bundle_root: str | Path, r0_native_maps_root: str | Path, sparse_manifest: str | Path, mask_root: str | Path, output: str | Path) -> Path:
     """Evaluate both immutable endpoints on identical source/mask/valid support."""
     direct_root, fit_root, mask_root, output = (Path(value) for value in (direct_bundle_root, fit_first_bundle_root, mask_root, output))
@@ -33,7 +37,7 @@ def build_final_pose_native_metrics(*, direct_bundle_root: str | Path, fit_first
     sparse_identity = validate_formal_l100_sparse_manifest(sparse_manifest)
     if direct_manifest.get("schema") != "direct_native_prediction_bundle/v1":
         raise ValueError("direct bundle schema mismatch")
-    if fit_manifest.get("schema") != "fit_first_native_prediction_bundle/v6":
+    if fit_manifest.get("schema") != "fit_first_native_prediction_bundle/v5":
         raise ValueError("Fit-first bundle schema mismatch")
     if direct_manifest.get("endpoint") != fit_manifest.get("endpoint"):
         raise ValueError("endpoint mismatch: direct and Fit-first final-pose bundles must match")
@@ -85,8 +89,9 @@ def build_final_pose_native_metrics(*, direct_bundle_root: str | Path, fit_first
                 ref = np.concatenate(values["reference"]); support = np.ones(ref.size, bool)
                 aggregate_output[parameter][name] = {"common_support_voxels": int(ref.size), "proposed": _metrics(ref, np.concatenate(values["proposed"]), support), "fit_first": _metrics(ref, np.concatenate(values["fit_first"]), support)}
         primary_aggregate = {parameter: aggregate_output[parameter][PRIMARY_MASK] for parameter in PARAMETERS}
-        (staging / "aggregate_metrics.json").write_text(json.dumps({"schema": "final_pose_native_common_support_metrics/v4", "primary_mask": PRIMARY_MASK, "primary_support_equation": COMMON_SUPPORT_EQUATION, "primary_aggregate": primary_aggregate, "regions": aggregate_output, "fit_first_mask_semantics": "Fit-first effective query mask is part of pairwise common support; corrected Fit-first route is mask-aware v2"}, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        write_immutable_json(staging / "manifest.json", {"schema": "final_pose_native_bundle_metrics/v5", "subject": subject, "condition": "L100_fold0", "sparse_manifest_schema": sparse_identity["sparse_manifest_schema"], "sparse_identity": sparse_identity["sparse_identity"], "endpoint": direct_manifest["endpoint"], "direct_bundle": _record(direct_root / "manifest.json"), "fit_first_bundle": _record(fit_root / "manifest.json"), "mask_manifest": _record(mask_root / "manifest.json"), "primary_mask": PRIMARY_MASK, "primary_support_equation": COMMON_SUPPORT_EQUATION, "sensitivity_masks": [name for name in MASKS if name != PRIMARY_MASK], "metric_contract": "current-native primary mask plus final direct INR and mask-aware v2 Fit-first bundle on one paired valid support; Fit-first effective query mask is part of pairwise common support", "per_plane_records": rows, "aggregate_metrics": _record(staging / "aggregate_metrics.json"), "no_existing_metrics_overwritten": True})
+        aggregate_staging, aggregate_final = staging / "aggregate_metrics.json", output / "aggregate_metrics.json"
+        aggregate_staging.write_text(json.dumps({"schema": "final_pose_native_common_support_metrics/v4", "primary_mask": PRIMARY_MASK, "primary_support_equation": COMMON_SUPPORT_EQUATION, "primary_aggregate": primary_aggregate, "regions": aggregate_output, "fit_first_mask_semantics": "formal SCMR one-stage Fit-first; effective query mask is part of pairwise common support"}, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        write_immutable_json(staging / "manifest.json", {"schema": "final_pose_native_bundle_metrics/v5", "subject": subject, "condition": "L100_fold0", "sparse_manifest_schema": sparse_identity["sparse_manifest_schema"], "sparse_identity": sparse_identity["sparse_identity"], "endpoint": direct_manifest["endpoint"], "direct_bundle": _record(direct_root / "manifest.json"), "fit_first_bundle": _record(fit_root / "manifest.json"), "mask_manifest": _record(mask_root / "manifest.json"), "primary_mask": PRIMARY_MASK, "primary_support_equation": COMMON_SUPPORT_EQUATION, "sensitivity_masks": [name for name in MASKS if name != PRIMARY_MASK], "metric_contract": "current-native primary mask plus formal SCMR one-stage Fit-first bundle on one paired valid support; Fit-first effective query mask is part of pairwise common support", "per_plane_records": rows, "aggregate_metrics": _published_record(aggregate_staging, aggregate_final), "no_existing_metrics_overwritten": True})
         staging.rename(output)
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True)

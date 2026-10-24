@@ -9,7 +9,11 @@ import nibabel as nib
 import numpy as np
 import pytest
 
-from paper_experiments.joint_vs_2dfit.phase2_clean.fit_first_native_bundles import build_fit_first_native_prediction_bundle
+from paper_experiments.joint_vs_2dfit.phase2_clean.fit_first_native_bundles import (
+    _scmr_one_stage_group_records,
+    _scmr_output_slices,
+    build_fit_first_native_prediction_bundle,
+)
 from paper_experiments.joint_vs_2dfit.phase2_clean.contracts import sha256
 from paper_experiments.joint_vs_2dfit.phase2_clean import final5_batch_runner as runner
 from paper_experiments.joint_vs_2dfit.phase2_clean import matched_output
@@ -138,13 +142,13 @@ def test_scmr_one_stage_bundle_uses_parameter_final_slice_geometry_and_endpoint_
     (endpoint / "manifest.json").write_text(json.dumps({"schema": "phase4r_fixed_l100_fit_first_export_bundle/v2", "endpoint": "central", "parameters": parameters}))
     bundle = build_fit_first_native_prediction_bundle(baseline_root=root, r0_native_maps_root=r0, endpoint="central", endpoint_source_root=endpoint, output=tmp_path / "bundle")
     manifest = json.loads((bundle / "manifest.json").read_text())
-    assert manifest["schema"] == "fit_first_native_prediction_bundle/v6"
+    assert manifest["schema"] == "fit_first_native_prediction_bundle/v5"
     assert manifest["route"]["route_kind"] == "scmr_one_stage_fit_first"
     assert np.load(bundle / "planes/t1/sax/group000.npz")["prediction_ms"].item() == 1000.0
 
 
-def test_scmr_bundle_uses_input_stack_negative_determinant_reindex_not_final_slice_affine(tmp_path: Path) -> None:
-    """Changing this to infer the flip from final output affine must fail."""
+def test_scmr_one_stage_native_bundle_uses_input_affine_for_reindex_and_final_slice_for_pose(tmp_path: Path) -> None:
+    """Historical CYJ geometry: input representation flip and output pose differ."""
     sparse = tmp_path / "sparse.json"; sparse.write_text(json.dumps({"subject": "CYJ"}))
     root, r0, endpoint = tmp_path / "scmr", tmp_path / "r0", tmp_path / "endpoint"
     _scmr_three_stack_route(root, r0, sparse)
@@ -152,7 +156,10 @@ def test_scmr_bundle_uses_input_stack_negative_determinant_reindex_not_final_sli
     for parameter in ("t1", "t2"):
         target = endpoint / parameter; target.mkdir(parents=True)
         volume, mask = target / "volume_ms.nii.gz", target / "query_effective_mask.nii.gz"
-        nib.save(nib.Nifti1Image(np.ones((4, 4, 4), np.float32), np.eye(4)), volume)
+        # Positive-determinant final output slices all use identity pose.  The
+        # asymmetric x ramp makes a wrong descriptor visibly mirror rows.
+        values = np.indices((4, 4, 4), dtype=np.float32)[0]
+        nib.save(nib.Nifti1Image(values, np.eye(4)), volume)
         nib.save(nib.Nifti1Image(np.ones((4, 4, 4), np.uint8), np.eye(4)), mask)
         parameters[parameter] = {"effective_query_mask": {"path": str(mask.resolve()), "sha256": sha256(mask)}}
     (endpoint / "manifest.json").write_text(json.dumps({"schema": "phase4r_fixed_l100_fit_first_export_bundle/v2", "endpoint": "central", "parameters": parameters}))
@@ -160,6 +167,51 @@ def test_scmr_bundle_uses_input_stack_negative_determinant_reindex_not_final_sli
     manifest = json.loads((bundle / "manifest.json").read_text())
     flips = {plane["stack"]: plane["reindex_flip"]["flip_original_row"] for plane in manifest["planes"] if plane["parameter"] == "t1"}
     assert flips == {"sax": True, "2ch": False, "4ch": True}
+    # The sampled arrays are returned in original [row, col] order.  Negative
+    # input stack determinants map native row 0 to final output x=H-1.
+    assert np.array_equal(np.load(bundle / "planes/t1/sax/group000.npz")["prediction_ms"], [[1, 1, 1], [0, 0, 0]])
+    assert np.array_equal(np.load(bundle / "planes/t1/2ch/group000.npz")["prediction_ms"], [[0, 0, 0], [1, 1, 1]])
+    assert np.array_equal(np.load(bundle / "planes/t1/4ch/group000.npz")["prediction_ms"], [[1, 1, 1], [0, 0, 0]])
+
+
+def test_scmr_output_slice_lattice_requires_exact_37_output_ids(tmp_path: Path) -> None:
+    root = tmp_path / "route"
+    slices = root / "nesvor/t1/slices"; slices.mkdir(parents=True)
+    for index in range(37):
+        (slices / f"{index}.nii.gz").write_bytes(b"slice")
+    assert [path.name for path in _scmr_output_slices(root, "t1", 37)] == [f"{index}.nii.gz" for index in range(37)]
+    (slices / "18.nii.gz").unlink()
+    with pytest.raises(ValueError, match="exactly 0..36"):
+        _scmr_output_slices(root, "t1", 37)
+    (slices / "18.nii.gz").write_bytes(b"slice")
+    (slices / "00.nii.gz").write_bytes(b"duplicate zero")
+    with pytest.raises(ValueError, match="exactly 0..36"):
+        _scmr_output_slices(root, "t1", 37)
+
+
+def test_scmr_group_order_excludes_inactive_lax_and_requires_matching_output_count(tmp_path: Path) -> None:
+    sparse = tmp_path / "sparse.json"; sparse.write_text(json.dumps({"subject": "CYJ"}))
+    root, r0 = tmp_path / "scmr", tmp_path / "r0"
+    _scmr_three_stack_route(root, r0, sparse)
+    route = json.loads((root / "manifest.json").read_text())
+    route["active_stacks"] = ["sax", "4ch"]
+    (root / "manifest.json").write_text(json.dumps(route))
+    selected_path = root / "selected_standardized_native_maps/native_maps/manifest.json"
+    selected = json.loads(selected_path.read_text())
+    selected["stacks"]["2ch"]["training_stack_present"] = False
+    selected_path.write_text(json.dumps(selected))
+    for parameter in ("t1", "t2"):
+        (root / f"nesvor/{parameter}/slices/2.nii.gz").unlink()
+    groups = _scmr_one_stage_group_records(root, "t1")
+    assert [(item["stack"], item["output_slice_index"]) for item in groups] == [("sax", 0), ("4ch", 1)]
+    # A selected/exported additional group makes the required count three,
+    # while only output IDs 0..1 remain: fail before any filename guessing.
+    selected["stacks"]["sax"]["standardized_group_ids"] = [0, 1]
+    selected["stacks"]["sax"]["group_identity"].append({"standardized_group_idx": 1, "original_prestandardization_group_idx": 1})
+    selected_path.write_text(json.dumps(selected))
+    (root / "nesvor_inputs/sax/manifest.json").write_text(json.dumps({"group_idx": [0, 1]}))
+    with pytest.raises(ValueError, match="output-slice IDs"):
+        _scmr_one_stage_group_records(root, "t1")
 
 
 @pytest.mark.parametrize("mutation", ["extra_output_id", "input_group_order"])

@@ -28,7 +28,7 @@ def test_final_metrics_freeze_current_native_primary_on_single_common_support(mo
     direct = tmp_path / "direct"; (direct / "planes" / "sax").mkdir(parents=True)
     (direct / "manifest.json").write_text(json.dumps({"schema": "direct_native_prediction_bundle/v1", "endpoint": "central", "planes": [{"stack": "sax", "original_group_idx": 3, "path": "planes/sax/group003.npz"}]}), encoding="utf-8")
     np.savez_compressed(direct / "planes" / "sax" / "group003.npz", t1_ms=np.full((2, 2), 900.0), t2_ms=np.full((2, 2), 70.0))
-    fit = tmp_path / "fit"; (fit / "manifest.json").parent.mkdir(); (fit / "manifest.json").write_text(json.dumps({"schema": "fit_first_native_prediction_bundle/v6", "endpoint": "central"}), encoding="utf-8")
+    fit = tmp_path / "fit"; (fit / "manifest.json").parent.mkdir(); (fit / "manifest.json").write_text(json.dumps({"schema": "fit_first_native_prediction_bundle/v5", "endpoint": "central"}), encoding="utf-8")
     for parameter, value in (("t1", 910.0), ("t2", 75.0)):
         target = fit / "planes" / parameter / "sax"; target.mkdir(parents=True)
         np.savez_compressed(target / "group003.npz", prediction_ms=np.full((2, 2), value), volume_geometry_valid=np.ones((2, 2), bool), query_effective_mask=np.ones((2, 2), bool), valid=np.ones((2, 2), bool))
@@ -43,6 +43,8 @@ def test_final_metrics_freeze_current_native_primary_on_single_common_support(mo
     assert manifest["primary_support_equation"] == "primary_native_mask AND finite(reference) AND proposed_valid AND fit_first_volume_geometry_valid AND fit_first_query_effective_mask AND finite(proposed, fit_first)"
     assert manifest["sensitivity_masks"] == ["phase4r_l100"]
     assert manifest["subject"] == "DYL_2"
+    assert manifest["aggregate_metrics"] == {"path": str((output / "aggregate_metrics.json").resolve()), "sha256": sha256(output / "aggregate_metrics.json")}
+    assert ".staging-" not in manifest["aggregate_metrics"]["path"]
 
 
 def test_final_metrics_fail_closed_on_legacy_mask_provenance(tmp_path: Path) -> None:

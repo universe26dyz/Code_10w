@@ -16,7 +16,7 @@ def _volume(path: Path, value: float) -> None:
     nib.save(nib.Nifti1Image(np.full((4, 4, 1), value, np.float32), np.eye(4)), str(path))
 
 
-def _endpoint(root: Path, method: str, endpoint: str, *, subject: str = "CYJ") -> Path:
+def _endpoint(root: Path, method: str, endpoint: str, *, subject: str = "CYJ", route_schema: str = "phase4r_scmr_one_stage_fit_first/v1") -> Path:
     root.mkdir(parents=True)
     for parameter, value in (("t1", 900.0), ("t2", 70.0)):
         target = root / (f"{parameter.upper()}_3D.nii.gz" if method == "Proposed" else f"{parameter}/volume_ms.nii.gz")
@@ -27,7 +27,7 @@ def _endpoint(root: Path, method: str, endpoint: str, *, subject: str = "CYJ") -
     parameters = {} if method == "Proposed" else {parameter: {"effective_query_mask": {"path": str((root / parameter / "query_effective_mask.nii.gz").resolve()), "sha256": sha256(root / parameter / "query_effective_mask.nii.gz")}} for parameter in ("t1", "t2")}
     payload = {"schema": "phase4r_formal_proposed_export/v1" if method == "Proposed" else "phase4r_fixed_l100_fit_first_export_bundle/v2", "subject": subject, "condition": "L50_fold0", "method": method, "endpoint": endpoint, "parameters": parameters}
     if method == "Fit-first":
-        payload["fit_first_routes"] = {name: {"route_schema": "phase4r_intensity_preserving_fit_first/v2"} for name in ("l100", "sparse")}
+        payload["fit_first_routes"] = {name: {"route_schema": route_schema} for name in ("l100", "sparse")}
     (root / "manifest.json").write_text(json.dumps(payload), encoding="utf-8")
     return root
 
@@ -59,6 +59,9 @@ def test_sparse_evaluator_uses_only_heldout_original_geometry_and_current_native
     assert payload["primary_mask"] == "primary_native_mask"
     assert payload["regions"]["t1"]["all_lax"]["proposed"]["support_voxels"] == 2
     assert "learned pose" not in json.dumps(payload).lower()
+    published = json.loads((output / "manifest.json").read_text(encoding="utf-8"))["aggregate_metrics"]
+    assert published == {"path": str((output / "aggregate_metrics.json").resolve()), "sha256": sha256(output / "aggregate_metrics.json")}
+    assert ".staging-" not in published["path"]
 
 
 def test_sparse_evaluator_rejects_endpoint_mismatch(tmp_path: Path) -> None:
@@ -66,6 +69,13 @@ def test_sparse_evaluator_rejects_endpoint_mismatch(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="endpoint mismatch"):
         sparse.validate_sparse_endpoint_roots(_endpoint(tmp_path / "proposed", "Proposed", "central"), _endpoint(tmp_path / "fit", "Fit-first", "psf128"), "L50_fold0")
+
+
+def test_sparse_evaluator_rejects_old_two_stage_fit_first_route(tmp_path: Path) -> None:
+    from paper_experiments.joint_vs_2dfit.phase2_clean import final_sparse_native_metrics as sparse
+
+    with pytest.raises(ValueError, match="SCMR one-stage"):
+        sparse.validate_sparse_endpoint_roots(_endpoint(tmp_path / "proposed", "Proposed", "central"), _endpoint(tmp_path / "fit", "Fit-first", "central", route_schema="phase4r_intensity_preserving_fit_first/v2"), "L50_fold0")
 
 
 def test_sparse_evaluator_excludes_effective_mask_background_from_both_methods(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
