@@ -64,8 +64,44 @@ def test_standardized_reuse_baseline_exports_without_dictionary_refit_and_uses_s
     output, commands = baseline.build_baseline_run(prepared, "DYL_2", tmp_path / "fit_first", standardized_native_maps_root=reuse, standardized_reuse_manifest=reuse / "reuse_manifest.json")
 
     assert all("--sample-mask" in command and "--volume-mask" not in command and "--stack-masks" not in command for command in commands)
+    assert [len(np.load(output / f"selected_standardized_native_maps/native_maps/{stack}/native_maps.npz")["group_idx"]) for stack in ("sax", "2ch", "4ch")] == [12, 15, 10]
+    assert all("--registration stack" in command and "--no-transformation-optimization" not in command for command in commands)
     manifest = json.loads((output / "input_manifest.json").read_text())
     assert manifest["standardized_native_dictionary_reuse"]["dictionary_refit"] is False
+
+
+def test_standardized_sparse_baseline_selects_only_retained_groups_and_skips_empty_lax(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from paper_experiments.joint_vs_2dfit.phase2_clean import baseline
+    from paper_experiments.joint_vs_2dfit.phase2_clean.reuse_standardized_native_dictionary_maps import audit_standardized_native_dictionary_maps
+    from paper_experiments.joint_vs_2dfit.phase2_clean.standardize_subject_slices import standardize_subject_slices
+
+    prepared, native = tmp_path / "prepared", tmp_path / "native"
+    for stack, count in {"sax": 12, "2ch": 16, "4ch": 10}.items():
+        observation = prepared / "CYJ" / stack / "observations.npz"; _observations(observation, count); _native(native / stack, observation)
+    standardized = standardize_subject_slices(prepared, "CYJ", tmp_path / "standardized", git_sha="test")
+    reuse = audit_standardized_native_dictionary_maps(standardized / "slice_standardization_manifest.json", native, tmp_path / "reuse")
+    standardization = json.loads((standardized / "slice_standardization_manifest.json").read_text())
+    sparse_path = tmp_path / "sparse.json"; sparse_path.write_text("{}")
+    sparse = {"subject": "CYJ", "profile_id": "L50", "case_id": "L50_fold0", "fold_id": 0, "fold_count": 2, "git_sha": "a" * 40, "_manifest_path": str(sparse_path), "_manifest_sha256": sha256(sparse_path), "stacks": {}}
+    for stack, retained in {"sax": list(range(12)), "2ch": list(range(0, 15, 2)), "4ch": []}.items():
+        observed = standardization["stacks"][stack]["output_observation"]
+        sparse["stacks"][stack] = {"source_observation": observed, "retained_original_group_ids": retained, "training_stack_present": bool(retained)}
+    monkeypatch.setattr(baseline, "validate_sparse_profile_manifest", lambda *_args, **_kwargs: sparse)
+    output, commands = baseline.build_baseline_run(prepared, "CYJ", tmp_path / "fit_first", standardized_native_maps_root=reuse, standardized_reuse_manifest=reuse / "reuse_manifest.json", sparse_manifest=sparse_path, expected_generator_git_sha="a" * 40, expected_manifest_sha256=sha256(sparse_path))
+    assert len(commands) == 2
+    assert all("--registration stack" in command and "--no-transformation-optimization" not in command for command in commands)
+    assert all("/4ch/" not in command for command in commands)
+    assert np.load(output / "selected_standardized_native_maps/native_maps/2ch/native_maps.npz")["group_idx"].tolist() == list(range(0, 15, 2))
+    for parameter in ("t1", "t2"):
+        target = output / "nesvor" / parameter; target.mkdir(parents=True)
+        (target / "model.pt").write_bytes(parameter.encode()); (target / "result.json").write_text(json.dumps({"registration": "stack", "no_slice_scale": True}))
+        (target / "slices").mkdir(); (target / "slices/0.nii.gz").write_bytes(b"slice")
+    baseline.finalize_scmr_one_stage_fit_first(output)
+    route = json.loads((output / "manifest.json").read_text())
+    assert route["schema"] == "phase4r_scmr_one_stage_fit_first/v1"
+    assert route["active_stacks"] == ["sax", "2ch"]
+    assert route["exact_nesvor_commands"] == commands
+    assert route["independent_t1_t2"] is True and route["transformation_optimization_enabled"] is True
 
 
 @pytest.mark.parametrize("mutation, message", [("dictionary", "dictionary contract"), ("geometry", "content or geometry mismatch"), ("mapping", "mapping")])

@@ -18,8 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from .contracts import sha256
-from .fit_first_intensity_preserving import audit_intensity_preserving_final_pose
-from .fit_first_route_contract import INTENSITY_SCHEMA, resolve_fit_first_route
+from .fit_first_route_contract import SCMR_ONE_STAGE_SCHEMA, resolve_fit_first_route
 from .matched_output import formalize_proposed_export, export_fixed_l100_fit_first
 from .direct_native_bundles import build_direct_native_prediction_bundle
 from .fit_first_native_bundles import build_fit_first_native_prediction_bundle
@@ -103,7 +102,7 @@ def _paths(root: Path, record: CaseRecord) -> dict[str, Path]:
     subject, case = record.subject, record.case_id
     return {
         "proposed": root / "04_reconstruction" / "proposed" / subject / case,
-        "fit_first": root / "04_reconstruction" / "fit_first_intensity_preserving" / subject / case,
+        "fit_first": root / "04_reconstruction" / "fit_first_scmr_one_stage" / subject / case,
         "proposed_endpoint": root / "05_formal_endpoints" / "central" / "proposed" / subject / case,
         "fit_endpoint": root / "05_formal_endpoints" / "central" / "fit_first" / subject / case,
         "direct_bundle": root / "05_formal_endpoints" / "central" / "proposed_native_bundle" / subject / "L100",
@@ -168,22 +167,16 @@ def validate_proposed_reconstruction(path: Path, record: CaseRecord) -> Validati
     return ValidationResult(True, "SKIP_VALID", "valid Q002S640/K8 central-only reconstruction")
 
 
-def _fit_stage2_complete(path: Path) -> bool:
-    return all((path / "stage2_reconstruction" / parameter / "model.pt").is_file() for parameter in ("t1", "t2")) and (path / "registered_quantitative_inputs_gate.json").is_file()
-
-
 def validate_fit_first_reconstruction(path: Path, record: CaseRecord) -> ValidationResult:
     if not path.exists():
         return _invalid(path, "output absent")
-    if _fit_stage2_complete(path) and not (path / "final_pose_audit.json").is_file():
-        return ValidationResult(False, "AUDIT_ONLY", "Stage-2 is complete but final_pose_audit.json is absent")
     try:
         route = resolve_fit_first_route(path)
     except (FileNotFoundError, ValueError) as exc:
         return _invalid(path, str(exc))
-    if route.route_kind != "intensity_preserving_fit_first":
-        return _invalid(path, "historical Fit-first route is not a formal corrected baseline")
-    return ValidationResult(True, "SKIP_VALID", "valid intensity-preserving Stage-2 Fit-first reconstruction")
+    if route.route_kind != "scmr_one_stage_fit_first" or route.route_schema != SCMR_ONE_STAGE_SCHEMA:
+        return _invalid(path, "Fit-first route is not the formal SCMR one-stage baseline")
+    return ValidationResult(True, "SKIP_VALID", "valid SCMR one-stage Fit-first reconstruction")
 
 
 def _schema(path: Path, expected: str) -> ValidationResult:
@@ -202,7 +195,7 @@ def _matches_record(value: Any, path: Path) -> bool:
 
 
 def validate_fit_first_endpoint(path: Path, record: CaseRecord, records: dict[tuple[str, str], CaseRecord], root: Path) -> ValidationResult:
-    """Admit only mask-aware v2 Fit-first endpoint provenance for this case."""
+    """Admit only SCMR one-stage Fit-first endpoint provenance for this case."""
     if not path.exists():
         return _invalid(path, "output absent")
     try:
@@ -217,13 +210,10 @@ def validate_fit_first_endpoint(path: Path, record: CaseRecord, records: dict[tu
             route_record = routes.get(name) if isinstance(routes, dict) else None
             source_root = _paths(root, source_record)["fit_first"]
             route = resolve_fit_first_route(source_root)
-            if route.route_kind != "intensity_preserving_fit_first" or route.route_schema != INTENSITY_SCHEMA:
-                return _invalid(path, f"{name}: Fit-first route is not mask-aware v2")
-            if not isinstance(route_record, dict) or route_record.get("route_schema") != INTENSITY_SCHEMA or Path(str(route_record.get("source_fit_first_root", ""))).resolve() != source_root.resolve():
+            if route.route_kind != "scmr_one_stage_fit_first" or route.route_schema != SCMR_ONE_STAGE_SCHEMA:
+                return _invalid(path, f"{name}: Fit-first route is not SCMR one-stage")
+            if not isinstance(route_record, dict) or route_record.get("route_schema") != SCMR_ONE_STAGE_SCHEMA or Path(str(route_record.get("source_fit_first_root", ""))).resolve() != source_root.resolve():
                 return _invalid(path, f"{name}: endpoint route provenance mismatch")
-            audit = route_record.get("final_pose_audit")
-            if route.pose_audit_path is None or not _matches_record(audit, route.pose_audit_path):
-                return _invalid(path, f"{name}: endpoint final-pose audit provenance mismatch")
             models, results = route_record.get("formal_reconstruction_model"), route_record.get("parameter_results")
             if not isinstance(models, dict) or not isinstance(results, dict) or any(not _matches_record(models.get(parameter), route.models[parameter]) or not _matches_record(results.get(parameter), route.results[parameter]) for parameter in ("t1", "t2")):
                 return _invalid(path, f"{name}: endpoint reconstruction provenance mismatch")
@@ -245,7 +235,7 @@ def validate_fit_first_endpoint(path: Path, record: CaseRecord, records: dict[tu
                 return _invalid(path, f"{parameter}: endpoint volume/effective-mask provenance mismatch")
     except (FileNotFoundError, ValueError, KeyError, TypeError) as exc:
         return _invalid(path, str(exc))
-    return ValidationResult(True, "SKIP_VALID", "valid mask-aware v2 Fit-first endpoint")
+    return ValidationResult(True, "SKIP_VALID", "valid SCMR one-stage Fit-first endpoint")
 
 
 def validate_l100_metric(path: Path, record: CaseRecord, root: Path) -> ValidationResult:
@@ -268,7 +258,7 @@ def validate_l100_metric(path: Path, record: CaseRecord, root: Path) -> Validati
         if aggregate.get("schema") != "final_pose_native_common_support_metrics/v4" or FIT_FIRST_COMMON_SUPPORT_TERM not in str(aggregate.get("primary_support_equation", "")):
             return _invalid(path, "L100 aggregate does not record mask-aware common support")
         fit_bundle = _read(paths["fit_bundle"] / "manifest.json")
-        if fit_bundle.get("schema") != "fit_first_native_prediction_bundle/v4" or not _matches_record(fit_bundle.get("endpoint_source_manifest"), paths["fit_endpoint"] / "manifest.json"):
+        if fit_bundle.get("schema") != "fit_first_native_prediction_bundle/v5" or not _matches_record(fit_bundle.get("endpoint_source_manifest"), paths["fit_endpoint"] / "manifest.json"):
             return _invalid(path, "L100 Fit-first bundle endpoint provenance mismatch")
     except (FileNotFoundError, ValueError, TypeError) as exc:
         return _invalid(path, str(exc))
@@ -316,7 +306,7 @@ def build_batch_plan(registry: str | Path, final_root: str | Path, *, device: st
         paths = _paths(root, record)
         proposed, fit = validate_proposed_reconstruction(paths["proposed"], record), validate_fit_first_reconstruction(paths["fit_first"], record)
         endpoints = _schema(paths["proposed_endpoint"], "phase4r_formal_proposed_export/v1"), validate_fit_first_endpoint(paths["fit_endpoint"], record, records_by_key, root)
-        bundles = _schema(paths["direct_bundle"], "direct_native_prediction_bundle/v1"), _schema(paths["fit_bundle"], "fit_first_native_prediction_bundle/v4")
+        bundles = _schema(paths["direct_bundle"], "direct_native_prediction_bundle/v1"), _schema(paths["fit_bundle"], "fit_first_native_prediction_bundle/v5")
         support, mask, metric = _schema(paths["native_support"], "q004_direct_native_endpoint_audit/v2"), _schema(paths["native_mask"], "phase4r_current_native_central_component_mask/v1"), validate_l100_metric(paths["l100_metrics"], record, root)
         stages = {"proposed_reconstruction": _stage(proposed), "fit_first_reconstruction": _stage(fit), "proposed_endpoint": _stage(endpoints[0], dependency=not proposed.valid), "fit_first_endpoint": _stage(endpoints[1], dependency=not fit.valid), "proposed_native_bundle": _stage(bundles[0], dependency=not proposed.valid), "fit_first_native_bundle": _stage(bundles[1], dependency=not (fit.valid and endpoints[1].valid)), "l100_native_support": _stage(support, dependency=not (proposed.valid and endpoints[0].valid)), "current_native_mask": _stage(mask, dependency=not support.valid), "l100_metrics": _stage(metric, dependency=not (bundles[0].valid and bundles[1].valid and mask.valid))}
         l100_ready[record.subject] = all(value["state"] == "SKIP_VALID" for value in stages.values())
@@ -358,7 +348,7 @@ def _validate_stage_output(stage: str, record: CaseRecord, root: Path, records: 
     expected = {
         "proposed_endpoint": ("proposed_endpoint", "phase4r_formal_proposed_export/v1"),
         "proposed_native_bundle": ("direct_bundle", "direct_native_prediction_bundle/v1"),
-        "fit_first_native_bundle": ("fit_bundle", "fit_first_native_prediction_bundle/v4"),
+        "fit_first_native_bundle": ("fit_bundle", "fit_first_native_prediction_bundle/v5"),
         "l100_native_support": ("native_support", "q004_direct_native_endpoint_audit/v2"),
         "current_native_mask": ("native_mask", "phase4r_current_native_central_component_mask/v1"),
     }
@@ -410,7 +400,7 @@ def case_commands(record: CaseRecord, final_root: str | Path, *, device: str, py
     devices = normalize_device(device)
     proposed = [python, "-m", "quality_experiments.Q002_B6_roi_same_anchor_mse.run_q002_reconstruction", "--cropped-prepared-root", str(record.prepared_root), "--subject-id", record.subject, "--b6-model", PROPOSED_B6, "--expected-b6-model-sha256", PROPOSED_B6_SHA256, "--signal-simulator", DECODER, "--protocol", PROTOCOL, "--expected-protocol-sha256", PROTOCOL_SHA256, "--sparse-manifest", str(record.sparse_manifest), "--expected-sparse-generator-git-sha", record.generator_git_sha, "--expected-sparse-manifest-sha256", record.sparse_manifest_sha256, "--endpoint-policy", "central_only", "--output", str(paths["proposed"]), "--device", devices.torch_device, "--experiment-id", "Q002S640_B6_roi_same_anchor_mse", "--anchor-batch-size", "640"]
     fit_env = {"SUBJECT": record.subject, "PREPARED_ROOT": str(record.prepared_root), "STANDARDIZED_NATIVE_DICTIONARY_ROOT": str(root / "02_standardized_12_15_10" / "native_dictionary" / record.subject), "STANDARDIZED_REUSE_MANIFEST": str(root / "02_standardized_12_15_10" / "native_dictionary" / record.subject / "reuse_manifest.json"), "SPARSE_MANIFEST": str(record.sparse_manifest), "EXPECTED_GENERATOR_GIT_SHA": record.generator_git_sha, "EXPECTED_MANIFEST_SHA256": record.sparse_manifest_sha256, "NESVOR": nesvor, "OUTPUT": str(paths["fit_first"]), "DEVICE": devices.nesvor_device, "PYTHON": python}
-    return {"proposed_reconstruction": proposed, "fit_first_reconstruction": {"argv": ["bash", str(Path(__file__).with_name("server_commands") / "run_intensity_preserving_fit_first.sh")], "env": fit_env}}
+    return {"proposed_reconstruction": proposed, "fit_first_reconstruction": {"argv": ["bash", str(Path(__file__).with_name("server_commands") / "run_scmr_one_stage_fit_first.sh")], "env": fit_env}}
 
 
 def _state_root(final_root: Path) -> Path:
@@ -488,14 +478,7 @@ def execute_batch(registry: str | Path, final_root: str | Path, *, device: str, 
                 if local.valid:
                     continue
                 log = _state_root(root) / "logs" / record.subject / record.case_id / f"{stage}.log"
-                if local.state == "AUDIT_ONLY" and stage == "fit_first_reconstruction":
-                    try:
-                        audit_intensity_preserving_final_pose(root=_paths(root, record)["fit_first"])
-                        code = 0
-                    except Exception as exc:
-                        log.parent.mkdir(parents=True, exist_ok=True); log.write_text(f"{type(exc).__name__}: {exc}\n", encoding="utf-8")
-                        code = 1
-                elif local.state != "READY":
+                if local.state != "READY":
                     continue
                 elif stage in SUBPROCESS_STAGES:
                     code = _run_stage(stage, record, commands[stage], log)

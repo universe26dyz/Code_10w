@@ -50,11 +50,15 @@ def build_fit_first_native_prediction_bundle(*, audit_root: str | Path | None = 
             raise ValueError("audit_root must contain fit_first_native_pose_audit/v3")
         if audit.get("reconstruction_input_geometry_gate", {}).get("status") != "RECONSTRUCTION_INPUT_GEOMETRY_VALID":
             raise ValueError("RECONSTRUCTION_INPUT_GEOMETRY_MISMATCH: refusing final-pose bundle")
-    else:
+    elif route.route_kind == "intensity_preserving_fit_first":
         audit_root = baseline_root
         audit_path, audit = route.pose_audit_path, route.pose_audit
         if audit_path is None or audit is None or audit.get("schema") != INTENSITY_AUDIT_SCHEMA:
             raise ValueError("intensity-preserving final-pose audit is unavailable")
+    elif route.route_kind == "scmr_one_stage_fit_first":
+        audit_root, audit_path, audit = baseline_root, baseline_root / "manifest.json", None
+    else:
+        raise ValueError(f"unsupported formal Fit-first route {route.route_kind}")
     endpoint_manifest_path = endpoint_root / "manifest.json"
     if endpoint not in ("central", "psf128") or not endpoint_manifest_path.is_file():
         raise ValueError("Fit-first final-pose bundle requires a formal central or psf128 endpoint source")
@@ -82,7 +86,7 @@ def build_fit_first_native_prediction_bundle(*, audit_root: str | Path | None = 
                 raise ValueError(f"{parameter}: formal effective query mask is not binary")
             if route.route_kind == "legacy_fit_first":
                 group_records = audit["parameters"][parameter]["groups"]
-            else:
+            elif route.route_kind == "intensity_preserving_fit_first":
                 inputs = json.loads((baseline_root / "registered_quantitative_inputs" / "manifest.json").read_text(encoding="utf-8"))
                 group_records = []
                 for input_record in inputs.get("parameters", {}).get(parameter, []):
@@ -91,6 +95,20 @@ def build_fit_first_native_prediction_bundle(*, audit_root: str | Path | None = 
                     if not final_path.is_file():
                         raise FileNotFoundError(f"{parameter}/{stack}: Stage-2 final slice is missing")
                     group_records.append({"stack": stack, "original_group_idx": int(input_record["standardized_group_idx"]), "standardized_group_idx": int(input_record["standardized_group_idx"]), "original_prestandardization_group_idx": int(input_record["original_prestandardization_group_idx"]), "output_slice_index": index, "final_output_slice": _record(final_path), "reindex_flip": {"flip_original_row": bool(np.linalg.det(np.asarray(nib.load(str(final_path)).affine, float)[:3, :3]) < 0)}})
+            else:
+                route_manifest = json.loads((baseline_root / "manifest.json").read_text(encoding="utf-8"))
+                selected_path = Path(route_manifest["selected_standardized_native_maps"]["path"])
+                selected = json.loads(selected_path.read_text(encoding="utf-8"))
+                group_records = []
+                index = 0
+                for stack in route_manifest["active_stacks"]:
+                    identities = {int(item["standardized_group_idx"]): int(item["original_prestandardization_group_idx"]) for item in selected["stacks"][stack]["group_identity"]}
+                    for group in selected["stacks"][stack]["standardized_group_ids"]:
+                        final_path = route.final_slices[parameter] / f"{index}.nii.gz"
+                        if not final_path.is_file():
+                            raise FileNotFoundError(f"{parameter}/{stack}: one-stage final slice is missing")
+                        group_records.append({"stack": stack, "original_group_idx": int(group), "standardized_group_idx": int(group), "original_prestandardization_group_idx": identities[int(group)], "output_slice_index": index, "final_output_slice": _record(final_path), "reindex_flip": {"flip_original_row": bool(np.linalg.det(np.asarray(nib.load(str(final_path)).affine, float)[:3, :3]) < 0)}})
+                        index += 1
             for group_record in group_records:
                 stack, group = group_record["stack"], int(group_record["original_group_idx"])
                 shape = _r0_shape(r0_root, stack, group, parameter)
@@ -104,11 +122,12 @@ def build_fit_first_native_prediction_bundle(*, audit_root: str | Path | None = 
                 target.parent.mkdir(parents=True, exist_ok=True)
                 np.savez_compressed(target, prediction_ms=np.asarray(prediction, np.float32), volume_geometry_valid=np.asarray(volume_geometry_valid, bool), query_effective_mask=np.asarray(query_effective_mask, bool), valid=np.asarray(valid, bool), world_ras_mm=np.asarray(world[:3], np.float32))
                 plane_record = {"parameter": parameter, "stack": stack, "original_group_idx": group, "shape_rc": list(shape), "path": str(target.relative_to(staging)), "sha256": sha256(target), "volume_ms": _record(volume_path), "formal_effective_query_mask": effective_mask_record, "effective_mask_native_mapping": "nearest-neighbor order=0 on original native plane", "final_output_slice": group_record["final_output_slice"], "output_slice_index": group_record["output_slice_index"], "reindex_flip": group_record["reindex_flip"]}
-                if route.route_kind == "intensity_preserving_fit_first":
+                if route.route_kind in ("intensity_preserving_fit_first", "scmr_one_stage_fit_first"):
                     plane_record.update({"standardized_group_idx": group_record["standardized_group_idx"], "original_prestandardization_group_idx": group_record["original_prestandardization_group_idx"]})
                 planes.append(plane_record)
-        schema = "fit_first_native_prediction_bundle/v2" if route.route_kind == "legacy_fit_first" else "fit_first_native_prediction_bundle/v4"
-        write_immutable_json(staging / "manifest.json", {"schema": schema, "route": route.provenance(), "audit_manifest": _record(audit_path), "reconstruction_input_geometry_gate": "RECONSTRUCTION_INPUT_GEOMETRY_VALID" if route.route_kind == "legacy_fit_first" else "REGISTERED_QUANTITATIVE_INPUTS_VALID", "endpoint": endpoint, "endpoint_source_manifest": _record(endpoint_manifest_path), "coordinate_contract": "original native [row,col] lattice -> proven NeSVoR reindex/negative-determinant flip -> parameter-specific final output-slice physical RAS -> endpoint-specific volume_ms linear sample -> original [row,col] ordering", "effective_mask_contract": "formal endpoint effective query mask SHA-verified and mapped to each native plane with nearest-neighbour order=0; valid = volume_geometry_valid AND query_effective_mask AND finite(prediction)", "output_slices_role": "geometry only; Stage-1 registration pixels are never quantitative predictions; prediction values are sampled from formal Stage-2 endpoint volume_ms", "parameter_pose_policy": "T1 and T2 use independently optimised/frozen parameter-specific final poses", "planes": planes, "no_training": True, "no_reconstruction": True, "no_metrics_modified": True})
+        schema = "fit_first_native_prediction_bundle/v2" if route.route_kind == "legacy_fit_first" else "fit_first_native_prediction_bundle/v5" if route.route_kind == "scmr_one_stage_fit_first" else "fit_first_native_prediction_bundle/v4"
+        route_evidence = _record(audit_path)
+        write_immutable_json(staging / "manifest.json", {"schema": schema, "route": route.provenance(), "route_manifest": route_evidence, "reconstruction_input_geometry_gate": "RECONSTRUCTION_INPUT_GEOMETRY_VALID" if route.route_kind == "legacy_fit_first" else "SCMR_ONE_STAGE_ROUTE_VALID" if route.route_kind == "scmr_one_stage_fit_first" else "REGISTERED_QUANTITATIVE_INPUTS_VALID", "endpoint": endpoint, "endpoint_source_manifest": _record(endpoint_manifest_path), "coordinate_contract": "original native [row,col] lattice -> proven NeSVoR reindex/negative-determinant flip -> parameter-specific final output-slice physical RAS -> endpoint-specific volume_ms linear sample -> original [row,col] ordering", "effective_mask_contract": "formal endpoint effective query mask SHA-verified and mapped to each native plane with nearest-neighbour order=0; valid = volume_geometry_valid AND query_effective_mask AND finite(prediction)", "output_slices_role": "geometry only; predictions are sampled from formal endpoint volume_ms, never output-slice pixels", "parameter_pose_policy": "T1 and T2 use independently optimised parameter-specific one-stage poses", "planes": planes, "no_training": True, "no_reconstruction": True, "no_metrics_modified": True})
         staging.rename(output)
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True)

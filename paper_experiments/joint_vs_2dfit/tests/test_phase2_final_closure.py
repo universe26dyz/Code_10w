@@ -259,7 +259,7 @@ def test_baseline_execute_creates_nesvor_output_dirs_before_first_command(tmp_pa
     root.mkdir()
     with pytest.raises(FileExistsError, match="refusing overwrite"):
         baseline.build_baseline_run(tmp_path, "subject", root)
-    monkeypatch.setattr(baseline, "build_baseline_run", lambda *args: (root, commands))
+    monkeypatch.setattr(baseline, "build_baseline_run", lambda *args, **kwargs: (root, commands))
     monkeypatch.setattr(sys, "argv", ["baseline", "--prepared-root", "prepared", "--subject-id", "synthetic", "--output", str(root), "--execute"])
     def fake_run(command, **kwargs):
         seen.append((command, (root / "nesvor/t1").is_dir(), (root / "nesvor/t2").is_dir()))

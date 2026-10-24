@@ -23,7 +23,7 @@ def _new_route(root: Path, *, gate: str = "REGISTERED_QUANTITATIVE_INPUTS_VALID"
         target = root / "stage2_reconstruction" / parameter; target.mkdir(parents=True)
         (target / "model.pt").write_bytes(parameter.encode())
         (target / "result.json").write_text(json.dumps(_result(root / f"registered_quantitative_inputs/{parameter}/slices", frozen=frozen, scaled=scaled)))
-        (target / "slices").mkdir()
+        (target / "slices").mkdir(); (target / "slices/0.nii.gz").write_bytes(b"slice")
         stack = root / f"nesvor_inputs/sax/{parameter}/stack.nii.gz"; stack.parent.mkdir(parents=True); stack.write_bytes(b"stack")
         mask = root / f"nesvor_inputs/sax/{parameter}/stack_mask.nii.gz"; mask.write_bytes(b"mask")
         stage1 = root / f"stage1_registration/{parameter}"; stage1.mkdir(parents=True)
@@ -43,7 +43,7 @@ def test_resolves_legacy_models_without_new_route_admission(tmp_path: Path) -> N
         target = root / "nesvor" / parameter; target.mkdir(parents=True)
         (target / "model.pt").write_bytes(b"legacy")
         (target / "result.json").write_text("{}")
-        (target / "slices").mkdir()
+        (target / "slices").mkdir(); (target / "slices/0.nii.gz").write_bytes(b"slice")
     route = resolve_fit_first_route(root)
     assert route.route_kind == "legacy_fit_first"
     assert route.models["t1"] == root / "nesvor/t1/model.pt"
@@ -55,6 +55,34 @@ def test_resolves_intensity_preserving_stage2_models(tmp_path: Path) -> None:
     assert route.route_kind == "intensity_preserving_fit_first"
     assert route.models["t1"] == root / "stage2_reconstruction/t1/model.pt"
     assert "stage1_registration" not in str(route.models["t1"])
+
+
+def test_resolves_formal_scmr_one_stage_models_without_two_stage_audit(tmp_path: Path) -> None:
+    root = tmp_path / "scmr"; root.mkdir()
+    parameters = {}
+    for parameter in ("t1", "t2"):
+        target = root / "nesvor" / parameter; target.mkdir(parents=True)
+        model, result = target / "model.pt", target / "result.json"
+        model.write_bytes(parameter.encode()); result.write_text(json.dumps({"registration": "stack", "no_slice_scale": True}))
+        (target / "slices").mkdir(); (target / "slices/0.nii.gz").write_bytes(b"slice")
+        parameters[parameter] = {"model": {"path": str(model.resolve()), "sha256": sha256(model)}, "result": {"path": str(result.resolve()), "sha256": sha256(result)}, "final_slices": str((target / "slices").resolve())}
+    selected = root / "selected_standardized_native_maps"; selected.mkdir()
+    selection = selected / "manifest.json"; selection.write_text(json.dumps({"schema": "phase4r_fit_first_selected_standardized_native_maps/v1", "stacks": {"sax": {"training_stack_present": True, "standardized_group_ids": [0]}}}))
+    sparse = root / "sparse.json"; sparse.write_text("{}")
+    commands = root / "commands.sh"; commands.write_text("nesvor reconstruct --input-stacks sax --registration stack\n")
+    (root / "manifest.json").write_text(json.dumps({
+        "schema": "phase4r_scmr_one_stage_fit_first/v1", "subject": "CYJ", "case_id": "L100",
+        "profile_id": "L100", "fold_id": None, "active_stacks": ["sax"], "no_dictionary_refit": True,
+        "independent_t1_t2": True, "transformation_optimization_enabled": True, "no_slice_scale": True,
+        "nesvor_version": "nesvor_v5_128_w1", "commands": {"path": str(commands.resolve()), "sha256": sha256(commands)},
+        "sparse_manifest": {"path": str(sparse.resolve()), "sha256": sha256(sparse), "generator_git_sha": "a" * 40},
+        "selected_standardized_native_maps": {"path": str(selection.resolve()), "sha256": sha256(selection)},
+        "parameters": parameters,
+    }))
+    route = resolve_fit_first_route(root)
+    assert route.route_kind == "scmr_one_stage_fit_first"
+    assert route.models["t1"] == root / "nesvor/t1/model.pt"
+    assert route.pose_audit_path is None
 
 
 @pytest.mark.parametrize(("kwargs", "message"), [

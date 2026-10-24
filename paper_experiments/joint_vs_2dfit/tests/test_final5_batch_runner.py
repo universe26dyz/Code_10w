@@ -65,10 +65,10 @@ def test_existing_invalid_output_is_blocked_without_delete(tmp_path: Path, monke
     assert invalid.is_dir()
 
 
-def test_maskless_v3_fit_first_bundle_cannot_skip_valid(tmp_path: Path) -> None:
+def test_pre_scmr_fit_first_bundle_cannot_skip_valid(tmp_path: Path) -> None:
     bundle = tmp_path / "fit_bundle"; bundle.mkdir()
-    (bundle / "manifest.json").write_text(json.dumps({"schema": "fit_first_native_prediction_bundle/v3"}))
-    result = runner._schema(bundle, "fit_first_native_prediction_bundle/v4")
+    (bundle / "manifest.json").write_text(json.dumps({"schema": "fit_first_native_prediction_bundle/v4"}))
+    result = runner._schema(bundle, "fit_first_native_prediction_bundle/v5")
     assert not result.valid and result.state == "BLOCKED_EXISTING_INVALID"
 
 
@@ -80,6 +80,7 @@ def test_commands_are_serial_gpu_and_sparse_fit_uses_subject_l100_mask(tmp_path:
     assert commands["proposed_reconstruction"][0] == "python"
     assert commands["proposed_reconstruction"][commands["proposed_reconstruction"].index("--device") + 1] == "cuda:0"
     assert commands["fit_first_reconstruction"]["env"]["DEVICE"] == "0"
+    assert commands["fit_first_reconstruction"]["argv"][1].endswith("run_scmr_one_stage_fit_first.sh")
     assert "--signal-simulator" in commands["proposed_reconstruction"]
     assert "--expected-decoder-sha256" not in commands["proposed_reconstruction"]
     for flag in ("--expected-b6-model-sha256", "--expected-protocol-sha256", "--expected-sparse-generator-git-sha", "--expected-sparse-manifest-sha256"):
@@ -187,24 +188,31 @@ def test_old_fit_first_endpoint_schema_is_not_admitted(tmp_path: Path) -> None:
     assert not result.valid and result.state == "BLOCKED_EXISTING_INVALID"
 
 
-def test_mask_aware_v2_fit_first_endpoint_is_admitted(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_two_stage_fit_first_route_cannot_skip_formal_scmr_reconstruction(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    path = tmp_path / "two_stage"; path.mkdir()
+    monkeypatch.setattr(runner, "resolve_fit_first_route", lambda _path: SimpleNamespace(route_kind="intensity_preserving_fit_first", route_schema="phase4r_intensity_preserving_fit_first/v2"))
+    record = runner.CaseRecord("CYJ", "L100", "L100", None, 1, tmp_path / "sparse.json", "a" * 64, "b" * 40, tmp_path)
+    result = runner.validate_fit_first_reconstruction(path, record)
+    assert not result.valid and result.state == "BLOCKED_EXISTING_INVALID"
+
+
+def test_scmr_one_stage_fit_first_endpoint_is_admitted(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     record = runner.CaseRecord("CYJ", "L100", "L100", None, 1, tmp_path / "sparse.json", "a" * 64, "b" * 40, tmp_path)
     root, paths = tmp_path / "final", runner._paths(tmp_path / "final", record)
     source = paths["fit_first"]; source.mkdir(parents=True)
-    audit = source / "final_pose_audit.json"; audit.write_text("{}")
     models, results = {}, {}
     for parameter in ("t1", "t2"):
-        model = source / f"stage2_reconstruction/{parameter}/model.pt"; result = source / f"stage2_reconstruction/{parameter}/result.json"
+        model = source / f"nesvor/{parameter}/model.pt"; result = source / f"nesvor/{parameter}/result.json"
         model.parent.mkdir(parents=True, exist_ok=True); model.write_bytes(parameter.encode()); result.write_text("{}")
         models[parameter], results[parameter] = model, result
-    monkeypatch.setattr(runner, "resolve_fit_first_route", lambda path: SimpleNamespace(route_kind="intensity_preserving_fit_first", route_schema="phase4r_intensity_preserving_fit_first/v2", pose_audit_path=Path(path) / "final_pose_audit.json", models=models, results=results))
+    monkeypatch.setattr(runner, "resolve_fit_first_route", lambda path: SimpleNamespace(route_kind="scmr_one_stage_fit_first", route_schema="phase4r_scmr_one_stage_fit_first/v1", models=models, results=results))
     parameters = {}
     for parameter in ("t1", "t2"):
         volume, mask = paths["fit_endpoint"] / parameter / "volume_ms.nii.gz", paths["fit_endpoint"] / parameter / "query_effective_mask.nii.gz"
         volume.parent.mkdir(parents=True, exist_ok=True); volume.write_bytes(parameter.encode()); mask.write_bytes(b"mask")
         parameters[parameter] = {"schema": "phase4r_fixed_l100_fit_first_export/v2", "subject": "CYJ", "condition": "L100", "endpoint": "central", "parameter": parameter, "output_volume_ms": {"path": str(volume.resolve()), "sha256": runner.sha256(volume)}, "effective_query_mask": {"path": str(mask.resolve()), "sha256": runner.sha256(mask)}}
         (paths["fit_endpoint"] / parameter / "manifest.json").write_text(json.dumps(parameters[parameter]))
-    route = {"route_schema": "phase4r_intensity_preserving_fit_first/v2", "source_fit_first_root": str(source.resolve()), "final_pose_audit": {"path": str(audit.resolve()), "sha256": runner.sha256(audit)}, "formal_reconstruction_model": {parameter: {"path": str(models[parameter].resolve()), "sha256": runner.sha256(models[parameter])} for parameter in models}, "parameter_results": {parameter: {"path": str(results[parameter].resolve()), "sha256": runner.sha256(results[parameter])} for parameter in results}}
+    route = {"route_schema": "phase4r_scmr_one_stage_fit_first/v1", "source_fit_first_root": str(source.resolve()), "formal_reconstruction_model": {parameter: {"path": str(models[parameter].resolve()), "sha256": runner.sha256(models[parameter])} for parameter in models}, "parameter_results": {parameter: {"path": str(results[parameter].resolve()), "sha256": runner.sha256(results[parameter])} for parameter in results}}
     for parameter in ("t1", "t2"):
         parameters[parameter]["fit_first_routes"] = {"l100": route, "sparse": route}
         (paths["fit_endpoint"] / parameter / "manifest.json").write_text(json.dumps(parameters[parameter]))

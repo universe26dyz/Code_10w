@@ -51,6 +51,27 @@ def _route(root: Path, r0: Path, endpoint: Path) -> None:
     (endpoint / "manifest.json").write_text(json.dumps({"schema": "phase4r_fixed_l100_fit_first_export_bundle/v2", "endpoint": "central", "parameters": parameters}))
 
 
+def _scmr_route(root: Path, r0: Path, sparse_manifest: Path, case_id: str) -> None:
+    root.mkdir(parents=True)
+    selected = root / "selected_standardized_native_maps" / "native_maps" / "sax"; selected.mkdir(parents=True)
+    np.savez_compressed(selected / "native_maps.npz", group_idx=np.array([0]), t1_ms=np.ones((1, 1, 1)), t2_ms=np.ones((1, 1, 1)), b1=np.ones((1, 1, 1)))
+    np.savez_compressed(selected / "geometry.npz", affine_lps_rc=np.eye(4)[None], pixel_spacing_rc_mm=np.ones((1, 2)), slice_thickness_mm=np.ones(1))
+    selection = selected.parent / "manifest.json"
+    selection.write_text(json.dumps({"schema": "phase4r_fit_first_selected_standardized_native_maps/v1", "stacks": {"sax": {"training_stack_present": True, "standardized_group_ids": [0], "group_identity": [{"standardized_group_idx": 0, "original_prestandardization_group_idx": 0}]}}}))
+    r0_stack = r0 / "sax"; r0_stack.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(r0_stack / "native_maps.npz", group_idx=np.array([0]), t1_ms=np.ones((1, 1, 1)), t2_ms=np.ones((1, 1, 1)))
+    commands = root / "commands.sh"; commands.write_text("nesvor reconstruct --input-stacks sax --registration stack --no-slice-scale\n")
+    parameters = {}
+    for parameter in ("t1", "t2"):
+        target = root / "nesvor" / parameter; target.mkdir(parents=True)
+        model, result = target / "model.pt", target / "result.json"
+        model.write_bytes(parameter.encode()); result.write_text(json.dumps({"registration": "stack", "no_slice_scale": True}))
+        slices = target / "slices"; slices.mkdir()
+        nib.save(nib.Nifti1Image(np.zeros((1, 1, 1)), np.eye(4)), slices / "0.nii.gz")
+        parameters[parameter] = {"model": {"path": str(model.resolve()), "sha256": sha256(model)}, "result": {"path": str(result.resolve()), "sha256": sha256(result)}, "final_slices": str(slices.resolve())}
+    (root / "manifest.json").write_text(json.dumps({"schema": "phase4r_scmr_one_stage_fit_first/v1", "subject": "CYJ", "case_id": case_id, "profile_id": case_id.split("_fold")[0], "fold_id": None, "active_stacks": ["sax"], "no_dictionary_refit": True, "independent_t1_t2": True, "transformation_optimization_enabled": True, "no_slice_scale": True, "nesvor_version": "nesvor_v5_128_w1", "commands": {"path": str(commands.resolve()), "sha256": sha256(commands)}, "sparse_manifest": {"path": str(sparse_manifest.resolve()), "sha256": sha256(sparse_manifest), "generator_git_sha": "a" * 40}, "selected_standardized_native_maps": {"path": str(selection.resolve()), "sha256": sha256(selection)}, "selected_group_ids": {"sax": [0], "2ch": [], "4ch": []}, "parameters": parameters}))
+
+
 def test_intensity_preserving_bundle_uses_stage2_pose_and_endpoint_values_not_stage1_pixels(tmp_path: Path) -> None:
     root, r0, endpoint = tmp_path / "fit", tmp_path / "r0", tmp_path / "endpoint"
     _route(root, r0, endpoint)
@@ -64,6 +85,25 @@ def test_intensity_preserving_bundle_uses_stage2_pose_and_endpoint_values_not_st
     assert not np.load(bundle / "planes/t1/sax/group000.npz")["valid"].item()
 
 
+def test_scmr_one_stage_bundle_uses_parameter_final_slice_geometry_and_endpoint_values(tmp_path: Path) -> None:
+    sparse = tmp_path / "sparse.json"; sparse.write_text(json.dumps({"subject": "CYJ"}))
+    root, r0, endpoint = tmp_path / "scmr", tmp_path / "r0", tmp_path / "endpoint"
+    _scmr_route(root, r0, sparse, "L100")
+    parameters = {}
+    for parameter, value in (("t1", 1000.0), ("t2", 100.0)):
+        target = endpoint / parameter; target.mkdir(parents=True)
+        volume, mask = target / "volume_ms.nii.gz", target / "query_effective_mask.nii.gz"
+        nib.save(nib.Nifti1Image(np.full((2, 2, 2), value), np.eye(4)), volume)
+        nib.save(nib.Nifti1Image(np.ones((2, 2, 2), np.uint8), np.eye(4)), mask)
+        parameters[parameter] = {"effective_query_mask": {"path": str(mask.resolve()), "sha256": sha256(mask)}}
+    (endpoint / "manifest.json").write_text(json.dumps({"schema": "phase4r_fixed_l100_fit_first_export_bundle/v2", "endpoint": "central", "parameters": parameters}))
+    bundle = build_fit_first_native_prediction_bundle(baseline_root=root, r0_native_maps_root=r0, endpoint="central", endpoint_source_root=endpoint, output=tmp_path / "bundle")
+    manifest = json.loads((bundle / "manifest.json").read_text())
+    assert manifest["schema"] == "fit_first_native_prediction_bundle/v5"
+    assert manifest["route"]["route_kind"] == "scmr_one_stage_fit_first"
+    assert np.load(bundle / "planes/t1/sax/group000.npz")["prediction_ms"].item() == 1000.0
+
+
 def test_fixed_l100_builder_routes_are_admitted_by_final5_validator(tmp_path: Path, monkeypatch) -> None:
     """Exercise the real endpoint builder while mocking only NeSVoR runtime calls."""
     root = tmp_path / "final"
@@ -72,8 +112,8 @@ def test_fixed_l100_builder_routes_are_admitted_by_final5_validator(tmp_path: Pa
     l100 = runner.CaseRecord("CYJ", "L100", "L100", None, 1, sparse_manifest, sha256(sparse_manifest), "a" * 40, tmp_path)
     sparse = runner.CaseRecord("CYJ", "L50_fold0", "L50", 0, 2, sparse_manifest, sha256(sparse_manifest), "a" * 40, tmp_path)
     l100_root, sparse_root = runner._paths(root, l100)["fit_first"], runner._paths(root, sparse)["fit_first"]
-    _route(l100_root, tmp_path / "r0", tmp_path / "unused_l100_endpoint")
-    _route(sparse_root, tmp_path / "r0", tmp_path / "unused_sparse_endpoint")
+    _scmr_route(l100_root, tmp_path / "r0", sparse_manifest, "L100")
+    _scmr_route(sparse_root, tmp_path / "r0", sparse_manifest, "L50_fold0")
     nesvor = tmp_path / "nesvor"; nesvor.write_text("")
     nesvor.with_name("python").write_text("")
 
@@ -121,11 +161,8 @@ def test_fixed_l100_builder_routes_are_admitted_by_final5_validator(tmp_path: Pa
 
     write_routes(None)
     assert not runner.validate_fit_first_endpoint(output, sparse, records, root).valid
-    for provenance_key in ("formal_reconstruction_model", "parameter_results", "final_pose_audit"):
+    for provenance_key in ("formal_reconstruction_model", "parameter_results"):
         changed_routes = deepcopy(routes)
-        if provenance_key == "final_pose_audit":
-            changed_routes["l100"][provenance_key]["sha256"] = "0" * 64
-        else:
-            changed_routes["l100"][provenance_key]["t1"]["sha256"] = "0" * 64
+        changed_routes["l100"][provenance_key]["t1"]["sha256"] = "0" * 64
         write_routes(changed_routes)
         assert not runner.validate_fit_first_endpoint(output, sparse, records, root).valid
