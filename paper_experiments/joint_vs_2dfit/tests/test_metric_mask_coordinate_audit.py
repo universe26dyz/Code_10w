@@ -85,8 +85,23 @@ def test_audit_writes_complete_qc_inventory_when_all_metric_artifacts_are_missin
     registry = tmp_path / "registry.json"; registry.write_text("{}", encoding="utf-8")
     record = CaseRecord("DYL_2", "L50_fold0", "L50", 0, 2, tmp_path / "sparse.json", "a" * 64, "b" * 40, tmp_path)
     monkeypatch.setattr(audit, "load_final5_registry", lambda _path: [record])
-    monkeypatch.setattr(audit, "build_batch_plan", lambda *_args, **_kwargs: {"cases": {"DYL_2/L50_fold0": {"stages": {"sparse_metrics": {"state": "BLOCKED_DEPENDENCY", "reason": "missing endpoint"}}}}})
-    output = audit.run_metric_mask_coordinate_audit(registry=registry, final5_root=tmp_path / "final5", output=tmp_path / "final5" / "07_qc" / "audit", figures=False)
+    monkeypatch.setattr(audit, "build_batch_plan", lambda *_args, **_kwargs: {"cases": {"DYL_2/L50_fold0": {"stages": {"final_native_grid_metrics": {"state": "BLOCKED_DEPENDENCY", "reason": "missing endpoint"}}}}})
+    output = audit.run_metric_mask_coordinate_audit(registry=registry, final5_root=tmp_path / "final5", output=tmp_path / "final5" / "07_qc" / "audit", device="cpu", figures=False)
     assert (output / "case_inventory.csv").is_file()
     assert (output / "per_plane_mask_counts.csv").is_file()
     assert "MISSING" in (output / "case_inventory.csv").read_text(encoding="utf-8")
+
+
+def test_converter_propagates_explicit_device(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    from paper_experiments.joint_vs_2dfit.phase2_clean import metric_mask_coordinate_audit as audit
+
+    captured: list[str] = []
+    class Space:
+        def train_ras_to_physical(self, points): return points
+    class Torch:
+        @staticmethod
+        def from_numpy(value): return value
+    monkeypatch.setattr("paper_experiments.joint_vs_2dfit.phase2_clean.direct_native_endpoint_audit._load_model", lambda _checkpoint, _prepared, device: captured.append(device) or (object(), Space(), Torch()))
+    manifest = {"checkpoint": {"path": str(tmp_path / "model.pt")}, "prepared_observations": {stack: {"path": str(tmp_path / f"{stack}.npz")} for stack in ("sax", "2ch", "4ch")}}
+    audit._proposed_physical_converter(tmp_path, manifest, device="cuda:0")
+    assert captured == ["cuda:0"]

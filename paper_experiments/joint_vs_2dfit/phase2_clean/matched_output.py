@@ -127,6 +127,22 @@ def verified_fit_first_effective_query_mask(endpoint_root: str | Path, parameter
     return expected, _record(expected)
 
 
+def verified_fit_first_sparse_checkpoint_mask(endpoint_root: str | Path, parameter: str) -> tuple[Path, dict[str, str]]:
+    """Resolve the formal endpoint's immutable sparse checkpoint mask fail-closed."""
+    root = Path(endpoint_root)
+    manifest_path = root / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if manifest.get("schema") != "phase4r_fixed_l100_fit_first_export_bundle/v2":
+        raise ValueError("Fit-first formal endpoint schema mismatch")
+    record = manifest.get("parameters", {}).get(parameter, {}).get("sparse_checkpoint_mask")
+    expected = root / parameter / "sparse_checkpoint_mask.nii.gz"
+    if not isinstance(record, Mapping) or Path(str(record.get("path", ""))).resolve() != expected.resolve():
+        raise ValueError(f"{parameter}: formal endpoint sparse checkpoint-mask provenance mismatch")
+    if not expected.is_file() or record.get("sha256") != sha256(expected):
+        raise ValueError(f"{parameter}: formal endpoint sparse checkpoint-mask SHA256 mismatch")
+    return expected, _record(expected)
+
+
 def _training_psf_from_manifest(payload: Mapping[str, Any]) -> dict[str, Any]:
     """Preserve declared NeSVoR training semantics without inferring equivalence."""
     candidates = (payload.get("nesvor_training_n_samples"), payload.get("n_samples"), payload.get("training_n_samples"))

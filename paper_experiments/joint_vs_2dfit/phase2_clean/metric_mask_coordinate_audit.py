@@ -218,16 +218,16 @@ def _extent(cache: Mapping[str, Any], index: int, shape: tuple[int, int]) -> lis
     return [0.0, (shape[0] - 1) * float(spacing[0]), 0.0, (shape[1] - 1) * float(spacing[1])]
 
 
-def _proposed_physical_converter(direct_root: Path, manifest: Mapping[str, Any]) -> Callable[[np.ndarray], Any]:
-    """Load only the published checkpoint/model-space transform on CPU."""
+def _proposed_physical_converter(direct_root: Path, manifest: Mapping[str, Any], *, device: str) -> Callable[[np.ndarray], Any]:
+    """Load only the published checkpoint/model-space transform on the requested device."""
     from .direct_native_endpoint_audit import _load_model
     checkpoint = Path(manifest["checkpoint"]["path"])
     prepared = [Path(manifest["prepared_observations"][stack]["path"]) for stack in ("sax", "2ch", "4ch")]
-    _model, space, torch = _load_model(checkpoint, prepared, "cpu")
+    _model, space, torch = _load_model(checkpoint, prepared, device)
     return lambda points: space.train_ras_to_physical(torch.from_numpy(np.asarray(points, np.float32)))
 
 
-def _l100_audit(record: CaseRecord, root: Path, qc: Path, *, figures: bool) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+def _l100_audit(record: CaseRecord, root: Path, qc: Path, *, figures: bool, device: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
     import nibabel as nib
     paths = _paths(root, record); direct_root, fit_root, mask_root, metric_root = paths["direct_bundle"], paths["fit_bundle"], paths["native_mask"], paths["l100_metrics"]
     direct_manifest = json.loads((direct_root / "manifest.json").read_text(encoding="utf-8")); metric_manifest = json.loads((metric_root / "manifest.json").read_text(encoding="utf-8"))
@@ -235,10 +235,12 @@ def _l100_audit(record: CaseRecord, root: Path, qc: Path, *, figures: bool) -> t
     existing = {(row["parameter"], row["stack"], int(row["original_group_idx"])): row for row in metric_manifest.get("per_plane_records", [])}
     caches = {stack: _load_all_verified_native_cache_groups(root / "02_standardized_12_15_10" / "native_dictionary" / record.subject, record.sparse_manifest, stack) for stack in ("sax", "2ch", "4ch")}
     converter: Callable[[np.ndarray], Any] | None
+    converter_error: dict[str, str] | None = None
     try:
-        converter = _proposed_physical_converter(direct_root, direct_manifest)
-    except (FileNotFoundError, OSError, RuntimeError, ValueError, KeyError):  # Audit remains useful if the optional model-space transform cannot be loaded.
+        converter = _proposed_physical_converter(direct_root, direct_manifest, device=device)
+    except (FileNotFoundError, OSError, RuntimeError, ValueError, KeyError) as exc:
         converter = None
+        converter_error = {"exception_type": type(exc).__name__, "exception_message": str(exc)}
     endpoint_paths, _endpoint_provenance = validate_sparse_endpoint_roots(paths["proposed_endpoint"], paths["fit_endpoint"], record.case_id, subject=record.subject)
     endpoint_images = {parameter: {name: nib.load(str(path)) for name, path in item.items()} for parameter, item in endpoint_paths.items()}
     endpoint_masks = {parameter: nib.load(str(verified_fit_first_effective_query_mask(paths["fit_endpoint"], parameter)[0])) for parameter in ("t1", "t2")}
@@ -268,7 +270,7 @@ def _l100_audit(record: CaseRecord, root: Path, qc: Path, *, figures: bool) -> t
                             recomputed = _metrics(reference, values, support) if support.any() else None
                             reproduction.append(_metric_comparison(stored=None if saved is None else saved.get(method), recomputed=recomputed, subject=record.subject, case_id=record.case_id, parameter=parameter, stack=stack, group=group, mask_name=mask_name, method=method))
                     if converter is None:
-                        coordinates.append({"subject": record.subject, "case_id": record.case_id, "parameter": parameter, "stack": stack, "original_group_idx": group, "status": "MODEL_SPACE_CONVERTER_UNAVAILABLE", "coordinate_semantics": FINAL_POSE_COORDINATE_SEMANTICS, "fit_first_route_kind": route.route_kind, "fit_first_route_schema": route.route_schema, "native_prediction_source": "Proposed direct native bundle vs Fit-first final NeSVoR pose bundle"})
+                        coordinates.append({"subject": record.subject, "case_id": record.case_id, "parameter": parameter, "stack": stack, "original_group_idx": group, "status": "MODEL_SPACE_CONVERTER_FAILED", "coordinate_semantics": FINAL_POSE_COORDINATE_SEMANTICS, "fit_first_route_kind": route.route_kind, "fit_first_route_schema": route.route_schema, "native_prediction_source": "Proposed direct native bundle vs Fit-first final NeSVoR pose bundle", "device": device, **(converter_error or {})})
                     else:
                         physical = train_to_physical_ras(train, converter); fit_world = _xyz(np.asarray(fit["world_ras_mm"], float)); coord, displacement = coordinate_displacement_summary(physical, fit_world, source)
                         native_world = _native_world(affine, reference.shape); proposed_native, _ = coordinate_displacement_summary(physical, native_world, source); fit_native, _ = coordinate_displacement_summary(fit_world, native_world, source)
@@ -327,13 +329,15 @@ def _sparse_audit(record: CaseRecord, root: Path, qc: Path, *, figures: bool) ->
     return counts, reproduction, coordinates, warnings
 
 
-def run_metric_mask_coordinate_audit(*, registry: str | Path, final5_root: str | Path, output: str | Path, figures: bool = True, legacy_cyj_l100_metrics: str | Path | None = None, legacy_cyj_sparse_metrics: str | Path | None = None) -> Path:
+def run_metric_mask_coordinate_audit(*, registry: str | Path, final5_root: str | Path, output: str | Path, device: str, figures: bool = True, legacy_cyj_l100_metrics: str | Path | None = None, legacy_cyj_sparse_metrics: str | Path | None = None) -> Path:
     """Audit all registry cases into a new QC directory without formal writes."""
     root, output = Path(final5_root), Path(output); require_new_qc_output(root, output)
     records = load_final5_registry(registry); inventory = [case_inventory_row(root, record) for record in records]
     plan = build_batch_plan(registry, root, device="0", records=records)
     for item in inventory:
-        stage = "l100_metrics" if item["case_id"] == "L100" else "sparse_metrics"
+        # The QC readers below intentionally retain legacy-artifact diagnostics,
+        # while batch status reports the current formal native-grid metric.
+        stage = "final_native_grid_metrics"
         state = plan["cases"][f"{item['subject']}/{item['case_id']}"]["stages"][stage]
         item["pipeline_state"], item["pipeline_reason"] = state["state"], state.get("reason")
     output.parent.mkdir(parents=True, exist_ok=True); staging = Path(tempfile.mkdtemp(prefix=f".{output.name}.staging-", dir=output.parent))
@@ -342,7 +346,7 @@ def run_metric_mask_coordinate_audit(*, registry: str | Path, final5_root: str |
         for record, item in zip(records, inventory):
             if not item["auditable"]: continue
             try:
-                values = _l100_audit(record, root, staging, figures=figures) if record.case_id == "L100" else _sparse_audit(record, root, staging, figures=figures)
+                values = _l100_audit(record, root, staging, figures=figures, device=device) if record.case_id == "L100" else _sparse_audit(record, root, staging, figures=figures)
                 for target, produced in zip((count_rows, metric_rows, coordinate_rows, warnings), values): target.extend(produced)
             except (FileNotFoundError, ValueError, KeyError, TypeError) as exc:
                 item["auditable"] = False; item["metric_status"] = "AUDIT_BLOCKED"; item["reason"] = str(exc)
@@ -357,7 +361,7 @@ def run_metric_mask_coordinate_audit(*, registry: str | Path, final5_root: str |
             legacy_rows.append({"legacy_scope": name, "path": None if path is None else str(path.resolve()), "status": "NOT_REQUESTED" if path is None else "PRESENT" if path.exists() else "MISSING", "separate_from_final5": True})
         _write_csv(staging / "legacy_inventory.csv", legacy_rows)
         legacy = {"inventory_file": "legacy_inventory.csv", "semantics": "legacy paths are reported separately and never combined with Final5 rows"}
-        write_immutable_json(staging / "audit_manifest.json", {"schema": "phase4r_final5_metric_mask_coordinate_audit/v1", "created_utc": datetime.now(timezone.utc).isoformat(), "final5_root": str(root.resolve()), "registry": {"path": str(Path(registry).resolve()), "sha256": sha256(registry)}, "read_only": True, "formal_artifacts_modified": False, "final_pose_coordinate_semantics": FINAL_POSE_COORDINATE_SEMANTICS, "sparse_native_grid_coordinate_semantics": SPARSE_NATIVE_GRID_COORDINATE_SEMANTICS, "primary_support_equation": PRIMARY_SUPPORT_EQUATION, "legacy_cyj": legacy, "inventory_counts": {"total": len(inventory), "auditable": sum(bool(row["auditable"]) for row in inventory), "missing_or_blocked": sum(not bool(row["auditable"]) for row in inventory)}, "figures_requested": bool(figures)})
+        write_immutable_json(staging / "audit_manifest.json", {"schema": "phase4r_final5_metric_mask_coordinate_audit/v1", "created_utc": datetime.now(timezone.utc).isoformat(), "final5_root": str(root.resolve()), "registry": {"path": str(Path(registry).resolve()), "sha256": sha256(registry)}, "read_only": True, "formal_artifacts_modified": False, "device": device, "final_pose_coordinate_semantics": FINAL_POSE_COORDINATE_SEMANTICS, "sparse_native_grid_coordinate_semantics": SPARSE_NATIVE_GRID_COORDINATE_SEMANTICS, "primary_support_equation": PRIMARY_SUPPORT_EQUATION, "legacy_cyj": legacy, "inventory_counts": {"total": len(inventory), "auditable": sum(bool(row["auditable"]) for row in inventory), "missing_or_blocked": sum(not bool(row["auditable"]) for row in inventory)}, "figures_requested": bool(figures)})
         staging.rename(output)
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True); raise
@@ -367,8 +371,8 @@ def run_metric_mask_coordinate_audit(*, registry: str | Path, final5_root: str |
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--registry", required=True); parser.add_argument("--final5-root", required=True); parser.add_argument("--output", required=True)
-    parser.add_argument("--no-figures", action="store_true"); parser.add_argument("--legacy-cyj-l100-metrics"); parser.add_argument("--legacy-cyj-sparse-metrics")
-    args = parser.parse_args(); print(run_metric_mask_coordinate_audit(registry=args.registry, final5_root=args.final5_root, output=args.output, figures=not args.no_figures, legacy_cyj_l100_metrics=args.legacy_cyj_l100_metrics, legacy_cyj_sparse_metrics=args.legacy_cyj_sparse_metrics))
+    parser.add_argument("--device", required=True); parser.add_argument("--no-figures", action="store_true"); parser.add_argument("--legacy-cyj-l100-metrics"); parser.add_argument("--legacy-cyj-sparse-metrics")
+    args = parser.parse_args(); print(run_metric_mask_coordinate_audit(registry=args.registry, final5_root=args.final5_root, output=args.output, device=args.device, figures=not args.no_figures, legacy_cyj_l100_metrics=args.legacy_cyj_l100_metrics, legacy_cyj_sparse_metrics=args.legacy_cyj_sparse_metrics))
 
 
 if __name__ == "__main__":

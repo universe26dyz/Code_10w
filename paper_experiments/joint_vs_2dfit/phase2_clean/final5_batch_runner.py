@@ -26,6 +26,7 @@ from .direct_native_endpoint_audit import run_direct_native_endpoint_audit
 from .current_native_central_component_mask import build_current_native_central_component_mask
 from .final_pose_native_metrics import build_final_pose_native_metrics
 from .final_sparse_native_metrics import build_final_sparse_native_metrics
+from .final_native_grid_metrics import build_final_native_grid_metrics
 from .sparse_profile_manifest import validate_sparse_profile_manifest
 
 SUBJECTS = ("CYJ", "DYL_2", "DYZ", "HHZ", "HJL")
@@ -39,10 +40,11 @@ FIT_FIRST_ENDPOINT_SCHEMA = "phase4r_fixed_l100_fit_first_export_bundle/v2"
 FIT_FIRST_PARAMETER_ENDPOINT_SCHEMA = "phase4r_fixed_l100_fit_first_export/v2"
 L100_METRIC_SCHEMA = "final_pose_native_bundle_metrics/v5"
 SPARSE_METRIC_SCHEMA = "final_sparse_native_bundle_metrics/v2"
+FINAL_NATIVE_GRID_METRIC_SCHEMA = "final5_native_grid_metric_bundle/v1"
 FIT_FIRST_COMMON_SUPPORT_TERM = "fit_first_query_effective_mask"
 FIT_FIRST_NATIVE_EFFECTIVE_MASK_CONTRACT = "formal endpoint effective query mask SHA-verified and mapped to each native plane with nearest-neighbour order=0; valid = volume_geometry_valid AND query_effective_mask AND finite(prediction)"
 SUBPROCESS_STAGES = ("proposed_reconstruction", "fit_first_reconstruction")
-DIRECT_STAGES = ("proposed_endpoint", "fit_first_endpoint", "proposed_native_bundle", "fit_first_native_bundle", "l100_native_support", "current_native_mask", "l100_metrics", "sparse_metrics")
+DIRECT_STAGES = ("proposed_endpoint", "fit_first_endpoint", "proposed_native_bundle", "fit_first_native_bundle", "l100_native_support", "current_native_mask", "l100_metrics", "sparse_metrics", "final_native_grid_metrics")
 PROPOSED_B6 = "/data/dengyz/dataset/Code_10w_v1/Code_10w_runs/CYJ_decoder_comparison_20260924_clean_v1/runs/frozen_mlp_B6/model.pt"
 PROPOSED_B6_SHA256 = "15981fbe93d2c70e14755ea756a02856c9383481e7d92d239619268a628a29b5"
 DECODER = "/data/dengyz/dataset/Code_10w_v1/Code_10w_runs/CYJ_decoder_comparison_20260924_clean_v1/inputs/mlp/signal_simulator_approved.pth"
@@ -112,6 +114,7 @@ def _paths(root: Path, record: CaseRecord) -> dict[str, Path]:
         "native_mask": root / "06_metrics" / "current_native_mask" / subject / "L100",
         "l100_metrics": root / "06_metrics" / "final_pose_native" / subject / "L100",
         "sparse_metrics": root / "06_metrics" / "final_sparse_native" / subject / case,
+        "final_native_grid_metrics": root / "06_metrics" / "final_native_grid" / subject / case,
     }
 
 
@@ -413,6 +416,36 @@ def validate_sparse_metric(path: Path, record: CaseRecord, root: Path) -> Valida
     return ValidationResult(True, "SKIP_VALID", "valid formal SCMR one-stage sparse metric")
 
 
+def validate_final_native_grid_metric(path: Path, record: CaseRecord, root: Path, *, l100_native_support_root: Path | None = None) -> ValidationResult:
+    """Admit only the non-morphological Final5 original-native-grid metric."""
+    if not path.exists():
+        return _invalid(path, "output absent")
+    try:
+        manifest = _read(path / "manifest.json")
+        paths = _paths(root, record)
+        if (manifest.get("schema"), manifest.get("subject"), manifest.get("condition")) != (FINAL_NATIVE_GRID_METRIC_SCHEMA, record.subject, record.case_id):
+            return _invalid(path, "Final native-grid metric schema/identity mismatch")
+        if manifest.get("legacy_current_native_mask_used") is not False or manifest.get("no_connected_component_filtering") is not True:
+            return _invalid(path, "Final native-grid metric must not use central-component masking")
+        provenance = manifest.get("endpoint_provenance")
+        if not isinstance(provenance, dict) or not _matches_record(provenance.get("proposed_manifest"), paths["proposed_endpoint"] / "manifest.json") or not _matches_record(provenance.get("fit_first_manifest"), paths["fit_endpoint"] / "manifest.json"):
+            return _invalid(path, "Final native-grid endpoint provenance mismatch")
+        l100_support = l100_native_support_root or _paths(root, record)["native_support"]
+        if not _matches_record(manifest.get("l100_native_support_manifest"), l100_support / "manifest.json"):
+            return _invalid(path, "Final native-grid L100 support provenance mismatch")
+        if not _matches_record(manifest.get("sparse_manifest"), record.sparse_manifest):
+            return _invalid(path, "Final native-grid sparse-manifest provenance mismatch")
+        aggregate_path = path / "aggregate_metrics.json"
+        if not _matches_record(manifest.get("aggregate_metrics"), aggregate_path):
+            return _invalid(path, "Final native-grid aggregate provenance mismatch")
+        aggregate = _read(aggregate_path)
+        if aggregate.get("schema") != "final5_native_grid_common_support_metrics/v1" or "fit_first_query_effective_mask" not in str(aggregate.get("support_equations", {}).get("paired", "")):
+            return _invalid(path, "Final native-grid aggregate common-support contract mismatch")
+    except (FileNotFoundError, ValueError, TypeError) as exc:
+        return _invalid(path, str(exc))
+    return ValidationResult(True, "SKIP_VALID", "valid Final5 original-native-grid common-support metric")
+
+
 _STAGE_ARTIFACT_PATH = {
     "proposed_reconstruction": "proposed",
     "fit_first_reconstruction": "fit_first",
@@ -424,6 +457,7 @@ _STAGE_ARTIFACT_PATH = {
     "current_native_mask": "native_mask",
     "l100_metrics": "l100_metrics",
     "sparse_metrics": "sparse_metrics",
+    "final_native_grid_metrics": "final_native_grid_metrics",
 }
 
 
@@ -449,36 +483,36 @@ def build_batch_plan(registry: str | Path, final_root: str | Path, *, device: st
         paths = _paths(root, record)
         proposed, fit = validate_proposed_reconstruction(paths["proposed"], record), validate_fit_first_reconstruction(paths["fit_first"], record)
         endpoints = validate_proposed_endpoint(paths["proposed_endpoint"], record, root), validate_fit_first_endpoint(paths["fit_endpoint"], record, records_by_key, root)
-        bundles = validate_proposed_native_bundle(paths["direct_bundle"], record, root), validate_fit_first_native_bundle(paths["fit_bundle"], record, root)
-        support, mask, metric = validate_l100_native_support(paths["native_support"], record, root), validate_current_native_mask(paths["native_mask"], record, root), validate_l100_metric(paths["l100_metrics"], record, root)
-        stages = {"proposed_reconstruction": _stage(proposed), "fit_first_reconstruction": _stage(fit), "proposed_endpoint": _stage(endpoints[0], dependency=not proposed.valid), "fit_first_endpoint": _stage(endpoints[1], dependency=not fit.valid), "proposed_native_bundle": _stage(bundles[0], dependency=not proposed.valid), "fit_first_native_bundle": _stage(bundles[1], dependency=not (fit.valid and endpoints[1].valid)), "l100_native_support": _stage(support, dependency=not (proposed.valid and endpoints[0].valid)), "current_native_mask": _stage(mask, dependency=not support.valid), "l100_metrics": _stage(metric, dependency=not (bundles[0].valid and bundles[1].valid and mask.valid))}
+        support = validate_l100_native_support(paths["native_support"], record, root)
+        metric = validate_final_native_grid_metric(paths["final_native_grid_metrics"], record, root)
+        stages = {"proposed_reconstruction": _stage(proposed), "fit_first_reconstruction": _stage(fit), "proposed_endpoint": _stage(endpoints[0], dependency=not proposed.valid), "fit_first_endpoint": _stage(endpoints[1], dependency=not fit.valid), "l100_native_support": _stage(support, dependency=not (proposed.valid and endpoints[0].valid)), "final_native_grid_metrics": _stage(metric, dependency=not (endpoints[0].valid and endpoints[1].valid and support.valid))}
         stages = _with_artifact_paths(stages, paths)
         l100_ready[record.subject] = all(value["state"] == "SKIP_VALID" for value in stages.values())
-        cases[f"{record.subject}/{record.case_id}"] = {"profile_id": record.profile_id, "fold_id": record.fold_id, "metric_kind": "computational current-native common-support metric", "stages": stages}
+        cases[f"{record.subject}/{record.case_id}"] = {"profile_id": record.profile_id, "fold_id": record.fold_id, "metric_kind": "formal original-native-grid exact common-support metric", "stages": stages}
     for record in records:
         if record.case_id == "L100":
             continue
         paths = _paths(root, record)
         proposed, fit = validate_proposed_reconstruction(paths["proposed"], record), validate_fit_first_reconstruction(paths["fit_first"], record)
-        metric = validate_sparse_metric(paths["sparse_metrics"], record, root)
+        metric = validate_final_native_grid_metric(paths["final_native_grid_metrics"], record, root, l100_native_support_root=_paths(root, next(item for item in records if item.subject == record.subject and item.case_id == "L100"))["native_support"])
         proposed_endpoint = validate_proposed_endpoint(paths["proposed_endpoint"], record, root)
         fit_endpoint = validate_fit_first_endpoint(paths["fit_endpoint"], record, records_by_key, root)
         l100_record = next(item for item in records if item.subject == record.subject and item.case_id == "L100")
-        l100_mask_ready = validate_current_native_mask(_paths(root, l100_record)["native_mask"], l100_record, root).valid
-        dependency = not (l100_mask_ready and proposed_endpoint.valid and fit_endpoint.valid)
+        l100_support_ready = validate_l100_native_support(_paths(root, l100_record)["native_support"], l100_record, root).valid
+        dependency = not (l100_support_ready and proposed_endpoint.valid and fit_endpoint.valid)
         stages = {
             "proposed_reconstruction": _stage(proposed),
             "fit_first_reconstruction": _stage(fit),
             "proposed_endpoint": _stage(proposed_endpoint, dependency=not proposed.valid),
             "fit_first_endpoint": _stage(fit_endpoint, dependency=not fit.valid),
-            "sparse_metrics": _stage(metric, dependency=dependency),
+            "final_native_grid_metrics": _stage(metric, dependency=dependency),
         }
-        cases[f"{record.subject}/{record.case_id}"] = {"profile_id": record.profile_id, "fold_id": record.fold_id, "metric_kind": "held-out LAX original-native metric using subject frozen L100 computational mask", "stages": _with_artifact_paths(stages, paths)}
+        cases[f"{record.subject}/{record.case_id}"] = {"profile_id": record.profile_id, "fold_id": record.fold_id, "metric_kind": "formal manifest-held-out original-native-grid exact common-support metric", "stages": _with_artifact_paths(stages, paths)}
     return {"schema": "phase4r_final5_batch_plan/v1", "registry": str(Path(registry).resolve()), "final_root": str(root.resolve()), "max_gpu_jobs": MAX_GPU_JOBS, "cases": cases, "device": str(device), "computational_metrics_only": True}
 
 
 def _case_stages(record: CaseRecord) -> tuple[str, ...]:
-    return ("proposed_reconstruction", "fit_first_reconstruction", "proposed_endpoint", "fit_first_endpoint", "proposed_native_bundle", "fit_first_native_bundle", "l100_native_support", "current_native_mask", "l100_metrics") if record.case_id == "L100" else ("proposed_reconstruction", "fit_first_reconstruction", "proposed_endpoint", "fit_first_endpoint", "sparse_metrics")
+    return ("proposed_reconstruction", "fit_first_reconstruction", "proposed_endpoint", "fit_first_endpoint", "l100_native_support", "final_native_grid_metrics") if record.case_id == "L100" else ("proposed_reconstruction", "fit_first_reconstruction", "proposed_endpoint", "fit_first_endpoint", "final_native_grid_metrics")
 
 
 def _validate_stage_output(stage: str, record: CaseRecord, root: Path, records: dict[tuple[str, str], CaseRecord] | None = None) -> ValidationResult:
@@ -506,6 +540,13 @@ def _validate_stage_output(stage: str, record: CaseRecord, root: Path, records: 
         return validate_l100_metric(paths["l100_metrics"], record, root)
     if stage == "sparse_metrics":
         return validate_sparse_metric(paths["sparse_metrics"], record, root)
+    if stage == "final_native_grid_metrics":
+        if records is None:
+            raise ValueError("Final native-grid metric validation requires registry records")
+        if record.case_id == "L100":
+            return validate_final_native_grid_metric(paths["final_native_grid_metrics"], record, root)
+        l100 = records[(record.subject, "L100")]
+        return validate_final_native_grid_metric(paths["final_native_grid_metrics"], record, root, l100_native_support_root=_paths(root, l100)["native_support"])
     expected = {
     }
     try:
@@ -536,6 +577,13 @@ def _stage_dependencies(stage: str, record: CaseRecord, records: dict[tuple[str,
         return (same("proposed_native_bundle"), same("fit_first_native_bundle"), same("current_native_mask"))
     if stage == "sparse_metrics":
         return (("current_native_mask", records[(record.subject, "L100")]), same("proposed_endpoint"), same("fit_first_endpoint"))
+    if stage == "final_native_grid_metrics":
+        dependencies = [same("proposed_endpoint"), same("fit_first_endpoint")]
+        if record.case_id == "L100":
+            dependencies.append(same("l100_native_support"))
+        else:
+            dependencies.append(("l100_native_support", records[(record.subject, "L100")]))
+        return tuple(dependencies)
     return ()
 
 
@@ -615,6 +663,9 @@ def _run_direct_stage(stage: str, record: CaseRecord, root: Path, *, device: str
         build_final_pose_native_metrics(direct_bundle_root=paths["direct_bundle"], fit_first_bundle_root=paths["fit_bundle"], r0_native_maps_root=native, sparse_manifest=record.sparse_manifest, mask_root=paths["native_mask"], output=paths["l100_metrics"])
     elif stage == "sparse_metrics":
         build_final_sparse_native_metrics(proposed_endpoint_root=paths["proposed_endpoint"], fit_first_endpoint_root=paths["fit_endpoint"], native_mask_root=paths["native_mask"], r0_native_maps_root=native, sparse_manifest=record.sparse_manifest, output=paths["sparse_metrics"])
+    elif stage == "final_native_grid_metrics":
+        l100_support = paths["native_support"] if record.case_id == "L100" else root / "06_metrics" / "native_support" / record.subject / "L100" / "direct_native_endpoint_audit"
+        build_final_native_grid_metrics(proposed_endpoint_root=paths["proposed_endpoint"], fit_first_endpoint_root=paths["fit_endpoint"], r0_native_maps_root=native, sparse_manifest=record.sparse_manifest, l100_native_support_root=l100_support, output=paths["final_native_grid_metrics"])
 
 
 def execute_batch(registry: str | Path, final_root: str | Path, *, device: str, python: str, nesvor: str, subject: str | None = None, case: str | None = None) -> dict[str, Any]:
@@ -687,7 +738,7 @@ def _print_status(plan: dict[str, Any]) -> None:
         subject, case = key.split("/", 1); stages = item["stages"]
         values = list(stages.values()); state = "COMPLETE" if values and all(value["state"] == "SKIP_VALID" for value in values) else "BLOCKED" if any(value["state"].startswith("BLOCKED") for value in values) else "READY"
         counts[state] = counts.get(state, 0) + 1
-        print(f"{subject:<7} {case:<28} {stages.get('proposed_reconstruction', {}).get('state', '-'): <4} {stages.get('fit_first_reconstruction', {}).get('state', '-'): <4} {stages.get('proposed_endpoint', {}).get('state', '-'): <4} {stages.get('fit_first_endpoint', {}).get('state', '-'): <4} {stages.get('l100_metrics', stages.get('sparse_metrics', {})).get('state', '-'): <6} {state}")
+        print(f"{subject:<7} {case:<28} {stages.get('proposed_reconstruction', {}).get('state', '-'): <4} {stages.get('fit_first_reconstruction', {}).get('state', '-'): <4} {stages.get('proposed_endpoint', {}).get('state', '-'): <4} {stages.get('fit_first_endpoint', {}).get('state', '-'): <4} {stages.get('final_native_grid_metrics', {}).get('state', '-'): <6} {state}")
     print(f"TOTAL {len(plan['cases'])}")
     for label in ("COMPLETE", "READY", "FAILED", "BLOCKED"):
         print(f"{label} {counts.get(label, 0)}")

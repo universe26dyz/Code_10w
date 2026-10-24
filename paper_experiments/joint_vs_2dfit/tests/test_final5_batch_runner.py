@@ -52,10 +52,10 @@ def test_plan_is_read_only_and_blocks_sparse_downstream_until_subject_l100(tmp_p
     l100 = plan["cases"]["CYJ/L100"]
     sparse = plan["cases"]["CYJ/L50_fold0"]
     assert l100["stages"]["proposed_reconstruction"]["state"] == "READY"
-    assert sparse["stages"]["sparse_metrics"]["state"] == "BLOCKED_DEPENDENCY"
-    assert sparse["metric_kind"] == "held-out LAX original-native metric using subject frozen L100 computational mask"
+    assert sparse["stages"]["final_native_grid_metrics"]["state"] == "BLOCKED_DEPENDENCY"
+    assert sparse["metric_kind"] == "formal manifest-held-out original-native-grid exact common-support metric"
     assert l100["stages"]["proposed_reconstruction"]["artifact_path"].endswith("04_reconstruction/proposed/CYJ/L100")
-    assert sparse["stages"]["sparse_metrics"]["artifact_path"].endswith("06_metrics/final_sparse_native/CYJ/L50_fold0")
+    assert sparse["stages"]["final_native_grid_metrics"]["artifact_path"].endswith("06_metrics/final_native_grid/CYJ/L50_fold0")
 
 
 def test_existing_invalid_output_is_blocked_without_delete(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -197,7 +197,7 @@ def test_v6_fit_first_bundle_rejects_wrong_effective_mask_contract(tmp_path: Pat
     assert not result.valid and "effective-query-mask" in result.reason
 
 
-def test_plan_blocks_stale_fit_first_bundle_before_execute(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_plan_keeps_legacy_fit_first_bundle_out_of_formal_native_grid_dependencies(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     record = runner.CaseRecord("CYJ", "L100", "L100", None, 1, tmp_path / "sparse.json", "a" * 64, "b" * 40, tmp_path)
     root = tmp_path / "final"; _fit_manifest, endpoint_manifest, _bundle_manifest = _write_fit_first_bundle_inputs(root, record)
     endpoint_manifest.write_text(json.dumps({"endpoint": "new-current"}))
@@ -208,8 +208,9 @@ def test_plan_blocks_stale_fit_first_bundle_before_execute(tmp_path: Path, monke
     monkeypatch.setattr(runner, "validate_proposed_native_bundle", lambda *_args: runner.ValidationResult(True, "SKIP_VALID", "valid"))
     plan = runner.build_batch_plan(tmp_path / "registry.json", root, records=[record])
     stages = plan["cases"]["CYJ/L100"]["stages"]
-    assert stages["fit_first_native_bundle"]["state"] == "BLOCKED_EXISTING_INVALID"
-    assert stages["l100_metrics"]["state"] == "BLOCKED_DEPENDENCY"
+    assert "fit_first_native_bundle" not in stages
+    assert "current_native_mask" not in stages
+    assert "final_native_grid_metrics" in stages
 
 
 def test_current_proposed_native_bundle_matches_current_checkpoint(tmp_path: Path) -> None:
@@ -303,7 +304,7 @@ def test_all_seventy_cases_use_frozen_q002s640_and_exp1_1_commands(tmp_path: Pat
 
 def test_l100_dispatch_uses_subprocess_only_for_reconstructions(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     record = runner.CaseRecord("CYJ", "L100", "L100", None, 1, tmp_path / "sparse.json", "a" * 64, "b" * 40, tmp_path)
-    stages = ("proposed_reconstruction", "fit_first_reconstruction", "proposed_endpoint", "fit_first_endpoint", "proposed_native_bundle", "fit_first_native_bundle", "l100_native_support", "current_native_mask", "l100_metrics")
+    stages = ("proposed_reconstruction", "fit_first_reconstruction", "proposed_endpoint", "fit_first_endpoint", "l100_native_support", "final_native_grid_metrics")
     monkeypatch.setattr(runner, "load_final5_registry", lambda _registry: [record])
     monkeypatch.setattr(runner, "case_commands", lambda *_args, **_kwargs: {"proposed_reconstruction": ["proposed"], "fit_first_reconstruction": {"argv": ["fit"], "env": {}}})
     monkeypatch.setattr(runner, "build_batch_plan", lambda *_args, **_kwargs: {"cases": {"CYJ/L100": {"stages": {stage: {"state": "READY"} for stage in stages}}}})
@@ -319,10 +320,10 @@ def test_l100_dispatch_uses_subprocess_only_for_reconstructions(tmp_path: Path, 
 def test_sparse_fit_first_endpoint_is_direct_dispatch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     record = runner.CaseRecord("CYJ", "L50_fold0", "L50", 0, 2, tmp_path / "sparse.json", "a" * 64, "b" * 40, tmp_path)
     l100 = runner.CaseRecord("CYJ", "L100", "L100", None, 1, tmp_path / "l100.json", "a" * 64, "b" * 40, tmp_path)
-    stages = ("proposed_reconstruction", "fit_first_reconstruction", "proposed_endpoint", "fit_first_endpoint", "sparse_metrics")
+    stages = ("proposed_reconstruction", "fit_first_reconstruction", "proposed_endpoint", "fit_first_endpoint", "final_native_grid_metrics")
     monkeypatch.setattr(runner, "load_final5_registry", lambda _registry: [l100, record])
     monkeypatch.setattr(runner, "case_commands", lambda *_args, **_kwargs: {"proposed_reconstruction": ["proposed"], "fit_first_reconstruction": {"argv": ["fit"], "env": {}}})
-    monkeypatch.setattr(runner, "build_batch_plan", lambda *_args, **_kwargs: {"cases": {"CYJ/L100": {"stages": {"fit_first_reconstruction": {"state": "SKIP_VALID"}, "current_native_mask": {"state": "SKIP_VALID"}}}, "CYJ/L50_fold0": {"stages": {stage: {"state": "READY"} for stage in stages}}}})
+    monkeypatch.setattr(runner, "build_batch_plan", lambda *_args, **_kwargs: {"cases": {"CYJ/L100": {"stages": {"fit_first_reconstruction": {"state": "SKIP_VALID"}, "l100_native_support": {"state": "SKIP_VALID"}}}, "CYJ/L50_fold0": {"stages": {stage: {"state": "READY"} for stage in stages}}}})
     calls: list[tuple[str, str]] = []
     completed: set[str] = set()
     monkeypatch.setattr(runner, "_validate_stage_output", lambda stage, *_args: runner.ValidationResult(stage in completed, "SKIP_VALID" if stage in completed else "READY", "test"))
@@ -332,19 +333,16 @@ def test_sparse_fit_first_endpoint_is_direct_dispatch(tmp_path: Path, monkeypatc
     assert ("direct", "fit_first_endpoint") in calls and ("subprocess", "fit_first_endpoint") not in calls
 
 
-def test_sparse_metric_requires_l100_mask_and_both_case_endpoints(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_sparse_native_grid_metric_requires_l100_support_and_both_case_endpoints(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(runner, "validate_sparse_profile_manifest", _validated)
     monkeypatch.setattr(runner, "validate_proposed_reconstruction", lambda path, record: runner.ValidationResult(record.case_id != "L50_fold0", "SKIP_VALID" if record.case_id != "L50_fold0" else "READY", "test"))
     monkeypatch.setattr(runner, "validate_fit_first_reconstruction", lambda _path, _record: runner.ValidationResult(True, "SKIP_VALID", "test"))
-    def schema(path: Path, expected: str) -> runner.ValidationResult:
-        if expected == "final_sparse_native_bundle_metrics/v2":
-            return runner.ValidationResult(False, "READY", "metric absent")
-        if expected == "phase4r_formal_proposed_export/v1" and "L50_fold0" in str(path):
-            return runner.ValidationResult(False, "READY", "endpoint absent")
-        return runner.ValidationResult(True, "SKIP_VALID", "test")
-    monkeypatch.setattr(runner, "_schema", schema)
+    monkeypatch.setattr(runner, "validate_final_native_grid_metric", lambda *_args, **_kwargs: runner.ValidationResult(False, "READY", "metric absent"))
+    monkeypatch.setattr(runner, "validate_l100_native_support", lambda *_args, **_kwargs: runner.ValidationResult(True, "SKIP_VALID", "support"))
+    monkeypatch.setattr(runner, "validate_proposed_endpoint", lambda path, *_args: runner.ValidationResult("L50_fold0" not in str(path), "SKIP_VALID" if "L50_fold0" not in str(path) else "READY", "endpoint"))
+    monkeypatch.setattr(runner, "validate_fit_first_endpoint", lambda *_args: runner.ValidationResult(True, "SKIP_VALID", "endpoint"))
     plan = runner.build_batch_plan(_registry(tmp_path), tmp_path / "final")
-    assert plan["cases"]["CYJ/L50_fold0"]["stages"]["sparse_metrics"]["state"] == "BLOCKED_DEPENDENCY"
+    assert plan["cases"]["CYJ/L50_fold0"]["stages"]["final_native_grid_metrics"]["state"] == "BLOCKED_DEPENDENCY"
 
 
 def _ready_plan(record: runner.CaseRecord, stages: tuple[str, ...]) -> dict[str, object]:
@@ -354,7 +352,7 @@ def _ready_plan(record: runner.CaseRecord, stages: tuple[str, ...]) -> dict[str,
 def test_execute_builds_full_preflight_once_and_revalidates_only_current_case(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     current = runner.CaseRecord("CYJ", "L100", "L100", None, 1, tmp_path / "sparse.json", "a" * 64, "b" * 40, tmp_path)
     other = runner.CaseRecord("HJL", "L100", "L100", None, 1, tmp_path / "other.json", "a" * 64, "b" * 40, tmp_path)
-    stages = ("proposed_reconstruction", "fit_first_reconstruction", "proposed_endpoint", "fit_first_endpoint", "proposed_native_bundle", "fit_first_native_bundle", "l100_native_support", "current_native_mask", "l100_metrics")
+    stages = ("proposed_reconstruction", "fit_first_reconstruction", "proposed_endpoint", "fit_first_endpoint", "l100_native_support", "final_native_grid_metrics")
     registry_calls: list[Path] = []
     monkeypatch.setattr(runner, "load_final5_registry", lambda registry: registry_calls.append(Path(registry)) or [current, other])
     preflight_calls: list[object] = []
@@ -495,7 +493,7 @@ def test_sparse_metric_without_effective_query_mask_support_is_not_admitted(tmp_
 
 def test_execute_blocks_dependents_when_successful_subprocess_fails_artifact_validation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     record = runner.CaseRecord("CYJ", "L100", "L100", None, 1, tmp_path / "sparse.json", "a" * 64, "b" * 40, tmp_path)
-    stages = ("proposed_reconstruction", "fit_first_reconstruction", "proposed_endpoint", "fit_first_endpoint", "proposed_native_bundle", "fit_first_native_bundle", "l100_native_support", "current_native_mask", "l100_metrics")
+    stages = ("proposed_reconstruction", "fit_first_reconstruction", "proposed_endpoint", "fit_first_endpoint", "l100_native_support", "final_native_grid_metrics")
     monkeypatch.setattr(runner, "load_final5_registry", lambda _registry: [record])
     monkeypatch.setattr(runner, "build_batch_plan", lambda *_args, **_kwargs: _ready_plan(record, stages))
     monkeypatch.setattr(runner, "case_commands", lambda *_args, **_kwargs: {"proposed_reconstruction": ["proposed"], "fit_first_reconstruction": {"argv": ["fit"], "env": {}}})
@@ -543,7 +541,7 @@ def test_execute_keeps_global_preflight_and_reports_invalid_subject_case_stage_p
 
 def test_execute_keeps_preflight_valid_artifacts_as_skip_valid(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     record = runner.CaseRecord("CYJ", "L100", "L100", None, 1, tmp_path / "sparse.json", "a" * 64, "b" * 40, tmp_path)
-    stages = ("proposed_reconstruction", "fit_first_reconstruction", "proposed_endpoint", "fit_first_endpoint", "proposed_native_bundle", "fit_first_native_bundle", "l100_native_support", "current_native_mask", "l100_metrics")
+    stages = ("proposed_reconstruction", "fit_first_reconstruction", "proposed_endpoint", "fit_first_endpoint", "l100_native_support", "final_native_grid_metrics")
     monkeypatch.setattr(runner, "load_final5_registry", lambda _registry: [record])
     monkeypatch.setattr(runner, "build_batch_plan", lambda *_args, **_kwargs: {"cases": {"CYJ/L100": {"stages": {stage: {"state": "SKIP_VALID", "reason": "valid"} for stage in stages}}}})
     monkeypatch.setattr(runner, "_validate_stage_locally", lambda *_args: pytest.fail("valid preflight artifact was revalidated during execute"))
