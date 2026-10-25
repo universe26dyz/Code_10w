@@ -102,6 +102,20 @@ def _require_directory(path: Path, label: str) -> None:
         raise FileNotFoundError(f"{label} does not exist: {path}")
 
 
+def _require_complete_r0_native_cache(root: Path) -> None:
+    """Reject display-only selected maps before any immutable run output is written.
+
+    Historical ``reuse_native_maps`` requires all three per-stack artifacts;
+    Final5 ``selected_native_maps`` intentionally contains only a subset and
+    cannot be substituted for this R0 cache.
+    """
+    for stack in STACKS:
+        stack_root = root / stack
+        missing = [name for name in ("native_maps.npz", "geometry.npz", "manifest.json") if not (stack_root / name).is_file()]
+        if missing:
+            raise FileNotFoundError(f"{stack}: R0 native cache is incomplete; missing {', '.join(missing)} under {stack_root}")
+
+
 def _observation_groups(path: Path) -> int:
     _require_file(path, "prepared observation")
     with np.load(path, allow_pickle=False) as payload:
@@ -154,6 +168,7 @@ def _validate_inputs(inputs: ReproductionInputs, *, git_head: Callable[[Path], s
         ("L100 Fit-first root", inputs.l100_fit_first_root),
     ):
         (_require_file if label in {"B6 model", "signal simulator", "protocol"} else _require_directory)(path, label)
+    _require_complete_r0_native_cache(inputs.native_cache_root)
     if inputs.include_metric:
         if inputs.native_mask_root is None:
             raise ValueError("native mask root is required unless --skip-metric is set")

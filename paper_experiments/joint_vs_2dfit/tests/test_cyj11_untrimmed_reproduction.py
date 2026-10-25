@@ -38,7 +38,12 @@ def _inputs(
     b6 = assets / "b6.pt"; b6.write_bytes(b"b6")
     simulator = assets / "signal_simulator.pth"; simulator.write_bytes(b"simulator")
     protocol = assets / "protocol.yaml"; protocol.write_text("protocol: historical\n", encoding="utf-8")
-    native_cache = assets / "native_cache"; native_cache.mkdir()
+    native_cache = assets / "native_cache"
+    for stack in ("sax", "2ch", "4ch"):
+        stack_root = native_cache / stack
+        stack_root.mkdir(parents=True)
+        for name in ("native_maps.npz", "geometry.npz", "manifest.json"):
+            (stack_root / name).write_bytes(b"test artifact")
     native_mask = assets / "native_mask"; native_mask.mkdir(); (native_mask / "manifest.json").write_text("{}", encoding="utf-8")
     l100_fit_first = assets / "l100_fit_first"; l100_fit_first.mkdir()
     worktrees = {name: tmp_path / f"{name}_worktree" for name in ("sparse", "q002", "fit_first")}
@@ -168,6 +173,18 @@ def test_plan_rejects_changed_explicit_input_or_dependency_hash(tmp_path: Path) 
     mismatched_decoder = ReproductionInputs(**{**inputs.__dict__, "expected_signal_simulator_sha256": "0" * 64})
     with pytest.raises(ValueError, match="signal simulator SHA256"):
         build_reproduction_plan(mismatched_decoder, git_head=_historical_heads)
+
+
+def test_plan_rejects_incomplete_r0_native_cache_before_any_output(tmp_path: Path) -> None:
+    """A selected-map-only directory must fail before sparse/Q002 commands are emitted."""
+    from paper_experiments.joint_vs_2dfit.phase2_clean.cyj11_untrimmed_reproduction import build_reproduction_plan
+
+    inputs = _inputs(tmp_path)
+    (inputs.native_cache_root / "sax" / "geometry.npz").unlink()
+
+    with pytest.raises(FileNotFoundError, match="sax: R0 native cache is incomplete"):
+        build_reproduction_plan(inputs, git_head=_historical_heads)
+    assert not inputs.output_root.exists()
 
 
 def test_server_wrapper_dry_run_prints_plan_without_creating_output(tmp_path: Path) -> None:
