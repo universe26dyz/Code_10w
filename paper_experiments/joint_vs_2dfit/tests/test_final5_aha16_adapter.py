@@ -27,6 +27,16 @@ def test_dyl_2_is_roi_pending_and_never_borrows_dyl(tmp_path) -> None:
     assert readiness["roi_root"] is None
 
 
+def test_dyl_2_accepts_only_its_own_explicit_roi(tmp_path) -> None:
+    from paper_experiments.joint_vs_2dfit.aha.final5_adapter import assess_final5_aha_readiness
+
+    _roi(tmp_path / "roi", "DYL_2")
+    readiness = assess_final5_aha_readiness(tmp_path / "final5", "DYL_2", "L100", tmp_path / "roi")
+
+    assert readiness["status"] == "ENDPOINTS_PENDING"
+    assert readiness["roi_root"] == str(tmp_path / "roi" / "DYL_2" / "roi")
+
+
 def test_missing_final5_endpoints_are_pending_without_path_discovery(tmp_path) -> None:
     from paper_experiments.joint_vs_2dfit.aha.final5_adapter import assess_final5_aha_readiness
 

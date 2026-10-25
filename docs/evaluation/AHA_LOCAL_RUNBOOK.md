@@ -17,8 +17,9 @@ Use only the following explicit artifacts:
 - One subject-specific audited ROI.  `--roi-root` may be the exact ROI folder,
   or the established `MultiMapCode/subjects` root: CYJ/HHZ/HJL use
   `20260821_corrected_sequence_v1`; DYZ uses `20260823_v5_newdata_v1`.
-  `DYL_2` deliberately has no mapping and is always `ROI_PENDING` until its
-  own new ROI is supplied.
+  `DYL_2` deliberately has no inherited mapping: it remains `ROI_PENDING`
+  until its own exact folder is staged as `<roi-root>/DYL_2/roi/` (or passed
+  directly as `--roi-root`).  It never falls back to DYL.
 - A reviewed `final5_aha_native_roi_mapping/v1` JSON.  For every basal, mid,
   and apical plane it records `native_group_idx`, its matching
   `original_group_idx`, `roi_slice_index`, `roi_transform`, and reviewed

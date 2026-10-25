@@ -37,8 +37,6 @@ def final5_endpoint_paths(final_root: str | Path, subject: str, case: str) -> di
 
 def resolve_subject_roi(roi_root: str | Path, subject: str) -> Path | None:
     """Resolve one subject's audited ROI by one declared, non-recursive layout."""
-    if subject == "DYL_2":
-        return None
     supplied = Path(roi_root)
     # Callers may provide either this subject's exact audited folder or the
     # documented staging root <root>/<SUBJECT>/roi.  Neither form searches.
@@ -50,6 +48,8 @@ def resolve_subject_roi(roi_root: str | Path, subject: str) -> Path | None:
         if not all((folder / name).is_file() for name in ROI_FILENAMES):
             folder = supplied / subject / "roi"
     else:
+        # DYL_2 has no inherited version or fallback: only its own explicit
+        # <roi-root>/DYL_2/roi staging folder can satisfy this branch.
         folder = supplied / subject / "roi"
     return folder if all((folder / name).is_file() for name in ROI_FILENAMES) else None
 
