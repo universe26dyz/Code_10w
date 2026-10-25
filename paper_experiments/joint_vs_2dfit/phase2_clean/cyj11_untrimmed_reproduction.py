@@ -1,4 +1,4 @@
-"""Build, but never run, strict historical CYJ 1.1 reproduction commands.
+"""Build, but never run, CYJ historical or explicit full-input validation commands.
 
 This module intentionally keeps historical stages in caller-provided pinned
 worktrees.  It does not import current Final5 route builders, so a local
@@ -66,7 +66,7 @@ class ReproductionInputs:
     signal_simulator: Path
     protocol: Path
     native_cache_root: Path
-    native_mask_root: Path
+    native_mask_root: Path | None
     l100_fit_first_root: Path
     expected_b6_model_sha256: str
     expected_signal_simulator_sha256: str
@@ -74,6 +74,7 @@ class ReproductionInputs:
     nesvor_executable: Path | None = None
     python_executable: str = sys.executable
     device: str = "cuda:0"
+    include_metric: bool = True
 
 
 def _sha256(path: Path) -> str:
@@ -117,9 +118,7 @@ def _observation_groups(path: Path) -> int:
     return int(len(identities))
 
 
-def _validate_inputs(inputs: ReproductionInputs, *, git_head: Callable[[Path], str]) -> tuple[CaseSpec, dict[str, dict[str, str]]]:
-    if inputs.subject != "CYJ":
-        raise ValueError("strict CYJ 1.1 compatibility planning currently accepts subject=CYJ only")
+def _validate_inputs(inputs: ReproductionInputs, *, git_head: Callable[[Path], str]) -> tuple[CaseSpec, dict[str, dict[str, str]], dict[str, int]]:
     try:
         case = CASE_SPECS[inputs.case_id]
     except KeyError as exc:
@@ -128,10 +127,10 @@ def _validate_inputs(inputs: ReproductionInputs, *, git_head: Callable[[Path], s
     observation_records: dict[str, dict[str, str]] = {}
     counts: dict[str, int] = {}
     for stack in STACKS:
-        path = inputs.prepared_root / "CYJ" / stack / "observations.npz"
+        path = inputs.prepared_root / inputs.subject / stack / "observations.npz"
         counts[stack] = _observation_groups(path)
         observation_records[stack] = {"path": str(path.resolve()), "sha256": _sha256(path)}
-    if counts != HISTORICAL_GROUP_COUNTS:
+    if inputs.subject == "CYJ" and counts != HISTORICAL_GROUP_COUNTS:
         raise ValueError(
             "strict CYJ 1.1 reproduction requires 14 SAX, 15 2CH, and 12 4CH "
             f"groups from untrimmed input; got {counts}"
@@ -152,11 +151,14 @@ def _validate_inputs(inputs: ReproductionInputs, *, git_head: Callable[[Path], s
         ("signal simulator", inputs.signal_simulator),
         ("protocol", inputs.protocol),
         ("R0 native cache", inputs.native_cache_root),
-        ("native mask", inputs.native_mask_root),
         ("L100 Fit-first root", inputs.l100_fit_first_root),
     ):
         (_require_file if label in {"B6 model", "signal simulator", "protocol"} else _require_directory)(path, label)
-    _require_file(inputs.native_mask_root / "manifest.json", "native mask manifest")
+    if inputs.include_metric:
+        if inputs.native_mask_root is None:
+            raise ValueError("native mask root is required unless --skip-metric is set")
+        _require_directory(inputs.native_mask_root, "native mask")
+        _require_file(inputs.native_mask_root / "manifest.json", "native mask manifest")
     if _sha256(inputs.b6_model) != inputs.expected_b6_model_sha256:
         raise ValueError("B6 model SHA256 disagrees with the explicit admission pin")
     if _sha256(inputs.signal_simulator) != inputs.expected_signal_simulator_sha256:
@@ -165,7 +167,7 @@ def _validate_inputs(inputs: ReproductionInputs, *, git_head: Callable[[Path], s
         raise ValueError("protocol SHA256 disagrees with the explicit admission pin")
     if inputs.nesvor_executable is not None:
         _require_file(inputs.nesvor_executable, "NeSVoR executable")
-    return case, observation_records
+    return case, observation_records, counts
 
 
 def _command(*items: str | Path) -> list[str]:
@@ -187,14 +189,14 @@ def _sparse_command(inputs: ReproductionInputs, case: CaseSpec, sparse_root: Pat
 
 
 def build_reproduction_plan(inputs: ReproductionInputs, *, git_head: Callable[[Path], str] = _git_head) -> dict[str, object]:
-    """Validate static provenance and return the strict historical execution plan.
+    """Validate static provenance and return the historical execution plan.
 
     The sparse manifest digest is a runtime binding because the immutable
     manifest is intentionally created by the first execution step.  The shell
     wrapper resolves that digest immediately after creation before it starts
     either reconstruction route.
     """
-    case, observations = _validate_inputs(inputs, git_head=git_head)
+    case, observations, group_counts = _validate_inputs(inputs, git_head=git_head)
     root = inputs.output_root.resolve()
     sparse_root = root / "sparse_inputs"
     sparse_case_root = sparse_root / inputs.subject / inputs.case_id
@@ -240,41 +242,55 @@ def build_reproduction_plan(inputs: ReproductionInputs, *, git_head: Callable[[P
             "--r0-native-maps-root", inputs.native_cache_root, "--nesvor-executable", nesvor,
             "--endpoint", "central", "--output", fit_endpoint, "--device", inputs.device,
         )},
-        {"id": "metric_central", "cwd": str(inputs.fit_first_worktree.resolve()), "argv": _command(
+    ]
+    if inputs.include_metric:
+        assert inputs.native_mask_root is not None
+        steps.append({"id": "metric_central", "cwd": str(inputs.fit_first_worktree.resolve()), "argv": _command(
             inputs.python_executable, "-m", "paper_experiments.joint_vs_2dfit.phase2_clean.final_stratified_native_metrics",
             "--proposed-endpoint-root", proposed_endpoint, "--fit-first-endpoint-root", fit_endpoint,
             "--native-mask-root", inputs.native_mask_root, "--r0-native-maps-root", inputs.native_cache_root,
             "--sparse-manifest", sparse_manifest, "--output", metric_root,
-        )},
-    ]
+        )})
+    source = {
+        "prepared_root": str(inputs.prepared_root.resolve()),
+        "observations": observations,
+        "observed_group_counts": group_counts,
+        "layout_policy": "cyj_historical_untrimmed_14_15_12" if inputs.subject == "CYJ" else "subject_full_input_audited",
+        "required_group_counts": HISTORICAL_GROUP_COUNTS if inputs.subject == "CYJ" else None,
+    }
+    provenance: dict[str, object] = {
+        "b6_model": {"path": str(inputs.b6_model.resolve()), "sha256": _sha256(inputs.b6_model)},
+        "signal_simulator": {"path": str(inputs.signal_simulator.resolve()), "sha256": _sha256(inputs.signal_simulator)},
+        "protocol": {"path": str(inputs.protocol.resolve()), "sha256": _sha256(inputs.protocol)},
+        "l100_fit_first_root": str(inputs.l100_fit_first_root.resolve()),
+    }
+    if inputs.include_metric:
+        assert inputs.native_mask_root is not None
+        provenance["native_mask_manifest"] = {"path": str((inputs.native_mask_root / "manifest.json").resolve()), "sha256": _sha256(inputs.native_mask_root / "manifest.json")}
     return {
         "schema": PLAN_SCHEMA,
         "identity": {"subject": inputs.subject, "case_id": inputs.case_id},
         "historical_stage_commits": {"sparse": SPARSE_COMMIT, "q002": Q002_COMMIT, "fit_first_endpoint_metric": FIT_FIRST_COMMIT},
-        "source": {"prepared_root": str(inputs.prepared_root.resolve()), "observations": observations, "required_group_counts": HISTORICAL_GROUP_COUNTS},
+        "source": source,
         "output_root": str(root),
         "runtime_bindings": {"sparse_manifest": str(sparse_manifest), "sparse_manifest_sha256": manifest_sha},
-        "provenance": {
-            "b6_model": {"path": str(inputs.b6_model.resolve()), "sha256": _sha256(inputs.b6_model)},
-            "signal_simulator": {"path": str(inputs.signal_simulator.resolve()), "sha256": _sha256(inputs.signal_simulator)},
-            "protocol": {"path": str(inputs.protocol.resolve()), "sha256": _sha256(inputs.protocol)},
-            "native_mask_manifest": {"path": str((inputs.native_mask_root / "manifest.json").resolve()), "sha256": _sha256(inputs.native_mask_root / "manifest.json")},
-            "l100_fit_first_root": str(inputs.l100_fit_first_root.resolve()),
-        },
-        "publication": {"endpoint": "central", "q002_raw_route": "historical_default_including_psf128", "published_endpoints": ["central"]},
+        "provenance": provenance,
+        "publication": {"endpoint": "central", "q002_raw_route": "historical_default_including_psf128", "published_endpoints": ["central"], "metric": "included" if inputs.include_metric else "skipped_pending_mask_schema_audit"},
         "steps": steps,
     }
 
 
 def _parse_args(argv: Iterable[str] | None = None) -> ReproductionInputs:
     parser = argparse.ArgumentParser(description=__doc__)
-    for name in ("prepared-root", "output-root", "sparse-worktree", "q002-worktree", "fit-first-worktree", "b6-model", "signal-simulator", "protocol", "native-cache-root", "native-mask-root", "l100-fit-first-root"):
+    for name in ("prepared-root", "output-root", "sparse-worktree", "q002-worktree", "fit-first-worktree", "b6-model", "signal-simulator", "protocol", "native-cache-root", "l100-fit-first-root"):
         parser.add_argument("--" + name, required=True)
+    parser.add_argument("--native-mask-root")
     parser.add_argument("--subject", required=True); parser.add_argument("--case", dest="case_id", required=True, choices=tuple(CASE_SPECS))
     parser.add_argument("--expected-b6-model-sha256", required=True); parser.add_argument("--expected-signal-simulator-sha256", required=True); parser.add_argument("--expected-protocol-sha256", required=True)
-    parser.add_argument("--nesvor-executable"); parser.add_argument("--python-executable", default=sys.executable); parser.add_argument("--device", default="cuda:0")
+    parser.add_argument("--nesvor-executable"); parser.add_argument("--python-executable", default=sys.executable); parser.add_argument("--device", default="cuda:0"); parser.add_argument("--skip-metric", action="store_true")
     args = parser.parse_args(argv)
     values = vars(args)
+    values["include_metric"] = not values.pop("skip_metric")
     return ReproductionInputs(**{key: Path(value) if key in {
         "prepared_root", "output_root", "sparse_worktree", "q002_worktree", "fit_first_worktree", "b6_model", "signal_simulator", "protocol", "native_cache_root", "native_mask_root", "l100_fit_first_root", "nesvor_executable"
     } and value is not None else value for key, value in values.items()})

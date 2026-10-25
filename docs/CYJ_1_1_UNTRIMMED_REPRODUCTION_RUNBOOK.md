@@ -103,6 +103,42 @@ endpoint manifests, and the final `aggregate_metrics.json` digest/content.
 Do not compare a changed endpoint's RMSE as proof of identity; the command and
 provenance contracts are the primary reproduction checks.
 
+## Other-subject endpoint validation
+
+The same planner also supports an explicit full-input endpoint-only pilot for
+`DYZ`, `DYL_2`, `HHZ`, or `HJL`.  This is not a claim that those subjects have
+CYJ's 14/15/12 layout: the plan records their actual complete ten-weight group
+counts and the caller supplies every subject-specific root.  Metric generation
+is deliberately disabled until the Final5 native-mask schema is admitted
+separately.
+
+The historical sparse profile filenames retain a `CYJ_` prefix, but their JSON
+payload is subject-neutral (`SAX100_2CH100_4CH0`: SAX/2CH all, 4CH none).  The
+generated sparse manifest still records and validates the explicit subject.
+
+Use the audited full root for the selected subject, an explicit L100 Fit-first
+root, and the subject's existing native-map cache.  Do not substitute another
+subject's root and do not point this at `02_standardized_12_15_10`.
+
+```bash
+export CYJ11_SUBJECT=HHZ
+export CYJ11_CASE=SAX100_2CH100_4CH0
+export CYJ11_PREPARED_ROOT="$DATA/Code_10w_runs/phase4r_final_five_subject_k8_central_20261023/01_inputs_full/prepared"
+export CYJ11_L100_FIT_FIRST_ROOT="$DATA/Code_10w_runs/phase4r_final_five_subject_k8_central_20261023/04_reconstruction/fit_first_exp1_1/HHZ/L100"
+export CYJ11_NATIVE_CACHE_ROOT=/explicit/audited/HHZ/native_maps
+export CYJ11_SKIP_METRIC=1
+unset CYJ11_NATIVE_MASK_ROOT
+export CYJ11_OUTPUT_ROOT="$DATA/Code_10w_runs/subject_full_endpoint_validation_20261026/$CYJ11_SUBJECT/$CYJ11_CASE"
+
+bash "$REPO/paper_experiments/joint_vs_2dfit/phase2_clean/server_commands/run_cyj11_untrimmed_reproduction.sh" --dry-run
+```
+
+For `DYL_2`, the current L100 Fit-first root is under `fit_first/DYL_2/L100`;
+the other audited subjects use `fit_first_exp1_1/<SUBJECT>/L100`.  Inspect the
+dry-run plan before `--execute`: it must say
+`subject_full_input_audited`, show the subject's actual counts, omit
+`metric_central`, and retain only the Proposed/Fit-first central endpoints.
+
 ## Remaining CYJ matrix
 
 After this case succeeds, run a dry-run per remaining sparse case using a

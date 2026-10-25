@@ -1,6 +1,7 @@
-"""CPU-only contract tests for the strict CYJ 1.1 command-plan builder."""
+"""CPU-only contract tests for historical and full-input command plans."""
 from __future__ import annotations
 
+from dataclasses import replace
 import hashlib
 import os
 from pathlib import Path
@@ -20,12 +21,18 @@ def _observation(path: Path, groups: int) -> None:
     np.savez_compressed(path, group_idx=group_idx, weight_idx=np.tile(np.arange(10), groups))
 
 
-def _inputs(tmp_path: Path, *, group_counts: tuple[int, int, int] = (14, 15, 12)):
+def _inputs(
+    tmp_path: Path,
+    *,
+    subject: str = "CYJ",
+    group_counts: tuple[int, int, int] = (14, 15, 12),
+    include_metric: bool = True,
+):
     from paper_experiments.joint_vs_2dfit.phase2_clean.cyj11_untrimmed_reproduction import ReproductionInputs
 
     prepared = tmp_path / "Code_10w_prepared"
     for stack, groups in zip(("sax", "2ch", "4ch"), group_counts):
-        _observation(prepared / "CYJ" / stack / "observations.npz", groups)
+        _observation(prepared / subject / stack / "observations.npz", groups)
     assets = tmp_path / "assets"
     assets.mkdir()
     b6 = assets / "b6.pt"; b6.write_bytes(b"b6")
@@ -38,7 +45,7 @@ def _inputs(tmp_path: Path, *, group_counts: tuple[int, int, int] = (14, 15, 12)
     for path in worktrees.values():
         path.mkdir()
     return ReproductionInputs(
-        subject="CYJ",
+        subject=subject,
         case_id="SAX100_2CH100_4CH0",
         prepared_root=prepared,
         output_root=tmp_path / "new_output",
@@ -54,6 +61,7 @@ def _inputs(tmp_path: Path, *, group_counts: tuple[int, int, int] = (14, 15, 12)
         expected_b6_model_sha256=_sha256(b6),
         expected_signal_simulator_sha256=_sha256(simulator),
         expected_protocol_sha256=_sha256(protocol),
+        include_metric=include_metric,
     )
 
 
@@ -98,6 +106,27 @@ def test_plan_requires_only_the_l100_fit_first_dependency(tmp_path: Path) -> Non
     dependencies = [step["id"] for step in plan["steps"] if step.get("kind") == "verified_existing_dependency"]
     assert dependencies == ["l100_fit_first_dependency"]
     assert "l100_proposed_root" not in plan["provenance"]
+
+
+def test_noncyj_full_input_emits_endpoints_without_metric_or_mask(tmp_path: Path) -> None:
+    """Subject-specific 12/16/10 input must not inherit CYJ layout or metric assumptions."""
+    from paper_experiments.joint_vs_2dfit.phase2_clean.cyj11_untrimmed_reproduction import build_reproduction_plan
+
+    inputs = replace(_inputs(
+        tmp_path,
+        subject="DYZ",
+        group_counts=(12, 16, 10),
+        include_metric=False,
+    ), native_mask_root=None)
+    plan = build_reproduction_plan(inputs, git_head=_historical_heads)
+    assert plan["identity"] == {"subject": "DYZ", "case_id": "SAX100_2CH100_4CH0"}
+    assert plan["source"]["layout_policy"] == "subject_full_input_audited"
+    assert plan["source"]["observed_group_counts"] == {"sax": 12, "2ch": 16, "4ch": 10}
+    assert "native_mask_manifest" not in plan["provenance"]
+    assert {step["id"] for step in plan["steps"]} == {
+        "build_sparse_input", "l100_fit_first_dependency", "proposed_sparse",
+        "fit_first_sparse_prepare", "proposed_central", "fit_first_central",
+    }
 
 
 @pytest.mark.parametrize("counts", [(12, 15, 10), (14, 15, 11)])
@@ -178,4 +207,54 @@ def test_server_wrapper_dry_run_prints_plan_without_creating_output(tmp_path: Pa
     script = repo / "paper_experiments/joint_vs_2dfit/phase2_clean/server_commands/run_cyj11_untrimmed_reproduction.sh"
     result = subprocess.run(["bash", str(script), "--dry-run"], cwd=repo, env=env, text=True, capture_output=True, check=True)
     assert '"case_id": "SAX100_2CH100_4CH0"' in result.stdout
+    assert not inputs.output_root.exists()
+
+
+def test_server_wrapper_endpoint_only_allows_subject_without_native_mask(tmp_path: Path) -> None:
+    """CYJ11_SKIP_METRIC must permit an explicit non-CYJ endpoint-only dry-run."""
+    inputs = replace(_inputs(
+        tmp_path,
+        subject="DYZ",
+        group_counts=(12, 16, 10),
+        include_metric=False,
+    ), native_mask_root=None)
+    fake_bin = tmp_path / "bin"; fake_bin.mkdir()
+    fake_git = fake_bin / "git"
+    fake_git.write_text(
+        "#!/bin/sh\ncase \"$2\" in\n"
+        "*sparse_worktree) echo 6f4142cccc17782ba6e985e74531822560b369f3 ;;\n"
+        "*q002_worktree) echo de41aef1c52b12037efed20f71cdf0db4696d49c ;;\n"
+        "*fit_first_worktree) echo 00d88b45c75f272f05538997e38fbda85988e7aa ;;\n"
+        "*) exit 2 ;;\nesac\n",
+        encoding="utf-8",
+    )
+    fake_git.chmod(0o755)
+    nesvor = tmp_path / "assets" / "nesvor"; nesvor.write_text("#!/bin/sh\n", encoding="utf-8"); nesvor.chmod(0o755)
+    repo = Path(__file__).resolve().parents[3]
+    env = {
+        **os.environ,
+        "PATH": str(fake_bin) + os.pathsep + os.environ["PATH"],
+        "REPO": str(repo),
+        "CYJ11_PYTHON": os.environ.get("PYTHON", os.sys.executable),
+        "CYJ11_SUBJECT": "DYZ",
+        "CYJ11_SKIP_METRIC": "1",
+        "CYJ11_PREPARED_ROOT": str(inputs.prepared_root),
+        "CYJ11_B6_MODEL": str(inputs.b6_model),
+        "CYJ11_SIGNAL_SIMULATOR": str(inputs.signal_simulator),
+        "CYJ11_PROTOCOL": str(inputs.protocol),
+        "CYJ11_NATIVE_CACHE_ROOT": str(inputs.native_cache_root),
+        "CYJ11_L100_FIT_FIRST_ROOT": str(inputs.l100_fit_first_root),
+        "CYJ11_OUTPUT_ROOT": str(inputs.output_root),
+        "CYJ11_SPARSE_WORKTREE": str(inputs.sparse_worktree),
+        "CYJ11_Q002_WORKTREE": str(inputs.q002_worktree),
+        "CYJ11_FIT_FIRST_WORKTREE": str(inputs.fit_first_worktree),
+        "CYJ11_EXPECTED_B6_SHA256": inputs.expected_b6_model_sha256,
+        "CYJ11_EXPECTED_SIGNAL_SIMULATOR_SHA256": inputs.expected_signal_simulator_sha256,
+        "CYJ11_EXPECTED_PROTOCOL_SHA256": inputs.expected_protocol_sha256,
+        "CYJ11_NESVOR_EXECUTABLE": str(nesvor),
+    }
+    script = repo / "paper_experiments/joint_vs_2dfit/phase2_clean/server_commands/run_cyj11_untrimmed_reproduction.sh"
+    result = subprocess.run(["bash", str(script), "--dry-run"], cwd=repo, env=env, text=True, capture_output=True, check=True)
+    assert '"metric": "skipped_pending_mask_schema_audit"' in result.stdout
+    assert '"metric_central"' not in result.stdout
     assert not inputs.output_root.exists()
