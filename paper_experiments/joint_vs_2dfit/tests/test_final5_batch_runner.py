@@ -44,6 +44,14 @@ def test_cli_exits_nonzero_for_requested_post_validation_failure(monkeypatch: py
         runner.main()
 
 
+def test_metric_cli_exits_nonzero_for_existing_invalid_output(monkeypatch: pytest.MonkeyPatch) -> None:
+    invalid = {"cases": {"CYJ/L100": {"stages": {"final_native_grid_metrics": {"state": "BLOCKED_EXISTING_INVALID", "reason": "wrong schema"}}}}}
+    monkeypatch.setattr(runner, "execute_metric_batch", lambda *_args, **_kwargs: (invalid, []))
+    monkeypatch.setattr(sys, "argv", ["final5_batch_runner.py", "metrics", "--registry", "registry.json", "--final-root", "final"])
+    with pytest.raises(SystemExit, match="1"):
+        runner.main()
+
+
 def test_metric_only_batch_runs_only_requested_verified_endpoints(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     current = runner.CaseRecord("CYJ", "L100", "L100", None, 1, tmp_path / "sparse.json", "a" * 64, "b" * 40, tmp_path)
     other = runner.CaseRecord("HJL", "L100", "L100", None, 1, tmp_path / "other.json", "a" * 64, "b" * 40, tmp_path)
@@ -64,6 +72,62 @@ def test_metric_only_batch_runs_only_requested_verified_endpoints(tmp_path: Path
     assert [f"{item.subject}/{item.case_id}" for item in selected] == ["CYJ/L100"]
     assert runner.requested_execution_succeeded(result, ["CYJ/L100"], stages=("final_native_grid_metrics",))
     assert '"mode": "metrics_only"' in (tmp_path / "final" / "00_inventory" / "final5_batch_v1" / "events.jsonl").read_text()
+
+
+def test_metric_only_all_cases_runs_ready_and_leaves_dependency_blocked_unselected(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    ready = runner.CaseRecord("CYJ", "L100", "L100", None, 1, tmp_path / "ready.json", "a" * 64, "b" * 40, tmp_path)
+    valid = runner.CaseRecord("DYZ", "L100", "L100", None, 1, tmp_path / "valid.json", "a" * 64, "b" * 40, tmp_path)
+    blocked = runner.CaseRecord("HJL", "L100", "L100", None, 1, tmp_path / "blocked.json", "a" * 64, "b" * 40, tmp_path)
+    valid_endpoints = {
+        "proposed_endpoint": {"state": "SKIP_VALID", "reason": "published"},
+        "fit_first_endpoint": {"state": "SKIP_VALID", "reason": "published"},
+    }
+    plan = {"cases": {
+        "CYJ/L100": {"stages": {**valid_endpoints, "final_native_grid_metrics": {"state": "READY", "reason": "absent"}}},
+        "DYZ/L100": {"stages": {"final_native_grid_metrics": {"state": "SKIP_VALID", "reason": "published"}}},
+        "HJL/L100": {"stages": {"final_native_grid_metrics": {"state": "BLOCKED_DEPENDENCY", "reason": "endpoint absent"}}},
+    }}
+    monkeypatch.setattr(runner, "load_final5_registry", lambda _registry: [ready, valid, blocked])
+    monkeypatch.setattr(runner, "build_batch_plan", lambda *_args, **_kwargs: plan)
+    calls: list[str] = []
+    monkeypatch.setattr(runner, "_run_direct_stage", lambda _stage, record, *_args, **_kwargs: calls.append(f"{record.subject}/{record.case_id}"))
+    monkeypatch.setattr(runner, "_validate_stage_output", lambda *_args: runner.ValidationResult(True, "SKIP_VALID", "published"))
+
+    result, selected = runner.execute_metric_batch(tmp_path / "registry.json", tmp_path / "final", device="0")
+
+    assert calls == ["CYJ/L100"]
+    assert [f"{item.subject}/{item.case_id}" for item in selected] == ["CYJ/L100"]
+    assert result["cases"]["HJL/L100"]["stages"]["final_native_grid_metrics"]["state"] == "BLOCKED_DEPENDENCY"
+
+
+def test_metric_only_explicit_blocked_target_is_retained_for_strict_cli_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    record = runner.CaseRecord("CYJ", "L100", "L100", None, 1, tmp_path / "sparse.json", "a" * 64, "b" * 40, tmp_path)
+    monkeypatch.setattr(runner, "load_final5_registry", lambda _registry: [record])
+    monkeypatch.setattr(runner, "build_batch_plan", lambda *_args, **_kwargs: {"cases": {"CYJ/L100": {"stages": {"final_native_grid_metrics": {"state": "BLOCKED_DEPENDENCY", "reason": "endpoint absent"}}}}})
+
+    result, selected = runner.execute_metric_batch(tmp_path / "registry.json", tmp_path / "final", device="0", subject="CYJ", case="L100")
+
+    assert selected == [record]
+    assert not runner.requested_execution_succeeded(result, ["CYJ/L100"], stages=("final_native_grid_metrics",))
+
+
+def test_metric_only_existing_log_directory_does_not_turn_a_ready_metric_into_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    record = runner.CaseRecord("CYJ", "L100", "L100", None, 1, tmp_path / "sparse.json", "a" * 64, "b" * 40, tmp_path)
+    plan = {"cases": {"CYJ/L100": {"stages": {
+        "proposed_endpoint": {"state": "SKIP_VALID", "reason": "published"},
+        "fit_first_endpoint": {"state": "SKIP_VALID", "reason": "published"},
+        "final_native_grid_metrics": {"state": "READY", "reason": "absent"},
+    }}}}
+    log_root = tmp_path / "final" / "00_inventory" / "final5_batch_v1" / "logs" / "CYJ" / "L100"
+    log_root.mkdir(parents=True)
+    monkeypatch.setattr(runner, "load_final5_registry", lambda _registry: [record])
+    monkeypatch.setattr(runner, "build_batch_plan", lambda *_args, **_kwargs: plan)
+    monkeypatch.setattr(runner, "_run_direct_stage", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(runner, "_validate_stage_output", lambda *_args: runner.ValidationResult(True, "SKIP_VALID", "published"))
+
+    result, _selected = runner.execute_metric_batch(tmp_path / "registry.json", tmp_path / "final", device="0", subject="CYJ", case="L100")
+
+    assert result["cases"]["CYJ/L100"]["stages"]["final_native_grid_metrics"]["state"] == "SKIP_VALID"
 
 
 def _registry(tmp_path: Path, *, drop: tuple[str, str] | None = None) -> Path:

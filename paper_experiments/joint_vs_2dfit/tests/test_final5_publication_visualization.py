@@ -5,6 +5,46 @@ import numpy as np
 import pytest
 
 
+def test_single_element_errors_reuse_the_parameter_map_lut_and_range(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from paper_experiments.joint_vs_2dfit.phase2_clean.final5_publication_visualization import render_single_element_plane
+    from trad.evaluation.scmr.quality_control import DISPLAY_RANGES_MS
+
+    captured: list[tuple[object, tuple[float, float]]] = []
+    monkeypatch.setattr(
+        "paper_experiments.joint_vs_2dfit.phase2_clean.final5_publication_visualization._save_panel",
+        lambda _path, _values, _support, *, cmap, limits: captured.append((cmap, limits)),
+    )
+    values = np.arange(9, dtype=float).reshape(3, 3)
+    render_single_element_plane(
+        tmp_path, values, values + 1, values + 2, np.ones_like(values, bool), parameter="T1",
+        bounds={"row_start": 0, "row_stop": 3, "column_start": 0, "column_stop": 3},
+    )
+
+    assert len(captured) == 5
+    assert all(limits == DISPLAY_RANGES_MS["T1"] for _cmap, limits in captured)
+    assert len({id(cmap) for cmap, _limits in captured}) == 1
+
+
+def test_oblique_native_plane_reprojection_uses_endpoint_world_geometry() -> None:
+    from paper_experiments.joint_vs_2dfit.phase2_clean.evaluation import reproject_volume_to_native_plane
+    from paper_experiments.joint_vs_2dfit.phase2_clean.final_native_grid_metrics import native_ras_affine
+
+    native_ras = np.array([
+        [0.0, -2.0, 0.0, 13.0],
+        [1.5, 0.0, 0.0, -7.0],
+        [0.0, 0.0, 3.0, 11.0],
+        [0.0, 0.0, 0.0, 1.0],
+    ])
+    lps_to_ras = np.diag([-1.0, -1.0, 1.0, 1.0])
+    native_lps_rc = lps_to_ras @ native_ras
+    endpoint = np.fromfunction(lambda row, column, _slice: 100.0 * row + column, (4, 5, 1))
+
+    mapped, valid = reproject_volume_to_native_plane(endpoint, native_ras, native_ras_affine(native_lps_rc), (4, 5))
+
+    assert valid.all()
+    assert np.allclose(mapped, endpoint[:, :, 0], atol=1e-12, rtol=0)
+
+
 def test_manifest_group_roles_keep_sax_and_do_not_invent_l100_heldout() -> None:
     from paper_experiments.joint_vs_2dfit.phase2_clean.final5_publication_visualization import publication_group_roles
 

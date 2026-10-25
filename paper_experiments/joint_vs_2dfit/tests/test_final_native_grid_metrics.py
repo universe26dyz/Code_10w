@@ -97,6 +97,16 @@ def test_native_affine_uses_historical_lps_to_ras_conversion() -> None:
     assert np.array_equal(affine, np.diag([-1.0, -1.0, 1.0, 1.0]) @ lps)
 
 
+def test_formal_metric_evaluator_does_not_depend_on_publication_renderer() -> None:
+    from pathlib import Path
+    from paper_experiments.joint_vs_2dfit.phase2_clean import final_native_grid_metrics as metrics
+
+    source = Path(metrics.__file__).read_text(encoding="utf-8")
+    assert "final5_publication_visualization" not in source
+    assert "reproject_volume_to_native_plane" in source
+    assert "exact_paired_support" in source
+
+
 def test_l100_uses_all_native_groups_and_sparse_uses_manifest_heldouts() -> None:
     from paper_experiments.joint_vs_2dfit.phase2_clean.final_native_grid_metrics import evaluation_group_ids
 

@@ -16,13 +16,14 @@ from typing import Any, Mapping
 
 import numpy as np
 
-from trad.evaluation.scmr.quality_control import DISPLAY_RANGES_MS, RESIDUAL_RANGES_MS, load_legacy_scmr_colorbars
+from trad.evaluation.scmr.quality_control import DISPLAY_RANGES_MS, load_legacy_scmr_colorbars
 
 from .contracts import sha256, write_immutable_json
 from .evaluation import reproject_volume_to_native_plane
 from .final_cyj_reporting import _load_all_verified_native_cache_groups
 from .final_native_grid_metrics import native_ras_affine
 from .final_sparse_native_metrics import validate_sparse_endpoint_roots
+from .visualization import native_panel_specs
 
 
 STACKS = ("sax", "2ch", "4ch")
@@ -104,17 +105,18 @@ def _save_panel(path: Path, values: np.ndarray, support: np.ndarray, *, cmap: An
 
 
 def render_single_element_plane(output: str | Path, reference: np.ndarray, proposed: np.ndarray, fit_first: np.ndarray, support: np.ndarray, *, parameter: str, bounds: Mapping[str, int]) -> dict[str, Path]:
-    """Save exactly five clean one-panel assets sharing one crop and LUT contract."""
+    """Save five CYJ-style panels sharing one crop and parameter LUT contract."""
     output = Path(output); output.mkdir(parents=True, exist_ok=True)
-    bars = load_legacy_scmr_colorbars(); mapping, residual = bars.mapping[parameter], bars.residual
+    parameter_lut = native_panel_specs(parameter)[0]
+    mapping, limits = parameter_lut["cmap"], parameter_lut["limits"]
     maps = {"native_reference": reference, "proposed": proposed, "fit_first": fit_first,
             "proposed_absolute_error": np.abs(np.asarray(proposed) - np.asarray(reference)),
             "fit_first_absolute_error": np.abs(np.asarray(fit_first) - np.asarray(reference))}
     result: dict[str, Path] = {}
     for name, values in maps.items():
         target = output / f"{name}.png"; result[name] = target
-        _save_panel(target, _crop(values, bounds), _crop(support, bounds), cmap=mapping if "error" not in name else residual,
-                    limits=DISPLAY_RANGES_MS[parameter] if "error" not in name else RESIDUAL_RANGES_MS[parameter])
+        _save_panel(target, _crop(values, bounds), _crop(support, bounds), cmap=mapping,
+                    limits=limits)
     return result
 
 
@@ -191,7 +193,6 @@ def render_final5_publication_visualization(*, final5_root: str | Path, subject:
         assets = staging / "assets"; assets.mkdir()
         for key, display in PARAMETERS.items():
             _save_colorbar(assets / f"{display}_map_colorbar.png", cmap=bars.mapping[display], limits=DISPLAY_RANGES_MS[display], label=f"{display} (ms)")
-            _save_colorbar(assets / f"{display}_error_colorbar.png", cmap=bars.residual, limits=RESIDUAL_RANGES_MS[display], label="|Δ| (ms)")
         records: list[dict[str, Any]] = []
         for stack_name in selected_stacks:
             cache = caches[stack_name]
@@ -214,7 +215,7 @@ def render_final5_publication_visualization(*, final5_root: str | Path, subject:
                             if not np.array_equal(np.asarray(stored["native_affine_ras"], float), affine):
                                 raise ValueError("formal metric native affine mismatch")
                         formal_provenance["native_mask"] = _record(formal_mask)
-                    metadata = {"subject": subject, "case_id": case_id, "profile_id": sparse.get("profile_id"), "parameter": display, "stack": stack_name, "original_group_idx": original_group, "sampling_role": role, "native_affine_ras": affine.tolist(), "crop_bounds": bounds, "display_support_definition": "source_support AND finite(reference, proposed, fit_first) AND proposed_reprojection_valid AND fit_first_volume_geometry_valid; no connected-component filtering; not formal metric ROI", "formal_metric_support_provenance": formal_provenance, "proposed_endpoint_manifest": metric["endpoint_provenance"]["proposed_manifest"], "fit_first_endpoint_manifest": metric["endpoint_provenance"]["fit_first_manifest"], "sparse_manifest": _record(paths["sparse"]), "native_reference_provenance": cache["provenance"], "display_lut": bars.metadata["mapping_colormaps"][display], "display_range_ms": list(DISPLAY_RANGES_MS[display]), "error_range_ms": list(RESIDUAL_RANGES_MS[display]), "interpolation": {"maps": "linear order=1", "binary_masks": "nearest-neighbour order=0"}, "clean_single_element_files": {name: path.name for name, path in rendered.items()}, "git_sha": _git_sha()}
+                    metadata = {"subject": subject, "case_id": case_id, "profile_id": sparse.get("profile_id"), "parameter": display, "stack": stack_name, "original_group_idx": original_group, "sampling_role": role, "native_affine_ras": affine.tolist(), "crop_bounds": bounds, "display_support_definition": "source_support AND finite(reference, proposed, fit_first) AND proposed_reprojection_valid AND fit_first_volume_geometry_valid; no connected-component filtering; not formal metric ROI", "formal_metric_support_provenance": formal_provenance, "proposed_endpoint_manifest": metric["endpoint_provenance"]["proposed_manifest"], "fit_first_endpoint_manifest": metric["endpoint_provenance"]["fit_first_manifest"], "sparse_manifest": _record(paths["sparse"]), "native_reference_provenance": cache["provenance"], "display_lut": bars.metadata["mapping_colormaps"][display], "display_range_ms": list(DISPLAY_RANGES_MS[display]), "error_range_ms": list(DISPLAY_RANGES_MS[display]), "error_display": "absolute_error_ms uses the same parameter LUT/range; no residual colorbar", "interpolation": {"maps": "linear order=1", "binary_masks": "nearest-neighbour order=0"}, "clean_single_element_files": {name: path.name for name, path in rendered.items()}, "git_sha": _git_sha()}
                     write_immutable_json(group_root / "metadata.json", metadata); records.append(metadata)
         write_immutable_json(staging / "publication_visualization_manifest.json", {"schema": "final5_publication_single_element_visualization/v1", "subject": subject, "case_id": case_id, "publication_consumer_only": True, "formal_metric_authority": str(paths["metric"].resolve()), "formal_metric_schema": METRIC_SCHEMA, "no_training": True, "no_reconstruction": True, "no_metric_recomputation": True, "records": records, "assets": {name: _published_record(path, output / "assets" / path.name) for name, path in {item.name: item for item in assets.glob("*.png")}.items()}})
         staging.rename(output)

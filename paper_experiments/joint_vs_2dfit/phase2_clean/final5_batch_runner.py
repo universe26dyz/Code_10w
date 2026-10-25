@@ -740,41 +740,63 @@ def execute_metric_batch(registry: str | Path, final_root: str | Path, *, device
     all_records = load_final5_registry(registry)
     root = Path(final_root)
     result = deepcopy(build_batch_plan(registry, root, device=device, records=all_records))
-    records = _selected_records(all_records, subject, case)
+    requested = _selected_records(all_records, subject, case)
     records_by_key = {(item.subject, item.case_id): item for item in all_records}
     events = _state_root(root) / "events.jsonl"; events.parent.mkdir(parents=True, exist_ok=True)
     stage = "final_native_grid_metrics"
-    for record in records:
+    eligible = [
+        record for record in requested
+        if result["cases"][f"{record.subject}/{record.case_id}"]["stages"][stage]["state"] == "READY"
+    ]
+    explicit = subject is not None or case is not None
+    result["metric_only_selection"] = {
+        "mode": "explicit_requested" if explicit else "all_eligible_ready",
+        "eligible_case_keys": [f"{record.subject}/{record.case_id}" for record in eligible],
+        "unselected_blocked_dependency_case_keys": [
+            f"{record.subject}/{record.case_id}" for record in requested
+            if result["cases"][f"{record.subject}/{record.case_id}"]["stages"][stage]["state"] == "BLOCKED_DEPENDENCY"
+        ],
+    }
+    for record in eligible:
         stage_plan = result["cases"][f"{record.subject}/{record.case_id}"]["stages"][stage]
         log = _state_root(root) / "logs" / record.subject / record.case_id / "metric_only_final_native_grid_metrics.log"
-        if stage_plan["state"] == "SKIP_VALID":
-            log.parent.mkdir(parents=True, exist_ok=True); log.write_text(f"SKIP_VALID: {stage_plan.get('reason', '')}\n", encoding="utf-8")
-            code = 0
-        elif stage_plan["state"] == "BLOCKED_EXISTING_INVALID":
-            log.parent.mkdir(parents=True, exist_ok=True); log.write_text(f"BLOCKED_EXISTING_INVALID: {stage_plan.get('reason', '')}\n", encoding="utf-8")
+        dependency_reason = _runtime_dependency_reason(stage, record, result, records_by_key)
+        if dependency_reason is not None:
+            stage_plan.update({"state": "BLOCKED_DEPENDENCY", "reason": dependency_reason})
+            log.parent.mkdir(parents=True, exist_ok=True); log.write_text(f"BLOCKED_DEPENDENCY: {dependency_reason}\n", encoding="utf-8")
             code = 1
         else:
-            dependency_reason = _runtime_dependency_reason(stage, record, result, records_by_key)
-            if dependency_reason is not None:
-                stage_plan.update({"state": "BLOCKED_DEPENDENCY", "reason": dependency_reason})
-                log.parent.mkdir(parents=True, exist_ok=True); log.write_text(f"BLOCKED_DEPENDENCY: {dependency_reason}\n", encoding="utf-8")
-                code = 1
-            else:
-                try:
-                    _run_direct_stage(stage, record, root, device=device, nesvor="nesvor")
-                    post = _validate_stage_output(stage, record, root, records_by_key)
-                    if post.valid:
-                        stage_plan.update(_stage(post)); log.parent.mkdir(parents=True, exist_ok=True); log.write_text(f"SKIP_VALID: {post.reason}\n", encoding="utf-8"); code = 0
-                    else:
-                        stage_plan.update({"state": "FAILED", "reason": f"post-stage validation failed: {post.reason}"}); log.parent.mkdir(parents=True, exist_ok=True); log.write_text(f"FAILED: post-stage validation failed: {post.reason}\n", encoding="utf-8"); code = 1
-                except Exception:
-                    log.parent.mkdir(parents=True, exist_ok=True); log.write_text(traceback.format_exc(), encoding="utf-8")
-                    stage_plan.update({"state": "FAILED", "reason": "metric stage raised; see stage log"}); code = 1
+            try:
+                _run_direct_stage(stage, record, root, device=device, nesvor="nesvor")
+                post = _validate_stage_output(stage, record, root, records_by_key)
+                if post.valid:
+                    stage_plan.update(_stage(post)); log.parent.mkdir(parents=True, exist_ok=True); log.write_text(f"SKIP_VALID: {post.reason}\n", encoding="utf-8"); code = 0
+                else:
+                    stage_plan.update({"state": "FAILED", "reason": f"post-stage validation failed: {post.reason}"}); log.parent.mkdir(parents=True, exist_ok=True); log.write_text(f"FAILED: post-stage validation failed: {post.reason}\n", encoding="utf-8"); code = 1
+            except Exception:
+                log.parent.mkdir(parents=True, exist_ok=True); log.write_text(traceback.format_exc(), encoding="utf-8")
+                stage_plan.update({"state": "FAILED", "reason": "metric stage raised; see stage log"}); code = 1
         with events.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps({"stage": stage, "mode": "metrics_only", "subject": record.subject, "case_id": record.case_id, "return_code": code, "validation_state": stage_plan["state"], "log_path": str(log), "finished_utc": _utc()}) + "\n")
     _write_state(root, result, name="status.json")
     _write_state(root, result, name="summary.json")
-    return result, records
+    return result, requested if explicit else eligible
+
+
+def metric_batch_succeeded(plan: dict[str, Any], selected_case_keys: list[str], *, explicit: bool) -> bool:
+    """Metric-only exit status: dependency-blocked rows are expected only in all-case mode."""
+    if explicit:
+        return requested_execution_succeeded(plan, selected_case_keys, stages=("final_native_grid_metrics",))
+    states = [
+        item["stages"].get("final_native_grid_metrics", {}).get("state")
+        for item in plan.get("cases", {}).values()
+    ]
+    if any(state in ("FAILED", "BLOCKED_EXISTING_INVALID") for state in states):
+        return False
+    return all(
+        plan["cases"][key]["stages"]["final_native_grid_metrics"]["state"] == "SKIP_VALID"
+        for key in selected_case_keys
+    )
 
 
 def _print_status(plan: dict[str, Any]) -> None:
@@ -809,7 +831,7 @@ def main() -> None:
     _print_status(result)
     if args.command == "execute" and not requested_execution_succeeded(result, requested_keys, stages=("proposed_reconstruction", "fit_first_reconstruction", "proposed_endpoint", "fit_first_endpoint", "final_native_grid_metrics")):
         raise SystemExit(1)
-    if args.command == "metrics" and not requested_execution_succeeded(result, requested_keys, stages=("final_native_grid_metrics",)):
+    if args.command == "metrics" and not metric_batch_succeeded(result, requested_keys, explicit=args.subject is not None or args.case is not None):
         raise SystemExit(1)
 
 
