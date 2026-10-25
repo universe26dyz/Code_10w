@@ -67,8 +67,50 @@ def _bundle_plane(manifest: Mapping[str, Any], root: Path, *, parameter: str, st
     return values, geometry & query & np.isfinite(values)
 
 
+def _validate_fit_endpoint_source_manifest(*, declared: Any, fit_endpoint: Path,
+                                           subject: str, case: str) -> dict[str, Any]:
+    """Validate a bundle's server-declared endpoint against a local mirror by SHA.
+
+    Native bundles are immutable server products, so their provenance record keeps
+    the original absolute path.  A local analysis mirror may legitimately locate
+    the identical endpoint manifest elsewhere; content and endpoint identity stay
+    fail-closed.
+    """
+    if not isinstance(declared, Mapping):
+        raise ValueError("Fit-first final-pose native bundle endpoint provenance record is invalid")
+    original_path, expected_sha256 = declared.get("path"), declared.get("sha256")
+    if not isinstance(original_path, str) or not isinstance(expected_sha256, str):
+        raise ValueError("Fit-first final-pose native bundle endpoint provenance record is invalid")
+    actual_path = fit_endpoint / "manifest.json"
+    actual_record = _record(actual_path)
+    if expected_sha256 != actual_record["sha256"]:
+        raise ValueError("Fit-first final-pose native bundle endpoint provenance SHA256 mismatch")
+    endpoint_manifest = json.loads(actual_path.read_text(encoding="utf-8"))
+    identity = {
+        "schema": endpoint_manifest.get("schema"),
+        "subject": endpoint_manifest.get("subject"),
+        "case": endpoint_manifest.get("condition"),
+        "endpoint": endpoint_manifest.get("endpoint"),
+    }
+    expected_identity = {
+        "schema": "phase4r_fixed_l100_fit_first_export_bundle/v2",
+        "subject": subject,
+        "case": case,
+        "endpoint": "central",
+    }
+    if identity != expected_identity:
+        raise ValueError("Fit-first local endpoint manifest schema/subject/case/endpoint mismatch")
+    return {
+        "declared_original_path": original_path,
+        "actual_local_path": actual_record["path"],
+        "sha256": actual_record["sha256"],
+        "relocated_for_local_mirror": original_path != actual_record["path"],
+        "endpoint_manifest_identity": identity,
+    }
+
+
 def _validate_bundles(*, direct_root: Path, fit_root: Path, subject: str, case: str,
-                      fit_endpoint: Path) -> tuple[dict[str, Any], dict[str, Any]]:
+                      fit_endpoint: Path) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     direct_path, fit_path = direct_root / "manifest.json", fit_root / "manifest.json"
     direct, fit = json.loads(direct_path.read_text(encoding="utf-8")), json.loads(fit_path.read_text(encoding="utf-8"))
     direct_schema = "direct_native_prediction_bundle/v1" if case == "L100" else "direct_sparse_native_prediction_bundle/v1"
@@ -78,9 +120,10 @@ def _validate_bundles(*, direct_root: Path, fit_root: Path, subject: str, case: 
         raise ValueError("Proposed sparse final-pose native bundle subject/case mismatch")
     if fit.get("schema") != "fit_first_native_prediction_bundle/v6" or fit.get("endpoint") != "central":
         raise ValueError("Fit-first final-pose native bundle schema/endpoint mismatch")
-    if fit.get("endpoint_source_manifest") != _record(fit_endpoint / "manifest.json"):
-        raise ValueError("Fit-first final-pose native bundle endpoint provenance mismatch")
-    return direct, fit
+    endpoint_source_provenance = _validate_fit_endpoint_source_manifest(
+        declared=fit.get("endpoint_source_manifest"), fit_endpoint=fit_endpoint,
+        subject=subject, case=case)
+    return direct, fit, endpoint_source_provenance
 
 
 def _aggregate(values: dict[str, dict[str, list[np.ndarray]]]) -> dict[str, Any]:
@@ -117,7 +160,9 @@ def build_final5_partitioned_native_metrics(*, proposed_endpoint_root: str | Pat
     volumes, endpoint = validate_sparse_endpoint_roots(proposed_endpoint, fit_endpoint, case, subject=subject)
     images = {parameter: {method: nib.load(str(path)) for method, path in paths.items()} for parameter, paths in volumes.items()}
     effective = {parameter: nib.load(str(verified_fit_first_effective_query_mask(fit_endpoint, parameter)[0])) for parameter in PARAMETERS}
-    direct, fit = _validate_bundles(direct_root=direct_root, fit_root=fit_root, subject=subject, case=case, fit_endpoint=fit_endpoint)
+    direct, fit, fit_endpoint_source_provenance = _validate_bundles(
+        direct_root=direct_root, fit_root=fit_root, subject=subject, case=case,
+        fit_endpoint=fit_endpoint)
     caches = {stack: _load_all_verified_native_cache_groups(native_root, sparse_path, stack) for stack in STACKS}
     roles = publication_group_roles(sparse, {stack: [int(value) for value in caches[stack]["group_idx"]] for stack in STACKS})
     partitions = partition_group_roles(roles)
@@ -169,6 +214,7 @@ def build_final5_partitioned_native_metrics(*, proposed_endpoint_root: str | Pat
         write_immutable_json(staging / "manifest.json", {"schema": SCHEMA, "subject": subject, "case": case, "endpoint": endpoint["endpoint"],
             "sparse_manifest": _record(sparse_path), "endpoint_provenance": endpoint,
             "proposed_native_bundle": _record(direct_root / "manifest.json"), "fit_first_native_bundle": _record(fit_root / "manifest.json"),
+            "fit_first_endpoint_source_manifest_provenance": fit_endpoint_source_provenance,
             "native_mask_manifest": _record(mask_root / "manifest.json"), "aggregate_metrics": {"path": str((output / "aggregate_metrics.json").resolve()), "sha256": sha256(aggregate_path)},
             "support_equation": SUPPORT_EQUATION, "partitions": {name: "declared sparse-manifest roles" for name in partitions},
             "no_training": True, "no_reconstruction": True, "no_existing_metrics_overwritten": True})

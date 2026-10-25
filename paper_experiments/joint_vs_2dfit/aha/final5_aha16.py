@@ -130,8 +130,9 @@ def build_final5_aha16(*, final_root: str | Path, subject: str, case: str, roi_r
     _volume_paths, endpoint_provenance = validate_sparse_endpoint_roots(endpoints["proposed"], endpoints["fit_first"], case, subject=subject)
     central = Path(final_root) / "05_formal_endpoints" / "central"
     direct_root, fit_root = central / "proposed_native_bundle" / subject / case, central / "fit_first_native_bundle" / subject / case
-    direct_bundle, fit_bundle = _validate_bundles(direct_root=direct_root, fit_root=fit_root, subject=subject, case=case,
-                                                  fit_endpoint=endpoints["fit_first"])
+    direct_bundle, fit_bundle, _fit_endpoint_source_provenance = _validate_bundles(
+        direct_root=direct_root, fit_root=fit_root, subject=subject, case=case,
+        fit_endpoint=endpoints["fit_first"])
     outer, inner, points, composite = (nib.load(str(roi / name)) for name in (
         "Segmentation_1-out-label.nii.gz", "Segmentation_2-in-label.nii.gz", "Segmentation_3-label_point.nii.gz", "sax_composite_reference.nii.gz"))
     if any(image.shape != outer.shape or not np.allclose(image.affine, outer.affine, atol=1e-6, rtol=0) for image in (inner, points, composite)):
