@@ -114,7 +114,7 @@ def _paths(root: Path, record: CaseRecord) -> dict[str, Path]:
         "native_mask": root / "06_metrics" / "current_native_mask" / subject / "L100",
         "l100_metrics": root / "06_metrics" / "final_pose_native" / subject / "L100",
         "sparse_metrics": root / "06_metrics" / "final_sparse_native" / subject / case,
-        "final_native_grid_metrics": root / "06_metrics" / "final_native_grid" / subject / case,
+        "final_native_grid_metrics": root / "06_metrics" / "final_native_grid_v2" / subject / case,
     }
 
 

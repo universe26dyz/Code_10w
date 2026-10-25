@@ -68,7 +68,7 @@ def test_plan_is_read_only_and_blocks_sparse_downstream_until_subject_l100(tmp_p
     assert sparse["stages"]["final_native_grid_metrics"]["state"] == "BLOCKED_DEPENDENCY"
     assert sparse["metric_kind"] == "formal manifest-held-out original-native-grid exact common-support metric"
     assert l100["stages"]["proposed_reconstruction"]["artifact_path"].endswith("04_reconstruction/proposed/CYJ/L100")
-    assert sparse["stages"]["final_native_grid_metrics"]["artifact_path"].endswith("06_metrics/final_native_grid/CYJ/L50_fold0")
+    assert sparse["stages"]["final_native_grid_metrics"]["artifact_path"].endswith("06_metrics/final_native_grid_v2/CYJ/L50_fold0")
 
 
 def test_existing_invalid_output_is_blocked_without_delete(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -78,6 +78,19 @@ def test_existing_invalid_output_is_blocked_without_delete(tmp_path: Path, monke
     plan = runner.build_batch_plan(registry, tmp_path / "final", device="0")
     assert plan["cases"]["CYJ/L100"]["stages"]["proposed_reconstruction"]["state"] == "BLOCKED_EXISTING_INVALID"
     assert invalid.is_dir()
+
+
+def test_native_grid_v2_uses_an_isolated_output_root_when_legacy_v1_exists(tmp_path: Path) -> None:
+    record = runner.CaseRecord("CYJ", "L100", "L100", None, 1, tmp_path / "sparse.json", "a" * 64, "b" * 40, tmp_path)
+    root = tmp_path / "final"
+    legacy = root / "06_metrics" / "final_native_grid" / record.subject / record.case_id
+    legacy.mkdir(parents=True)
+    (legacy / "manifest.json").write_text(json.dumps({"schema": "final5_native_grid_metric_bundle/v1"}))
+
+    current = runner._paths(root, record)["final_native_grid_metrics"]
+    assert current == root / "06_metrics" / "final_native_grid_v2" / record.subject / record.case_id
+    assert not current.exists()
+    assert runner.validate_final_native_grid_metric(current, record, root).state == "READY"
 
 
 def _proposed_manifest(root: Path, record: runner.CaseRecord) -> dict[str, object]:
