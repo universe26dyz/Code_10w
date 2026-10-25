@@ -109,3 +109,27 @@ def test_native_roi_mapping_must_match_the_declared_standardization_groups(tmp_p
 
     with pytest.raises(ValueError, match="disagrees"):
         require_exact_native_roi_mapping(mapping, subject="CYJ", case="L100")
+
+
+def test_native_roi_mapping_accepts_explicit_local_standardization_mirror_with_matching_hash(tmp_path) -> None:
+    """Catches rejecting a rsynced standardization manifest solely by its old path."""
+    from paper_experiments.joint_vs_2dfit.aha.final5_adapter import require_exact_native_roi_mapping
+    from paper_experiments.joint_vs_2dfit.phase2_clean.contracts import sha256
+
+    local = tmp_path / "local_mirror" / "standardization_manifest.json"
+    local.parent.mkdir()
+    local.write_text(json.dumps({"subject": "CYJ", "stacks": {"sax": {"standardized_to_original_group_idx": [
+        {"derived_group_idx": 0, "original_group_idx": 4},
+    ]}}}))
+    mapping = tmp_path / "mapping.json"
+    mapping.write_text(json.dumps({
+        "schema": "final5_aha_native_roi_mapping/v1", "subject": "CYJ", "case": "L100",
+        "standardization_manifest": {"path": "/data/server/standardization_manifest.json", "sha256": sha256(local)},
+        "planes": [{"level": "basal", "native_group_idx": 0, "original_group_idx": 4,
+                    "roi_slice_index": 1, "roi_transform": "identity", "anterior_xy": [1, 2], "inferior_xy": [3, 4]}],
+    }))
+
+    result = require_exact_native_roi_mapping(
+        mapping, subject="CYJ", case="L100", standardization_manifest_path=local)
+
+    assert result["standardization_manifest"]["path"] == "/data/server/standardization_manifest.json"

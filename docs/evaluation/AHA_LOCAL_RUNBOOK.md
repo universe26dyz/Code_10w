@@ -69,6 +69,62 @@ labels and paired-valid support:
 
 Each segment's mean and SD use the historical sample-SD definition.  AHA is
 basal 1–6, mid 7–12, apical 13–16 only; there is no segment 17.
+
+## Final5 local myocardial ROI statistics
+
+This separate CPU-only downstream report is not an AHA16 replacement.  It
+uses the same audited Final5 ROI adapter, native SAX dictionary, mapping, and
+final-pose Proposed/Fit-first bundles, but reports whole-ROI native-pixel
+statistics for every explicitly mapped SAX plane.  It never reads Trad PSF K8
+or historical SCMR reconstructions/metrics, and does not create figures,
+reconstructions, or formal metrics.
+
+First inspect the strict readiness state.  For example, this returns
+`ROI_PENDING` for DYL_2 until DYL_2's own audited ROI is supplied; DYL is
+never used as a fallback.
+
+```bash
+python -m paper_experiments.joint_vs_2dfit.aha.run_final5_myocardial_roi_metrics \
+  --final-root <LOCAL_FINAL5_MIRROR> --subject CYJ --case L100 \
+  --roi-root <SUBJECTS_ROOT_OR_EXACT_CYJ_ROI> \
+  --mapping <CYJ_L100_AHA_MAPPING.json> \
+  --standardization-manifest <LOCAL_STANDARDIZATION_MANIFEST>
+```
+
+After readiness is `READY`, generate one new output outside the Final5 root:
+
+```bash
+python -m paper_experiments.joint_vs_2dfit.aha.run_final5_myocardial_roi_metrics \
+  --final-root <LOCAL_FINAL5_MIRROR> --subject CYJ --case L100 \
+  --roi-root <SUBJECTS_ROOT_OR_EXACT_CYJ_ROI> \
+  --mapping <CYJ_L100_AHA_MAPPING.json> \
+  --standardization-manifest <LOCAL_STANDARDIZATION_MANIFEST> \
+  --native-sax-root <VERIFIED_STANDARDIZED_NATIVE_SAX_DIR> \
+  --output /home/universe/Final5_local_myocardial_roi_metrics/CYJ/L100_run1
+```
+
+`--output` must not exist and must be outside `<LOCAL_FINAL5_MIRROR>`.  The
+report writes immutable `per_plane_statistics.json`,
+`pooled_sax_statistics.json`, and a manifest with hashes for the manual ROI,
+mapping, native dictionary, endpoint provenance, and both native bundles.
+`--standardization-manifest` is the explicit local mirror of the manifest
+SHA-bound in the mapping: its path may differ from the server path, but its
+SHA256 and declared subject/group identity must match exactly.
+For T1 and T2, it reports three distinct ROI definitions without substitution:
+
+- `myocardium_full = outer AND NOT inner`;
+- `myocardium_core_legacy = myocardium_full AND EDT(..., spacing_rc_mm) > 1.0 mm`;
+- `myocardium_core_1px =` one in-plane 3×3 binary erosion of
+  `myocardium_full`.
+
+For each ROI, the native reference, Proposed, and Fit-first use exactly one
+common support: `ROI AND finite(reference) AND proposed_final_pose_valid AND
+fit_first_final_pose_valid AND finite(proposed, fit_first)`.  Per-plane and
+pooled SAX output report N, mean, sample SD, and Proposed/Fit-first bias, MAE,
+and RMSE relative to the same reference pixels.  ROI transformations remain
+the audited discrete orientation operations declared in the mapping; there is
+no mask interpolation.
+
 ## Final5 legacy full-FOV ROI adaptation
 
 For CYJ, DYZ, HHZ, and HJL, never pass the historical full-FOV ROI folder

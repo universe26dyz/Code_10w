@@ -130,12 +130,13 @@ def _require_mapping_derivation(payload: dict[str, Any], roi_root: Path, subject
     if derived.get("schema") != DERIVED_ROI_SCHEMA or derived.get("subject") != subject or derived.get("resampling") is not False:
         raise ValueError("Final5 legacy subject ROI derivation manifest is invalid")
     declared = payload.get("roi_derivation_manifest")
-    if not isinstance(declared, dict) or declared.get("path") != str(manifest.resolve()) or declared.get("sha256") != sha256(manifest):
-        raise ValueError("AHA mapping derivation manifest does not match the Final5 ROI bundle")
+    if not isinstance(declared, dict) or declared.get("sha256") != sha256(manifest):
+        raise ValueError("AHA mapping derivation manifest SHA256 does not match the Final5 ROI bundle")
 
 
 def require_exact_native_roi_mapping(path: str | Path, *, subject: str, case: str,
-                                     roi_root: str | Path | None = None) -> dict[str, Any]:
+                                     roi_root: str | Path | None = None,
+                                     standardization_manifest_path: str | Path | None = None) -> dict[str, Any]:
     """Validate a declared physical/standardization mapping without guessing IDs."""
     path = Path(path)
     if not path.is_file():
@@ -146,7 +147,7 @@ def require_exact_native_roi_mapping(path: str | Path, *, subject: str, case: st
     standard = payload.get("standardization_manifest")
     if not isinstance(standard, dict):
         raise ValueError("AHA mapping requires standardization manifest provenance")
-    standard_path = Path(str(standard.get("path", "")))
+    standard_path = Path(standardization_manifest_path) if standardization_manifest_path is not None else Path(str(standard.get("path", "")))
     if not standard_path.is_file() or standard.get("sha256") != sha256(standard_path):
         raise ValueError("AHA mapping standardization manifest SHA256 mismatch")
     standard_payload = json.loads(standard_path.read_text(encoding="utf-8"))
