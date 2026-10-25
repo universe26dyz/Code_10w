@@ -169,3 +169,86 @@ def test_load_model_rebuilds_with_checkpoint_post_stack_pose_and_returns_saved_s
 
     assert torch.equal(captured[0], payload["group_axisangle_post_stack_init_physical"])
     assert torch.equal(restored_space.bbox_train, training_space["bbox_train"])
+
+
+def _sparse_manifest(path, *, subject: str = "DYZ", case: str = "L100", generator: str = "a" * 40,
+                     active: tuple[str, ...] = ("sax", "2ch", "4ch")) -> None:
+    path.write_text(json.dumps({
+        "schema_version": "phase4r_sparse_profile_v2", "status": "ELIGIBLE",
+        "subject": subject, "case_id": case, "git_sha": generator,
+        "stacks": {stack: {"training_stack_present": stack in active} for stack in ("sax", "2ch", "4ch")},
+    }))
+
+
+def test_q002_manifest_validates_mirrored_inputs_by_stack_hash_and_sparse_provenance(tmp_path) -> None:
+    """Catches rejecting the actual Q002 manifest merely because its paths are server paths."""
+    inputs = []
+    for stack in ("sax", "2ch", "4ch"):
+        path = tmp_path / "local" / stack / "observations.npz"; path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(stack.encode()); inputs.append(path)
+    sparse = tmp_path / "sparse.json"; _sparse_manifest(sparse)
+    checkpoint = tmp_path / "run" / "model.pt"; checkpoint.parent.mkdir(); checkpoint.touch()
+    records = {f"/data/server/DYZ/{path.parent.name}/observations.npz": audit.sha256(path) for path in inputs}
+    (checkpoint.parent / "experiment_manifest.json").write_text(json.dumps({
+        "subject_id": "DYZ", "case_id": "L100", "prepared_inputs_sha256": records,
+        "training_input_sha256": dict(records),
+        "sparse_manifest": {"path": "/data/server/DYZ/sparse_manifest.json", "sha256": audit.sha256(sparse), "generator_git_sha": "a" * 40},
+    }))
+
+    active = audit._sparse_contract(sparse)
+    audit._validate_prepared_input_identity(checkpoint, inputs, active["active_stacks"])
+    audit._validate_checkpoint_sparse_provenance(checkpoint, active)
+
+
+def test_sparse_case_accepts_only_manifest_active_stack_subset_in_canonical_order(tmp_path) -> None:
+    """Catches treating absent 2CH/4CH sparse stacks as mandatory audit inputs."""
+    sparse = tmp_path / "sparse.json"; _sparse_manifest(sparse, case="SAX100_2CH0_4CH0", active=("sax",))
+    path = tmp_path / "DYZ" / "sax" / "observations.npz"; path.parent.mkdir(parents=True); path.write_bytes(b"sax")
+
+    contract = audit._sparse_contract(sparse)
+
+    assert contract["active_stacks"] == ("sax",)
+    assert audit._paths(tmp_path, active_stacks=contract["active_stacks"]) == [path]
+
+
+def test_q002_input_or_sparse_provenance_mismatch_is_rejected(tmp_path) -> None:
+    """Catches accepting a mismatched active input or a different sparse profile."""
+    path = tmp_path / "sax" / "observations.npz"; path.parent.mkdir(parents=True); path.write_bytes(b"sax")
+    sparse = tmp_path / "sparse.json"; _sparse_manifest(sparse, case="SAX100_2CH0_4CH0", active=("sax",))
+    checkpoint = tmp_path / "run" / "model.pt"; checkpoint.parent.mkdir(); checkpoint.touch()
+    (checkpoint.parent / "experiment_manifest.json").write_text(json.dumps({
+        "subject_id": "DYZ", "case_id": "SAX100_2CH0_4CH0",
+        "prepared_inputs_sha256": {"/server/DYZ/sax/observations.npz": "0" * 64},
+        "sparse_manifest": {"path": "/server/sparse.json", "sha256": audit.sha256(sparse), "generator_git_sha": "b" * 40},
+    }))
+    contract = audit._sparse_contract(sparse)
+
+    with pytest.raises(ValueError, match="SHA256 mismatch"):
+        audit._validate_prepared_input_identity(checkpoint, [path], contract["active_stacks"])
+    with pytest.raises(ValueError, match="generator"):
+        audit._validate_checkpoint_sparse_provenance(checkpoint, contract)
+
+
+@pytest.mark.parametrize(
+    ("manifest_change", "message"),
+    [
+        ({"subject_id": "CYJ"}, "subject/case"),
+        ({"case_id": "L100"}, "subject/case"),
+        ({"sparse_sha": "0" * 64}, "SHA256"),
+    ],
+)
+def test_q002_sparse_provenance_requires_subject_case_and_manifest_hash(tmp_path, manifest_change, message) -> None:
+    """Catches binding a checkpoint to a different sparse subject, case, or manifest."""
+    sparse = tmp_path / "sparse.json"; _sparse_manifest(sparse, case="SAX100_2CH0_4CH0", active=("sax",))
+    checkpoint = tmp_path / "run" / "model.pt"; checkpoint.parent.mkdir(); checkpoint.touch()
+    record = {"path": "/server/sparse.json", "sha256": audit.sha256(sparse), "generator_git_sha": "a" * 40}
+    if "sparse_sha" in manifest_change:
+        record["sha256"] = manifest_change["sparse_sha"]
+    (checkpoint.parent / "experiment_manifest.json").write_text(json.dumps({
+        "subject_id": manifest_change.get("subject_id", "DYZ"),
+        "case_id": manifest_change.get("case_id", "SAX100_2CH0_4CH0"),
+        "sparse_manifest": record,
+    }))
+
+    with pytest.raises(ValueError, match=message):
+        audit._validate_checkpoint_sparse_provenance(checkpoint, audit._sparse_contract(sparse))

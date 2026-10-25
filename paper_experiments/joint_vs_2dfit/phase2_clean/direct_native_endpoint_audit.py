@@ -89,21 +89,96 @@ def _prepared_inputs_sha256(paths: list[Path]) -> str:
     return hashlib.sha256("".join(sha256(path) for path in paths).encode("ascii")).hexdigest()
 
 
-def _validate_prepared_input_identity(checkpoint: Path, prepared_paths: list[Path]) -> None:
-    """Bind local prepared inputs to the original training manifest by content."""
+def _checkpoint_manifest(checkpoint: Path) -> dict[str, Any]:
     manifest_path = checkpoint.parent / "experiment_manifest.json"
     if not manifest_path.is_file():
         raise FileNotFoundError("direct-native audit requires checkpoint experiment_manifest.json for prepared-input identity")
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    declared, expected_hash = manifest.get("prepared_inputs"), manifest.get("prepared_manifest_sha256")
-    if not isinstance(declared, list) or not isinstance(expected_hash, str):
-        raise ValueError("checkpoint experiment manifest lacks prepared-input SHA256 provenance")
-    declared_stacks = tuple(Path(str(path)).parent.name.lower() for path in declared)
+    if not isinstance(manifest, dict):
+        raise ValueError("checkpoint experiment manifest must be an object")
+    return manifest
+
+
+def _stack_hashes(value: Any, *, label: str, active_stacks: tuple[str, ...]) -> dict[str, str]:
+    if not isinstance(value, Mapping):
+        raise ValueError(f"checkpoint experiment manifest {label} must be a path-to-SHA256 mapping")
+    result: dict[str, str] = {}
+    for path_text, digest in value.items():
+        stack = Path(str(path_text)).parent.name.lower()
+        if stack not in active_stacks or stack in result or not isinstance(digest, str) or len(digest) != 64:
+            raise ValueError(f"checkpoint experiment manifest {label} has invalid stack/SHA256 provenance")
+        result[stack] = digest
+    if tuple(result) != active_stacks:
+        raise ValueError(f"checkpoint experiment manifest {label} does not match canonical active stack identity")
+    return result
+
+
+def _sparse_contract(path: Path) -> dict[str, Any]:
+    """Read only the sparse identity and manifest-declared active stack subset."""
+    if not path.is_file():
+        raise FileNotFoundError(path)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict) or payload.get("schema_version") != "phase4r_sparse_profile_v2" or payload.get("status") != "ELIGIBLE":
+        raise ValueError("direct-native audit requires an eligible phase4r_sparse_profile_v2 manifest")
+    subject, case, generator = payload.get("subject"), payload.get("case_id"), payload.get("git_sha")
+    if not isinstance(subject, str) or not isinstance(case, str) or not isinstance(generator, str) or len(generator) != 40:
+        raise ValueError("sparse manifest lacks subject/case/generator provenance")
+    stacks = payload.get("stacks")
+    if not isinstance(stacks, Mapping) or set(stacks) != set(STACKS):
+        raise ValueError("sparse manifest lacks exact sax/2ch/4ch stack records")
+    active = tuple(stack for stack in STACKS if isinstance(stacks[stack], Mapping) and stacks[stack].get("training_stack_present") is True)
+    if not active or (case == "L100" and active != STACKS):
+        raise ValueError("sparse manifest active stacks are incompatible with the requested case")
+    return {"path": path.resolve(), "sha256": sha256(path), "subject": subject, "case": case,
+            "generator_git_sha": generator, "active_stacks": active}
+
+
+def _validate_checkpoint_sparse_provenance(checkpoint: Path, sparse: Mapping[str, Any]) -> None:
+    """Bind the audit's supplied sparse profile to Q002's recorded profile identity."""
+    manifest = _checkpoint_manifest(checkpoint)
+    recorded = manifest.get("sparse_manifest")
+    if not isinstance(recorded, Mapping):
+        raise ValueError("checkpoint experiment manifest lacks sparse manifest provenance")
+    if manifest.get("subject_id") != sparse["subject"] or manifest.get("case_id") != sparse["case"]:
+        raise ValueError("checkpoint sparse subject/case provenance mismatch")
+    if recorded.get("sha256") != sparse["sha256"]:
+        raise ValueError("checkpoint sparse manifest SHA256 mismatch")
+    if recorded.get("generator_git_sha") != sparse["generator_git_sha"]:
+        raise ValueError("checkpoint sparse generator provenance mismatch")
+
+
+def _validate_prepared_input_identity(checkpoint: Path, prepared_paths: list[Path],
+                                      active_stacks: tuple[str, ...] = STACKS) -> None:
+    """Bind local prepared inputs to old or Q002 manifest records by stack hash."""
+    if not active_stacks or any(stack not in STACKS for stack in active_stacks) or tuple(stack for stack in STACKS if stack in active_stacks) != active_stacks:
+        raise ValueError("active stacks must be a non-empty canonical sax/2ch/4ch subset")
     actual_stacks = tuple(path.parent.name.lower() for path in prepared_paths)
-    if declared_stacks != STACKS or actual_stacks != STACKS:
-        raise ValueError("checkpoint prepared-input stack identity must be ordered sax/2ch/4ch")
-    if _prepared_inputs_sha256(prepared_paths) != expected_hash:
-        raise ValueError("checkpoint prepared-input SHA256 mismatch; local inputs are not the original training inputs")
+    if actual_stacks != active_stacks:
+        raise ValueError("prepared inputs do not match canonical active stack identity")
+    manifest = _checkpoint_manifest(checkpoint)
+    actual = {stack: sha256(path) for stack, path in zip(active_stacks, prepared_paths)}
+    sources: list[dict[str, str]] = []
+    for field in ("prepared_inputs_sha256", "training_input_sha256"):
+        if field in manifest:
+            sources.append(_stack_hashes(manifest[field], label=field, active_stacks=active_stacks))
+    declared, aggregate = manifest.get("prepared_inputs"), manifest.get("prepared_manifest_sha256")
+    if declared is not None or aggregate is not None:
+        if not isinstance(declared, list) or not isinstance(aggregate, str):
+            raise ValueError("checkpoint experiment manifest legacy prepared-input provenance is incomplete")
+        declared_stacks = tuple(Path(str(path)).parent.name.lower() for path in declared)
+        if declared_stacks != active_stacks:
+            raise ValueError("checkpoint legacy prepared-input stack identity does not match active stacks")
+        if _prepared_inputs_sha256(prepared_paths) != aggregate:
+            raise ValueError("checkpoint prepared-input SHA256 mismatch; local inputs are not the original training inputs")
+        if sources and hashlib.sha256("".join(sources[0][stack] for stack in active_stacks).encode("ascii")).hexdigest() != aggregate:
+            raise ValueError("checkpoint legacy and per-input prepared SHA256 provenance disagree")
+    if not sources and declared is None:
+        raise ValueError("checkpoint experiment manifest lacks verifiable prepared-input SHA256 provenance")
+    for expected in sources:
+        if expected != actual:
+            raise ValueError("checkpoint prepared-input SHA256 mismatch; local inputs are not the original training inputs")
+    if len(sources) == 2 and sources[0] != sources[1]:
+        raise ValueError("checkpoint prepared_inputs_sha256 and training_input_sha256 provenance disagree")
 
 
 def _checkpoint_initial_pose(payload: Mapping[str, Any], torch_module: Any, device: Any) -> Any:
@@ -161,7 +236,8 @@ def _validate_rebuilt_training_space(rebuilt: Any, saved: Any, torch_module: Any
             raise ValueError(f"checkpoint/rebuilt training-space {kind} mismatch for {key}; prepared inputs or initial pose differ")
 
 
-def _load_model(checkpoint: Path, prepared_paths: list[Path], device_text: str) -> tuple[Any, Any, Any]:
+def _load_model(checkpoint: Path, prepared_paths: list[Path], device_text: str,
+                *, sparse_contract: Mapping[str, Any] | None = None) -> tuple[Any, Any, Any]:
     import torch
     from mlp.modules.module_07_objective_training.mlp_trainer import build_mlp_training_model
     from reconstruction_core.orchestration import load_checkpoint
@@ -172,7 +248,10 @@ def _load_model(checkpoint: Path, prepared_paths: list[Path], device_text: str) 
     payload = torch.load(checkpoint, map_location=device, weights_only=False)
     if not isinstance(payload, Mapping):
         raise ValueError("checkpoint must be a mapping")
-    _validate_prepared_input_identity(checkpoint, prepared_paths)
+    active_stacks = tuple(sparse_contract["active_stacks"]) if sparse_contract is not None else STACKS
+    _validate_prepared_input_identity(checkpoint, prepared_paths, active_stacks)
+    if sparse_contract is not None:
+        _validate_checkpoint_sparse_provenance(checkpoint, sparse_contract)
     dataset = QuantPointDataset(prepared_paths, device=device)
     config = payload["resolved_config"]
     protocol = config["decoder"].get("protocol_yaml", "trad/configs/protocol_hhz_v1.yaml")
@@ -186,13 +265,13 @@ def _load_model(checkpoint: Path, prepared_paths: list[Path], device_text: str) 
     return model, TrainingSpace.from_state_dict(payload["training_space"]), torch
 
 
-def _paths(prepared_root: Path) -> list[Path]:
-    candidates = [[prepared_root / stack / "observations.npz" for stack in STACKS]]
-    candidates.extend([prepared_root / subject / stack / "observations.npz" for stack in STACKS] for subject in FINAL5_SUBJECTS)
+def _paths(prepared_root: Path, *, active_stacks: tuple[str, ...] = STACKS) -> list[Path]:
+    candidates = [[prepared_root / stack / "observations.npz" for stack in active_stacks]]
+    candidates.extend([prepared_root / subject / stack / "observations.npz" for stack in active_stacks] for subject in FINAL5_SUBJECTS)
     matches = [items for items in candidates if all(item.is_file() for item in items)]
     if len(matches) != 1:
         if not matches:
-            raise FileNotFoundError("direct-native audit requires cropped sax/2ch/4ch observations.npz at the supplied root or one explicit Final5 subject directory")
+            raise FileNotFoundError("direct-native audit requires manifest-active cropped observations.npz at the supplied root or one explicit Final5 subject directory")
         raise ValueError("direct-native audit prepared root is ambiguous; provide one subject-specific prepared directory")
     paths = matches[0]
     if "full_fov" in str(prepared_root).lower(): raise ValueError("direct-native audit rejects full-FOV inputs")
@@ -222,15 +301,16 @@ def run_direct_native_endpoint_audit(*, checkpoint: str | Path, prepared_root: s
     required = (checkpoint, Path(sparse_manifest), Path(central_t1), Path(central_t2), Path(l100_t1), Path(l100_t2))
     if not all(path.is_file() for path in required): raise FileNotFoundError("direct-native audit requires every explicit checkpoint/map/mask input")
     if output.exists(): raise FileExistsError(f"refusing overwrite: {output}")
-    prepared_paths = _paths(prepared_root)
-    model, space, torch = _load_model(checkpoint, prepared_paths, device)
+    sparse_contract = _sparse_contract(Path(sparse_manifest))
+    prepared_paths = _paths(prepared_root, active_stacks=sparse_contract["active_stacks"])
+    model, space, torch = _load_model(checkpoint, prepared_paths, device, sparse_contract=sparse_contract)
     central = {"t1": nib.load(str(central_t1)), "t2": nib.load(str(central_t2))}
     l100 = {"t1": nib.load(str(l100_t1)), "t2": nib.load(str(l100_t2))}
     output.parent.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(prefix=f".{output.name}.staging-", dir=output.parent))
     try:
         plane_records: list[dict[str, Any]] = []; group_offset = 0
-        for stack, prepared_path in zip(STACKS, prepared_paths):
+        for stack, prepared_path in zip(sparse_contract["active_stacks"], prepared_paths):
             cached = _load_all_verified_native_cache_groups(r0_native_maps_root, sparse_manifest, stack)
             with np.load(prepared_path, allow_pickle=False) as observations:
                 group_ids = [int(value) for value in np.unique(observations["group_idx"])]
@@ -254,7 +334,7 @@ def run_direct_native_endpoint_audit(*, checkpoint: str | Path, prepared_root: s
                         figure = staging / "figures" / parameter / stack / f"group{local_group:03d}.png"; figure.parent.mkdir(parents=True, exist_ok=True); _plot(figure, reference, direct, volume, support, parameter)
                         plane_records.append({"parameter": parameter, "stack": stack, "group_idx": local_group, "global_pose_group_idx": group_offset + local_group, "output": str(target.relative_to(staging)), "figure": str(figure.relative_to(staging)), "shared_support_voxels": int(support.sum()), "direct_native_vs_reference": _metrics(reference, direct, support) if support.any() else None, "central_volume_vs_reference": _metrics(reference, volume, support) if support.any() else None, "direct_native_vs_central_volume": _metrics(direct, volume, support) if support.any() else None})
             group_offset += len(group_ids)
-        write_immutable_json(staging / "manifest.json", {"schema": "q004_direct_native_endpoint_audit/v2", "checkpoint": _record(checkpoint), "prepared_observations": {_stack: _record(path) for _stack, path in zip(STACKS, prepared_paths)}, "central_volumes": {name: _record(path) for name, path in (("t1", Path(central_t1)), ("t2", Path(central_t2)))}, "frozen_l100_masks": {name: _record(path) for name, path in (("t1", Path(l100_t1)), ("t2", Path(l100_t2)))}, "coordinate_contract": "historical native local grid -> space.local_to_train -> final learned pose gives training-space INR coordinates; direct=model.inr(training_world), while NIfTI/mask sampling first applies space.train_ras_to_physical(training_world) then samples physical-RAS NIfTI", "direct_native_is_not_training": True, "central_volume_is_not_reconstruction": True, "no_training": True, "no_reconstruction": True, "no_formal_export_modified": True, "planes": plane_records})
+        write_immutable_json(staging / "manifest.json", {"schema": "q004_direct_native_endpoint_audit/v2", "checkpoint": _record(checkpoint), "prepared_observations": {_stack: _record(path) for _stack, path in zip(sparse_contract["active_stacks"], prepared_paths)}, "sparse_manifest": _record(Path(sparse_manifest)), "active_stacks": list(sparse_contract["active_stacks"]), "central_volumes": {name: _record(path) for name, path in (("t1", Path(central_t1)), ("t2", Path(central_t2)))}, "frozen_l100_masks": {name: _record(path) for name, path in (("t1", Path(l100_t1)), ("t2", Path(l100_t2)))}, "coordinate_contract": "historical native local grid -> space.local_to_train -> final learned pose gives training-space INR coordinates; direct=model.inr(training_world), while NIfTI/mask sampling first applies space.train_ras_to_physical(training_world) then samples physical-RAS NIfTI", "direct_native_is_not_training": True, "central_volume_is_not_reconstruction": True, "no_training": True, "no_reconstruction": True, "no_formal_export_modified": True, "planes": plane_records})
         staging.rename(output)
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True); raise
