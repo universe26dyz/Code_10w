@@ -28,8 +28,18 @@ def test_exact_paired_support_is_shared_by_both_methods() -> None:
     reference = np.array([[1.0, 1.0, 1.0, np.nan]])
     proposed = np.array([[1.0, np.nan, 1.0, 1.0]])
     fit = np.array([[1.0, 1.0, np.nan, 1.0]])
-    support = exact_paired_support(region, reference, proposed, fit, np.ones_like(region), np.ones_like(region), np.ones_like(region))
+    support = exact_paired_support(region, reference, proposed, fit, np.ones_like(region), np.ones_like(region))
     assert np.array_equal(support, np.array([[True, False, False, False]]))
+
+
+def test_fit_first_effective_query_mask_defines_l100_region_once() -> None:
+    from paper_experiments.joint_vs_2dfit.phase2_clean.final_native_grid_metrics import l100_region_mask, mask_overlap_counts
+
+    query = np.array([[True, False, True]])
+    assert np.array_equal(l100_region_mask(query), query)
+    assert mask_overlap_counts(query, np.array([[True, True, False]])) == {
+        "intersection_voxels": 1, "union_voxels": 3, "xor_voxels": 2, "iou": 1 / 3,
+    }
 
 
 def test_native_affine_uses_historical_lps_to_ras_conversion() -> None:
@@ -65,5 +75,5 @@ def test_batch_formal_metric_has_no_current_component_mask_dependency(tmp_path) 
     l100 = runner.CaseRecord("CYJ", "L100", "L100", None, 1, tmp_path / "l100.json", "a" * 64, "b" * 40, tmp_path)
     sparse = runner.CaseRecord("CYJ", "SAX100_2CH0_4CH0", "case", None, None, tmp_path / "sparse.json", "c" * 64, "b" * 40, tmp_path)
     records = {("CYJ", "L100"): l100, ("CYJ", sparse.case_id): sparse}
-    assert {stage for stage, _record in runner._stage_dependencies("final_native_grid_metrics", l100, records)} == {"proposed_endpoint", "fit_first_endpoint", "l100_native_support"}
-    assert {stage for stage, _record in runner._stage_dependencies("final_native_grid_metrics", sparse, records)} == {"proposed_endpoint", "fit_first_endpoint", "l100_native_support"}
+    assert {stage for stage, _record in runner._stage_dependencies("final_native_grid_metrics", l100, records)} == {"proposed_endpoint", "fit_first_endpoint"}
+    assert {stage for stage, _record in runner._stage_dependencies("final_native_grid_metrics", sparse, records)} == {"proposed_endpoint", "fit_first_endpoint"}

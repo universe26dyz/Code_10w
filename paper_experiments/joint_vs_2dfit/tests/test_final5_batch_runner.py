@@ -10,6 +10,19 @@ import pytest
 from paper_experiments.joint_vs_2dfit.phase2_clean import final5_batch_runner as runner
 
 
+@pytest.mark.parametrize(("stages", "expected"), [
+    ({"a": {"state": "FAILED"}}, "FAILED"),
+    ({"a": {"state": "BLOCKED_DEPENDENCY"}}, "BLOCKED"),
+    ({"a": {"state": "READY"}}, "READY"),
+    ({"a": {"state": "SKIP_VALID"}, "b": {"state": "SKIP_VALID"}}, "COMPLETE"),
+])
+def test_print_status_prioritizes_failed_over_ready(
+    capsys: pytest.CaptureFixture[str], stages: dict[str, dict[str, str]], expected: str,
+) -> None:
+    runner._print_status({"cases": {"CYJ/L100": {"stages": stages}}})
+    assert f" {expected}\n" in capsys.readouterr().out
+
+
 def _registry(tmp_path: Path, *, drop: tuple[str, str] | None = None) -> Path:
     records = []
     for subject in runner.SUBJECTS:
@@ -304,7 +317,7 @@ def test_all_seventy_cases_use_frozen_q002s640_and_exp1_1_commands(tmp_path: Pat
 
 def test_l100_dispatch_uses_subprocess_only_for_reconstructions(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     record = runner.CaseRecord("CYJ", "L100", "L100", None, 1, tmp_path / "sparse.json", "a" * 64, "b" * 40, tmp_path)
-    stages = ("proposed_reconstruction", "fit_first_reconstruction", "proposed_endpoint", "fit_first_endpoint", "l100_native_support", "final_native_grid_metrics")
+    stages = ("proposed_reconstruction", "fit_first_reconstruction", "proposed_endpoint", "fit_first_endpoint", "final_native_grid_metrics")
     monkeypatch.setattr(runner, "load_final5_registry", lambda _registry: [record])
     monkeypatch.setattr(runner, "case_commands", lambda *_args, **_kwargs: {"proposed_reconstruction": ["proposed"], "fit_first_reconstruction": {"argv": ["fit"], "env": {}}})
     monkeypatch.setattr(runner, "build_batch_plan", lambda *_args, **_kwargs: {"cases": {"CYJ/L100": {"stages": {stage: {"state": "READY"} for stage in stages}}}})
@@ -352,7 +365,7 @@ def _ready_plan(record: runner.CaseRecord, stages: tuple[str, ...]) -> dict[str,
 def test_execute_builds_full_preflight_once_and_revalidates_only_current_case(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     current = runner.CaseRecord("CYJ", "L100", "L100", None, 1, tmp_path / "sparse.json", "a" * 64, "b" * 40, tmp_path)
     other = runner.CaseRecord("HJL", "L100", "L100", None, 1, tmp_path / "other.json", "a" * 64, "b" * 40, tmp_path)
-    stages = ("proposed_reconstruction", "fit_first_reconstruction", "proposed_endpoint", "fit_first_endpoint", "l100_native_support", "final_native_grid_metrics")
+    stages = ("proposed_reconstruction", "fit_first_reconstruction", "proposed_endpoint", "fit_first_endpoint", "final_native_grid_metrics")
     registry_calls: list[Path] = []
     monkeypatch.setattr(runner, "load_final5_registry", lambda registry: registry_calls.append(Path(registry)) or [current, other])
     preflight_calls: list[object] = []
@@ -493,7 +506,7 @@ def test_sparse_metric_without_effective_query_mask_support_is_not_admitted(tmp_
 
 def test_execute_blocks_dependents_when_successful_subprocess_fails_artifact_validation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     record = runner.CaseRecord("CYJ", "L100", "L100", None, 1, tmp_path / "sparse.json", "a" * 64, "b" * 40, tmp_path)
-    stages = ("proposed_reconstruction", "fit_first_reconstruction", "proposed_endpoint", "fit_first_endpoint", "l100_native_support", "final_native_grid_metrics")
+    stages = ("proposed_reconstruction", "fit_first_reconstruction", "proposed_endpoint", "fit_first_endpoint", "final_native_grid_metrics")
     monkeypatch.setattr(runner, "load_final5_registry", lambda _registry: [record])
     monkeypatch.setattr(runner, "build_batch_plan", lambda *_args, **_kwargs: _ready_plan(record, stages))
     monkeypatch.setattr(runner, "case_commands", lambda *_args, **_kwargs: {"proposed_reconstruction": ["proposed"], "fit_first_reconstruction": {"argv": ["fit"], "env": {}}})
@@ -541,7 +554,7 @@ def test_execute_keeps_global_preflight_and_reports_invalid_subject_case_stage_p
 
 def test_execute_keeps_preflight_valid_artifacts_as_skip_valid(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     record = runner.CaseRecord("CYJ", "L100", "L100", None, 1, tmp_path / "sparse.json", "a" * 64, "b" * 40, tmp_path)
-    stages = ("proposed_reconstruction", "fit_first_reconstruction", "proposed_endpoint", "fit_first_endpoint", "l100_native_support", "final_native_grid_metrics")
+    stages = ("proposed_reconstruction", "fit_first_reconstruction", "proposed_endpoint", "fit_first_endpoint", "final_native_grid_metrics")
     monkeypatch.setattr(runner, "load_final5_registry", lambda _registry: [record])
     monkeypatch.setattr(runner, "build_batch_plan", lambda *_args, **_kwargs: {"cases": {"CYJ/L100": {"stages": {stage: {"state": "SKIP_VALID", "reason": "valid"} for stage in stages}}}})
     monkeypatch.setattr(runner, "_validate_stage_locally", lambda *_args: pytest.fail("valid preflight artifact was revalidated during execute"))
