@@ -16,7 +16,6 @@ MODE=${1:---dry-run}
 : "${CYJ11_PROTOCOL:?set CYJ11_PROTOCOL}"
 : "${CYJ11_NATIVE_CACHE_ROOT:?set CYJ11_NATIVE_CACHE_ROOT}"
 : "${CYJ11_NATIVE_MASK_ROOT:?set CYJ11_NATIVE_MASK_ROOT}"
-: "${CYJ11_L100_PROPOSED_ROOT:?set CYJ11_L100_PROPOSED_ROOT}"
 : "${CYJ11_L100_FIT_FIRST_ROOT:?set CYJ11_L100_FIT_FIRST_ROOT}"
 : "${CYJ11_OUTPUT_ROOT:?set CYJ11_OUTPUT_ROOT to a new experiment root}"
 : "${CYJ11_SPARSE_WORKTREE:?set CYJ11_SPARSE_WORKTREE at 6f4142...}"
@@ -36,7 +35,7 @@ PLAN_COMMAND=(
     --sparse-worktree "$CYJ11_SPARSE_WORKTREE" --q002-worktree "$CYJ11_Q002_WORKTREE" --fit-first-worktree "$CYJ11_FIT_FIRST_WORKTREE"
     --b6-model "$CYJ11_B6_MODEL" --signal-simulator "$CYJ11_SIGNAL_SIMULATOR" --protocol "$CYJ11_PROTOCOL"
     --native-cache-root "$CYJ11_NATIVE_CACHE_ROOT" --native-mask-root "$CYJ11_NATIVE_MASK_ROOT"
-    --l100-proposed-root "$CYJ11_L100_PROPOSED_ROOT" --l100-fit-first-root "$CYJ11_L100_FIT_FIRST_ROOT"
+    --l100-fit-first-root "$CYJ11_L100_FIT_FIRST_ROOT"
     --expected-b6-model-sha256 "$CYJ11_EXPECTED_B6_SHA256" --expected-signal-simulator-sha256 "$CYJ11_EXPECTED_SIGNAL_SIMULATOR_SHA256" --expected-protocol-sha256 "$CYJ11_EXPECTED_PROTOCOL_SHA256"
     --nesvor-executable "$CYJ11_NESVOR_EXECUTABLE" --python-executable "$CYJ11_PYTHON" --device "${CYJ11_DEVICE:-cuda:0}"
 )

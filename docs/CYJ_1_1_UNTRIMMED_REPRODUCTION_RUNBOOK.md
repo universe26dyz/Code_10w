@@ -40,17 +40,19 @@ for stack in ("sax", "2ch", "4ch"):
 PY
 ```
 
-For the first sparse-case validation the L100 Proposed and Fit-first roots are
-explicit verified dependencies from CYJ 1.1; this wrapper does not regenerate
-L100.  Check their identity before use:
+For the first sparse-case validation the historical L100 Fit-first root is an
+explicit verified dependency: its learned poses are required to publish the
+sparse Fit-first central endpoint.  The sparse Proposed endpoint is produced
+from the selected sparse Q002 reconstruction, so an L100 Proposed root is not
+an input and is deliberately not required.  This wrapper does not regenerate
+L100.  Check the required dependency before use:
 
 ```bash
 DATA=/data/dengyz/dataset/Code_10w_v1
-R0_PROPOSED="$DATA/Code_10w_runs/phase4r_v2_common_slice_grid_20261022/CYJ_1_1_1_2/real/R0_full/R0_PHASE4R/proposed/CYJ"
 R0_FIT="$DATA/Code_10w_runs/paper_joint_vs_2dfit/real/R0_full/R0_PHASE4R/fit_first/CYJ"
 R0_CACHE="$DATA/Code_10w_runs/paper_joint_vs_2dfit/real/R0_native_cache/R0_PHASE4R/CYJ/native_maps"
 NATIVE_MASK="$DATA/Code_10w_runs/paper_joint_vs_2dfit/formal_native_masks/CYJ_L100_fold0_current_native_v1"
-test -f "$R0_PROPOSED/model.pt" && test -f "$R0_FIT/nesvor/t1/model.pt" && test -f "$NATIVE_MASK/manifest.json"
+test -f "$R0_FIT/nesvor/t1/model.pt" && test -f "$NATIVE_MASK/manifest.json"
 ```
 
 ## CYJ validation dry-run
@@ -74,7 +76,6 @@ export CYJ11_EXPECTED_SIGNAL_SIMULATOR_SHA256=f83280d4f73bfc9e0540b9606ee20bf833
 export CYJ11_EXPECTED_PROTOCOL_SHA256=5b6bcf41f7766b29808d664f18b6def8894696ffb4ae3a55cfcba5532cdea5c3
 export CYJ11_NATIVE_CACHE_ROOT="$R0_CACHE"
 export CYJ11_NATIVE_MASK_ROOT="$NATIVE_MASK"
-export CYJ11_L100_PROPOSED_ROOT="$R0_PROPOSED"
 export CYJ11_L100_FIT_FIRST_ROOT="$R0_FIT"
 export CYJ11_NESVOR_EXECUTABLE=/absolute/path/to/the/historical/nesvor
 export CYJ11_OUTPUT_ROOT="$DATA/Code_10w_runs/cyj11_untrimmed_validation_20261025/SAX100_2CH100_4CH0"

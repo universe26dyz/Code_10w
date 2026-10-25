@@ -67,7 +67,6 @@ class ReproductionInputs:
     protocol: Path
     native_cache_root: Path
     native_mask_root: Path
-    l100_proposed_root: Path
     l100_fit_first_root: Path
     expected_b6_model_sha256: str
     expected_signal_simulator_sha256: str
@@ -154,7 +153,6 @@ def _validate_inputs(inputs: ReproductionInputs, *, git_head: Callable[[Path], s
         ("protocol", inputs.protocol),
         ("R0 native cache", inputs.native_cache_root),
         ("native mask", inputs.native_mask_root),
-        ("L100 Proposed root", inputs.l100_proposed_root),
         ("L100 Fit-first root", inputs.l100_fit_first_root),
     ):
         (_require_file if label in {"B6 model", "signal simulator", "protocol"} else _require_directory)(path, label)
@@ -211,7 +209,6 @@ def build_reproduction_plan(inputs: ReproductionInputs, *, git_head: Callable[[P
     sample_masks = {parameter: str((fit_root / "nesvor_inputs" / "sax" / parameter / "stack.nii.gz").resolve()) for parameter in ("t1", "t2")}
     steps: list[dict[str, object]] = [
         {"id": "build_sparse_input", "cwd": str(inputs.sparse_worktree.resolve()), "argv": _sparse_command(inputs, case, sparse_root)},
-        {"id": "l100_proposed_dependency", "kind": "verified_existing_dependency", "path": str(inputs.l100_proposed_root.resolve())},
         {"id": "l100_fit_first_dependency", "kind": "verified_existing_dependency", "path": str(inputs.l100_fit_first_root.resolve())},
         {"id": "proposed_sparse", "cwd": str(inputs.q002_worktree.resolve()), "argv": _command(
             inputs.python_executable, "-m", "quality_experiments.Q002_B6_roi_same_anchor_mse.run_q002_reconstruction",
@@ -262,7 +259,6 @@ def build_reproduction_plan(inputs: ReproductionInputs, *, git_head: Callable[[P
             "signal_simulator": {"path": str(inputs.signal_simulator.resolve()), "sha256": _sha256(inputs.signal_simulator)},
             "protocol": {"path": str(inputs.protocol.resolve()), "sha256": _sha256(inputs.protocol)},
             "native_mask_manifest": {"path": str((inputs.native_mask_root / "manifest.json").resolve()), "sha256": _sha256(inputs.native_mask_root / "manifest.json")},
-            "l100_proposed_root": str(inputs.l100_proposed_root.resolve()),
             "l100_fit_first_root": str(inputs.l100_fit_first_root.resolve()),
         },
         "publication": {"endpoint": "central", "q002_raw_route": "historical_default_including_psf128", "published_endpoints": ["central"]},
@@ -272,7 +268,7 @@ def build_reproduction_plan(inputs: ReproductionInputs, *, git_head: Callable[[P
 
 def _parse_args(argv: Iterable[str] | None = None) -> ReproductionInputs:
     parser = argparse.ArgumentParser(description=__doc__)
-    for name in ("prepared-root", "output-root", "sparse-worktree", "q002-worktree", "fit-first-worktree", "b6-model", "signal-simulator", "protocol", "native-cache-root", "native-mask-root", "l100-proposed-root", "l100-fit-first-root"):
+    for name in ("prepared-root", "output-root", "sparse-worktree", "q002-worktree", "fit-first-worktree", "b6-model", "signal-simulator", "protocol", "native-cache-root", "native-mask-root", "l100-fit-first-root"):
         parser.add_argument("--" + name, required=True)
     parser.add_argument("--subject", required=True); parser.add_argument("--case", dest="case_id", required=True, choices=tuple(CASE_SPECS))
     parser.add_argument("--expected-b6-model-sha256", required=True); parser.add_argument("--expected-signal-simulator-sha256", required=True); parser.add_argument("--expected-protocol-sha256", required=True)
@@ -280,7 +276,7 @@ def _parse_args(argv: Iterable[str] | None = None) -> ReproductionInputs:
     args = parser.parse_args(argv)
     values = vars(args)
     return ReproductionInputs(**{key: Path(value) if key in {
-        "prepared_root", "output_root", "sparse_worktree", "q002_worktree", "fit_first_worktree", "b6_model", "signal_simulator", "protocol", "native_cache_root", "native_mask_root", "l100_proposed_root", "l100_fit_first_root", "nesvor_executable"
+        "prepared_root", "output_root", "sparse_worktree", "q002_worktree", "fit_first_worktree", "b6_model", "signal_simulator", "protocol", "native_cache_root", "native_mask_root", "l100_fit_first_root", "nesvor_executable"
     } and value is not None else value for key, value in values.items()})
 
 

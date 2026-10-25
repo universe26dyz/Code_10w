@@ -33,7 +33,6 @@ def _inputs(tmp_path: Path, *, group_counts: tuple[int, int, int] = (14, 15, 12)
     protocol = assets / "protocol.yaml"; protocol.write_text("protocol: historical\n", encoding="utf-8")
     native_cache = assets / "native_cache"; native_cache.mkdir()
     native_mask = assets / "native_mask"; native_mask.mkdir(); (native_mask / "manifest.json").write_text("{}", encoding="utf-8")
-    l100_proposed = assets / "l100_proposed"; l100_proposed.mkdir()
     l100_fit_first = assets / "l100_fit_first"; l100_fit_first.mkdir()
     worktrees = {name: tmp_path / f"{name}_worktree" for name in ("sparse", "q002", "fit_first")}
     for path in worktrees.values():
@@ -51,7 +50,6 @@ def _inputs(tmp_path: Path, *, group_counts: tuple[int, int, int] = (14, 15, 12)
         protocol=protocol,
         native_cache_root=native_cache,
         native_mask_root=native_mask,
-        l100_proposed_root=l100_proposed,
         l100_fit_first_root=l100_fit_first,
         expected_b6_model_sha256=_sha256(b6),
         expected_signal_simulator_sha256=_sha256(simulator),
@@ -90,6 +88,16 @@ def test_plan_preserves_historical_q002_and_fit_first_sampling_contract(tmp_path
     publications = [step for step in plan["steps"] if step["id"].endswith("_central")]
     assert {step["id"] for step in publications} == {"proposed_central", "fit_first_central", "metric_central"}
     assert all("central" in " ".join(step["argv"]) for step in publications)
+
+
+def test_plan_requires_only_the_l100_fit_first_dependency(tmp_path: Path) -> None:
+    """Proposed L100 is not an input to any planned historical sparse command."""
+    from paper_experiments.joint_vs_2dfit.phase2_clean.cyj11_untrimmed_reproduction import build_reproduction_plan
+
+    plan = build_reproduction_plan(_inputs(tmp_path), git_head=_historical_heads)
+    dependencies = [step["id"] for step in plan["steps"] if step.get("kind") == "verified_existing_dependency"]
+    assert dependencies == ["l100_fit_first_dependency"]
+    assert "l100_proposed_root" not in plan["provenance"]
 
 
 @pytest.mark.parametrize("counts", [(12, 15, 10), (14, 15, 11)])
@@ -157,7 +165,6 @@ def test_server_wrapper_dry_run_prints_plan_without_creating_output(tmp_path: Pa
         "CYJ11_PROTOCOL": str(inputs.protocol),
         "CYJ11_NATIVE_CACHE_ROOT": str(inputs.native_cache_root),
         "CYJ11_NATIVE_MASK_ROOT": str(inputs.native_mask_root),
-        "CYJ11_L100_PROPOSED_ROOT": str(inputs.l100_proposed_root),
         "CYJ11_L100_FIT_FIRST_ROOT": str(inputs.l100_fit_first_root),
         "CYJ11_OUTPUT_ROOT": str(inputs.output_root),
         "CYJ11_SPARSE_WORKTREE": str(inputs.sparse_worktree),
