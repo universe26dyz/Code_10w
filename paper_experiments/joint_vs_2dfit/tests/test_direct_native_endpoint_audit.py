@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import inspect
+import json
 
 import numpy as np
+import pytest
 import torch
 
 from paper_experiments.joint_vs_2dfit.phase2_clean import direct_native_endpoint_audit as audit
@@ -49,3 +51,121 @@ def test_volume_branch_converts_training_world_to_physical_ras_before_sampling()
     values, valid = audit.sample_exported_volume_at_train_world(volume, affine, train_world, Space(), torch, order=1)
     assert valid.tolist() == [[True]]
     assert values.tolist() == [[101.0]]
+
+
+def test_checkpoint_pose_restoration_prefers_post_stack_initialization_and_supports_legacy_field() -> None:
+    """Catches rebuilding the hash-grid bbox from the pre-stack DICOM pose."""
+    post = torch.tensor([[1., 2., 3., 4., 5., 6.]])
+    legacy = torch.zeros((1, 6))
+
+    assert torch.equal(audit._checkpoint_initial_pose({
+        "group_axisangle_post_stack_init_physical": post,
+        "group_axisangle_init_physical": legacy,
+    }, torch, torch.device("cpu")), post)
+    assert torch.equal(audit._checkpoint_initial_pose({"group_axisangle_init_physical": legacy}, torch, torch.device("cpu")), legacy)
+
+
+def test_checkpoint_model_shape_validation_rejects_inr_encoding_mismatch_before_load() -> None:
+    """Catches a strict load attempt after a differently sized hash encoding was built."""
+    class Model:
+        def state_dict(self):
+            return {
+                "inr.encoding.params": torch.zeros(4),
+                "forward_model.quantitative_inr.encoding.params": torch.zeros(4),
+            }
+
+    checkpoint_state = {
+        "inr.encoding.params": torch.zeros(5),
+        "forward_model.quantitative_inr.encoding.params": torch.zeros(5),
+    }
+    with pytest.raises(ValueError, match="encoding parameter shape mismatch"):
+        audit._validate_checkpoint_model_shapes(Model(), checkpoint_state)
+
+
+def test_checkpoint_training_space_validation_rejects_bbox_mismatch() -> None:
+    """Catches sampling coordinates from a current-input bbox rather than checkpoint space."""
+    class Space:
+        def state_dict(self):
+            return {
+                "center_ras_mm": torch.zeros(3), "spatial_scaling": 1.0,
+                "physical_bbox_ras_mm": torch.tensor([[0., 0., 0.], [1., 1., 1.]]),
+                "bbox_train": torch.tensor([[0., 0., 0.], [1., 1., 1.]]),
+                "group_resolution_xyz_mm": torch.ones((1, 3)),
+                "group_axisangle_init_physical": torch.zeros((1, 6)),
+                "group_axisangle_init_train": torch.zeros((1, 6)),
+            }
+
+    saved = Space().state_dict(); saved["bbox_train"] = torch.tensor([[0., 0., 0.], [2., 1., 1.]])
+    with pytest.raises(ValueError, match="bounding-box mismatch"):
+        audit._validate_rebuilt_training_space(Space(), saved, torch)
+
+
+def test_prepared_input_identity_uses_training_manifest_hash_not_local_path(tmp_path) -> None:
+    """Catches using a same-named but content-different local observation file."""
+    observations = []
+    for stack, content in (("sax", b"sax"), ("2ch", b"2ch"), ("4ch", b"4ch")):
+        path = tmp_path / "local_mirror" / stack / "observations.npz"
+        path.parent.mkdir(parents=True, exist_ok=True); path.write_bytes(content); observations.append(path)
+    checkpoint = tmp_path / "run" / "model.pt"; checkpoint.parent.mkdir(); checkpoint.touch()
+    manifest = {
+        "prepared_inputs": [f"/data/server/DYZ/{stack}/observations.npz" for stack in ("sax", "2ch", "4ch")],
+        "prepared_manifest_sha256": audit._prepared_inputs_sha256(observations),
+    }
+    (checkpoint.parent / "experiment_manifest.json").write_text(json.dumps(manifest))
+
+    audit._validate_prepared_input_identity(checkpoint, observations)
+    observations[0].write_bytes(b"different")
+    with pytest.raises(ValueError, match="SHA256 mismatch"):
+        audit._validate_prepared_input_identity(checkpoint, observations)
+
+
+def test_paths_accepts_dyz_subject_root_without_cyj_specific_error(tmp_path) -> None:
+    """Catches the legacy CYJ-only fallback and diagnostic for other Final5 subjects."""
+    for stack in ("sax", "2ch", "4ch"):
+        path = tmp_path / "DYZ" / stack / "observations.npz"
+        path.parent.mkdir(parents=True, exist_ok=True); path.touch()
+
+    assert audit._paths(tmp_path) == [tmp_path / "DYZ" / stack / "observations.npz" for stack in ("sax", "2ch", "4ch")]
+
+
+def test_load_model_rebuilds_with_checkpoint_post_stack_pose_and_returns_saved_space(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Catches a load path that validates shapes but still derives coordinates from a rebuilt space."""
+    prepared = []
+    for stack in ("sax", "2ch", "4ch"):
+        path = tmp_path / stack / "observations.npz"; path.parent.mkdir(exist_ok=True); path.write_bytes(stack.encode()); prepared.append(path)
+    checkpoint = tmp_path / "model.pt"; checkpoint.touch()
+    (tmp_path / "experiment_manifest.json").write_text(json.dumps({
+        "prepared_inputs": [f"/server/DYZ/{stack}/observations.npz" for stack in ("sax", "2ch", "4ch")],
+        "prepared_manifest_sha256": audit._prepared_inputs_sha256(prepared),
+    }))
+    training_space = {
+        "center_ras_mm": torch.zeros(3), "spatial_scaling": 1.0,
+        "physical_bbox_ras_mm": torch.tensor([[0., 0., 0.], [1., 1., 1.]]),
+        "bbox_train": torch.tensor([[0., 0., 0.], [1., 1., 1.]]),
+        "group_resolution_xyz_mm": torch.ones((1, 3)),
+        "group_axisangle_init_physical": torch.ones((1, 6)),
+        "group_axisangle_init_train": torch.ones((1, 6)),
+    }
+    class Model:
+        def state_dict(self):
+            return {"inr.encoding.params": torch.zeros(4), "forward_model.quantitative_inr.encoding.params": torch.zeros(4)}
+        def eval(self): return self
+    class Dataset:
+        def __init__(self, *_args, **_kwargs): pass
+    class RebuiltSpace:
+        def state_dict(self): return training_space
+    payload = {"resolved_config": {"decoder": {}}, "training_space": training_space,
+               "group_axisangle_post_stack_init_physical": torch.ones((1, 6)),
+               "group_axisangle_init_physical": torch.zeros((1, 6)),
+               "model_state": Model().state_dict()}
+    captured: list[torch.Tensor] = []
+    monkeypatch.setattr(torch, "load", lambda *_args, **_kwargs: payload)
+    monkeypatch.setattr("trad.modules.module_03_dataset_geometry.quantitative_point_dataset.QuantPointDataset", Dataset)
+    monkeypatch.setattr("mlp.modules.module_07_objective_training.mlp_trainer.build_mlp_training_model",
+                        lambda _dataset, _config, _protocol, _device, *, initial_group_axisangle_physical: captured.append(initial_group_axisangle_physical) or (Model(), RebuiltSpace(), None, None))
+    monkeypatch.setattr("reconstruction_core.orchestration.load_checkpoint", lambda *_args, **_kwargs: payload)
+
+    _model, restored_space, _torch = audit._load_model(checkpoint, prepared, "cpu")
+
+    assert torch.equal(captured[0], payload["group_axisangle_post_stack_init_physical"])
+    assert torch.equal(restored_space.bbox_train, training_space["bbox_train"])

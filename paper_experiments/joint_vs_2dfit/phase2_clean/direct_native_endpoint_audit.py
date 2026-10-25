@@ -9,6 +9,7 @@ never constructs a second grid from an R0 native affine.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import shutil
 import tempfile
@@ -24,6 +25,7 @@ from .final_cyj_reporting import _load_all_verified_native_cache_groups
 
 STACKS = ("sax", "2ch", "4ch")
 PARAMETERS = {"t1": "t1_ms", "t2": "t2_ms"}
+FINAL5_SUBJECTS = ("CYJ", "DYL_2", "DYZ", "HHZ", "HJL")
 
 
 def historical_local_grid(height: int, width: int, spacing_rc_mm: np.ndarray, torch_module: Any, device: Any) -> Any:
@@ -82,27 +84,117 @@ def _model_prediction(model: Any, world_xyz: np.ndarray, parameter_key: str, tor
     return np.concatenate(parts).reshape(world_xyz.shape[:2])
 
 
+def _prepared_inputs_sha256(paths: list[Path]) -> str:
+    """Match the immutable training-manifest digest, without trusting paths."""
+    return hashlib.sha256("".join(sha256(path) for path in paths).encode("ascii")).hexdigest()
+
+
+def _validate_prepared_input_identity(checkpoint: Path, prepared_paths: list[Path]) -> None:
+    """Bind local prepared inputs to the original training manifest by content."""
+    manifest_path = checkpoint.parent / "experiment_manifest.json"
+    if not manifest_path.is_file():
+        raise FileNotFoundError("direct-native audit requires checkpoint experiment_manifest.json for prepared-input identity")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    declared, expected_hash = manifest.get("prepared_inputs"), manifest.get("prepared_manifest_sha256")
+    if not isinstance(declared, list) or not isinstance(expected_hash, str):
+        raise ValueError("checkpoint experiment manifest lacks prepared-input SHA256 provenance")
+    declared_stacks = tuple(Path(str(path)).parent.name.lower() for path in declared)
+    actual_stacks = tuple(path.parent.name.lower() for path in prepared_paths)
+    if declared_stacks != STACKS or actual_stacks != STACKS:
+        raise ValueError("checkpoint prepared-input stack identity must be ordered sax/2ch/4ch")
+    if _prepared_inputs_sha256(prepared_paths) != expected_hash:
+        raise ValueError("checkpoint prepared-input SHA256 mismatch; local inputs are not the original training inputs")
+
+
+def _checkpoint_initial_pose(payload: Mapping[str, Any], torch_module: Any, device: Any) -> Any:
+    """Recover the exact training pose used to derive the hash-grid bbox."""
+    training_space = payload.get("training_space")
+    candidates = (
+        payload.get("group_axisangle_post_stack_init_physical"),
+        payload.get("group_axisangle_init_physical"),
+        training_space.get("group_axisangle_init_physical") if isinstance(training_space, Mapping) else None,
+    )
+    pose = next((value for value in candidates if value is not None), None)
+    if pose is None:
+        raise ValueError("checkpoint lacks post-stack and legacy initial physical group poses")
+    pose = torch_module.as_tensor(pose, dtype=torch_module.float32, device=device)
+    if pose.ndim != 2 or pose.shape[1] != 6:
+        raise ValueError("checkpoint initial physical group pose must have shape [groups, 6]")
+    return pose
+
+
+def _validate_checkpoint_model_shapes(model: Any, checkpoint_state: Any) -> None:
+    """Fail before strict checkpoint loading if reconstruction topology differs."""
+    if not isinstance(checkpoint_state, Mapping):
+        raise ValueError("checkpoint model_state must be a mapping")
+    current = model.state_dict()
+    missing, unexpected = set(current).difference(checkpoint_state), set(checkpoint_state).difference(current)
+    if missing or unexpected:
+        raise ValueError(f"checkpoint model-state keys differ before strict load; missing={sorted(missing)}, unexpected={sorted(unexpected)}")
+    mismatches = [(key, tuple(current[key].shape), tuple(checkpoint_state[key].shape))
+                  for key in current if tuple(current[key].shape) != tuple(checkpoint_state[key].shape)]
+    if mismatches:
+        encoding = [item for item in mismatches if item[0] in {
+            "inr.encoding.params", "forward_model.quantitative_inr.encoding.params"}]
+        if encoding:
+            detail = "; ".join(f"{key}: checkpoint={saved}, rebuilt={rebuilt}" for key, rebuilt, saved in encoding)
+            raise ValueError(f"checkpoint encoding parameter shape mismatch before strict load ({detail})")
+        detail = "; ".join(f"{key}: checkpoint={saved}, rebuilt={rebuilt}" for key, rebuilt, saved in mismatches[:8])
+        raise ValueError(f"checkpoint model parameter shape mismatch before strict load ({detail})")
+
+
+def _validate_rebuilt_training_space(rebuilt: Any, saved: Any, torch_module: Any) -> None:
+    """Require the rebuilt bbox/geometry to match the checkpoint coordinate contract."""
+    if not isinstance(saved, Mapping):
+        raise ValueError("checkpoint training_space must be a mapping")
+    current = rebuilt.state_dict()
+    keys = ("center_ras_mm", "spatial_scaling", "physical_bbox_ras_mm", "bbox_train",
+            "group_resolution_xyz_mm", "group_axisangle_init_physical", "group_axisangle_init_train")
+    missing = set(keys).difference(saved) | set(keys).difference(current)
+    if missing:
+        raise ValueError(f"checkpoint/rebuilt training_space lacks: {sorted(missing)}")
+    for key in keys:
+        expected, actual = torch_module.as_tensor(saved[key]), torch_module.as_tensor(current[key])
+        equal = expected.shape == actual.shape and torch_module.allclose(expected, actual, rtol=0, atol=1e-6)
+        if not equal:
+            kind = "bounding-box" if key in {"physical_bbox_ras_mm", "bbox_train"} else "geometry"
+            raise ValueError(f"checkpoint/rebuilt training-space {kind} mismatch for {key}; prepared inputs or initial pose differ")
+
+
 def _load_model(checkpoint: Path, prepared_paths: list[Path], device_text: str) -> tuple[Any, Any, Any]:
     import torch
     from mlp.modules.module_07_objective_training.mlp_trainer import build_mlp_training_model
     from reconstruction_core.orchestration import load_checkpoint
     from trad.modules.module_03_dataset_geometry.quantitative_point_dataset import QuantPointDataset
+    from trad.modules.module_07_objective_training.training_space import TrainingSpace
 
     device = torch.device(device_text)
-    dataset = QuantPointDataset(prepared_paths, device=device)
     payload = torch.load(checkpoint, map_location=device, weights_only=False)
+    if not isinstance(payload, Mapping):
+        raise ValueError("checkpoint must be a mapping")
+    _validate_prepared_input_identity(checkpoint, prepared_paths)
+    dataset = QuantPointDataset(prepared_paths, device=device)
     config = payload["resolved_config"]
     protocol = config["decoder"].get("protocol_yaml", "trad/configs/protocol_hhz_v1.yaml")
-    model, space, _, _ = build_mlp_training_model(dataset, config, protocol, device)
+    initial_pose = _checkpoint_initial_pose(payload, torch, device)
+    model, rebuilt_space, _, _ = build_mlp_training_model(
+        dataset, config, protocol, device, initial_group_axisangle_physical=initial_pose)
+    _validate_rebuilt_training_space(rebuilt_space, payload.get("training_space"), torch)
+    _validate_checkpoint_model_shapes(model, payload.get("model_state"))
     load_checkpoint(checkpoint, model, device)
     model.eval()
-    return model, space, torch
+    return model, TrainingSpace.from_state_dict(payload["training_space"]), torch
 
 
 def _paths(prepared_root: Path) -> list[Path]:
-    candidates = [[prepared_root / stack / "observations.npz" for stack in STACKS], [prepared_root / "CYJ" / stack / "observations.npz" for stack in STACKS]]
-    paths = next((items for items in candidates if all(item.is_file() for item in items)), None)
-    if paths is None: raise FileNotFoundError("direct-native audit requires cropped CYJ sax/2ch/4ch observations.npz")
+    candidates = [[prepared_root / stack / "observations.npz" for stack in STACKS]]
+    candidates.extend([prepared_root / subject / stack / "observations.npz" for stack in STACKS] for subject in FINAL5_SUBJECTS)
+    matches = [items for items in candidates if all(item.is_file() for item in items)]
+    if len(matches) != 1:
+        if not matches:
+            raise FileNotFoundError("direct-native audit requires cropped sax/2ch/4ch observations.npz at the supplied root or one explicit Final5 subject directory")
+        raise ValueError("direct-native audit prepared root is ambiguous; provide one subject-specific prepared directory")
+    paths = matches[0]
     if "full_fov" in str(prepared_root).lower(): raise ValueError("direct-native audit rejects full-FOV inputs")
     return paths
 
