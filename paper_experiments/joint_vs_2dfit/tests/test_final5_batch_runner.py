@@ -52,6 +52,12 @@ def test_metric_cli_exits_nonzero_for_existing_invalid_output(monkeypatch: pytes
         runner.main()
 
 
+def test_server_batch_forwarder_accepts_metrics_mode() -> None:
+    script = Path(runner.__file__).with_name("server_commands") / "run_final5_batch.sh"
+    source = script.read_text(encoding="utf-8")
+    assert "plan|execute|metrics|status|validate" in source
+
+
 def test_metric_only_batch_runs_only_requested_verified_endpoints(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     current = runner.CaseRecord("CYJ", "L100", "L100", None, 1, tmp_path / "sparse.json", "a" * 64, "b" * 40, tmp_path)
     other = runner.CaseRecord("HJL", "L100", "L100", None, 1, tmp_path / "other.json", "a" * 64, "b" * 40, tmp_path)
