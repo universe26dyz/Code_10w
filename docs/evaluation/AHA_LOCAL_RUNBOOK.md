@@ -14,20 +14,20 @@ Use only the following explicit artifacts:
   endpoint validator.
 - One verified standardized current native SAX folder containing
   `native_maps.npz`, `geometry.npz`, and `manifest.json`.
-- One subject-specific audited ROI.  `--roi-root` may be the exact ROI folder,
-  or the established `MultiMapCode/subjects` root: CYJ/HHZ/HJL use
-  `20260821_corrected_sequence_v1`; DYZ uses `20260823_v5_newdata_v1`.
-  `DYL_2` deliberately has no inherited mapping: it remains `ROI_PENDING`
-  until its own exact folder is staged as `<roi-root>/DYL_2/roi/` (or passed
-  directly as `--roi-root`).  It never falls back to DYL.
+- One subject-specific Final5-ready ROI.  For CYJ, DYZ, HHZ, and HJL this is
+  the derived `20261025_final5_cropped_roi_v1` bundle, never the historical
+  full-FOV folder.  `--roi-root` may be that exact bundle or the established
+  `MultiMapCode/subjects` root.  `DYL_2` uses its own audited
+  `20261025_final5_aha_v1` bundle and never falls back to DYL.
 - A reviewed `final5_aha_native_roi_mapping/v1` JSON.  For every basal, mid,
   and apical plane it records `native_group_idx`, its matching
   `original_group_idx`, `roi_slice_index`, `roi_transform`, and reviewed
   `anterior_xy`/`inferior_xy`.  The reviewed coordinates must match the
   transformed manual labels `{1,3,5}` (anterior) and `{2,4,6}` (inferior).
-  It also SHA-binds the actual standardization manifest.  The adapter verifies the `derived_group_idx` →
-  `original_group_idx` relationship; no filename order is used for CYJ's
-  14→12 selection.
+  It also SHA-binds the actual standardization manifest and, for a derived
+  legacy-subject ROI, the ROI derivation manifest.  The adapter verifies the
+  `derived_group_idx` → `original_group_idx` relationship; no filename order
+  is used for CYJ's 14→12 selection.
 
 The mapping's `roi_transform` is one of `identity`, `transpose`, `flipud`,
 `fliplr`, `transpose_flipud`, or `transpose_fliplr`.  It is a discrete audited
@@ -69,3 +69,53 @@ labels and paired-valid support:
 
 Each segment's mean and SD use the historical sample-SD definition.  AHA is
 basal 1–6, mid 7–12, apical 13–16 only; there is no segment 17.
+## Final5 legacy full-FOV ROI adaptation
+
+For CYJ, DYZ, HHZ, and HJL, never pass the historical full-FOV ROI folder
+directly to Final5 AHA.  First create one immutable
+`20261025_final5_cropped_roi_v1` bundle using the explicit Final5 SAX
+reference and standardization manifest from the completed formal run.
+
+The derivation config is JSON with this required structure:
+
+```json
+{
+  "schema": "final5_legacy_roi_derivation_config/v1",
+  "subject": "CYJ",
+  "legacy_roi": {"path": "/.../CYJ/data/roi/20260821_corrected_sequence_v1"},
+  "final5_sax_reference": {"path": "/.../current_cropped_sax_composite.nii.gz", "sha256": "..."},
+  "standardization_manifest": {"path": "/.../standardization_manifest.json", "sha256": "..."},
+  "planes": [
+    {"native_group_idx": 0, "original_group_idx": 4, "legacy_roi_slice_index": 0, "target_reference_slice_index": 0}
+  ]
+}
+```
+
+There must be exactly one `planes` record per reference z slice.  Each
+`native_group_idx -> original_group_idx` pair must match the formal
+standardization manifest; `legacy_roi_slice_index` and
+`target_reference_slice_index` are explicit, zero-based NIfTI indices.
+The tool proves that each target pixel maps to an integer old-grid pixel and
+rejects cropped myocardium or landmarks.  It never resamples.
+
+Before formal inputs are locally available, only run the non-writing
+readiness check:
+
+```bash
+python -m paper_experiments.joint_vs_2dfit.aha.run_final5_legacy_roi \
+  --config /absolute/path/CYJ_final5_roi_derivation.json
+```
+
+After checking `READY`, create a new bundle (never reuse an existing output):
+
+```bash
+python -m paper_experiments.joint_vs_2dfit.aha.run_final5_legacy_roi \
+  --config /absolute/path/CYJ_final5_roi_derivation.json \
+  --output /home/universe/SVR/multimap_postprogramming/MultiMapCode/subjects/CYJ/data/roi/20261025_final5_cropped_roi_v1
+```
+
+Inspect `roi_qc_montage.png` in the derived bundle; it overlays the directly
+copied mask on the current Final5 reference.  The bundle records its exact
+mask/reference geometry and hashes in `roi_derivation_manifest.json`.  Pass that derived directory as the AHA
+`--roi-root`.  Proposed and Fit-first then share this one ROI and the same
+paired support; no method-specific ROI is created.

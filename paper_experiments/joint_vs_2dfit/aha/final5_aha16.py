@@ -121,7 +121,7 @@ def build_final5_aha16(*, final_root: str | Path, subject: str, case: str, roi_r
     roi = resolve_subject_roi(roi_root, subject)
     if roi is None:
         raise ValueError("ROI_PENDING: subject-specific audited manual ROI is unavailable")
-    mapping = require_exact_native_roi_mapping(mapping_path, subject=subject, case=case)
+    mapping = require_exact_native_roi_mapping(mapping_path, subject=subject, case=case, roi_root=roi)
     entries = mapping["planes"]
     if {entry["level"] for entry in entries} != set(LEVELS) or len(entries) != 3:
         raise ValueError("AHA16 requires exactly one explicit SAX plane for basal, mid, and apical")
@@ -178,6 +178,7 @@ def build_final5_aha16(*, final_root: str | Path, subject: str, case: str, roi_r
             "schema": "final5_aha16_downstream/v1", "subject": subject, "case": case,
             "endpoint_provenance": endpoint_provenance, "native_sax": {"root": str(Path(native_sax_root).resolve()), "maps": _record(Path(native_sax_root) / "native_maps.npz"), "geometry": _record(Path(native_sax_root) / "geometry.npz"), "manifest": _record(Path(native_sax_root) / "manifest.json")},
             "manual_roi": {name: _record(roi / name) for name in ("Segmentation_1-out-label.nii.gz", "Segmentation_2-in-label.nii.gz", "Segmentation_3-label_point.nii.gz", "sax_composite_reference.nii.gz")},
+            "roi_derivation": _record(roi / "roi_derivation_manifest.json") if (roi / "roi_derivation_manifest.json").is_file() else None,
             "mapping": _record(Path(mapping_path)), "planes": planes,
             "support_equation": "manual_myocardium_core AND finite(reference) AND proposed_reprojection_valid AND fit_first_reprojection_valid AND finite(proposed, fit_first)",
             "algorithm": "historical AHA16 basal6/mid6/apical4; no segment17; historical anterior/inferior orientation and sample SD", "downstream_only": True,

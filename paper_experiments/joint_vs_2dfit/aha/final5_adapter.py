@@ -19,10 +19,10 @@ ROI_FILENAMES = (
 )
 MAPPING_SCHEMA = "final5_aha_native_roi_mapping/v1"
 FINAL5_SUBJECTS = ("CYJ", "DYL_2", "DYZ", "HHZ", "HJL")
-AUDITED_ROI_VERSIONS = {
-    "CYJ": "20260821_corrected_sequence_v1", "DYZ": "20260823_v5_newdata_v1",
-    "HHZ": "20260821_corrected_sequence_v1", "HJL": "20260821_corrected_sequence_v1",
-}
+FINAL5_CROPPED_ROI_VERSION = "20261025_final5_cropped_roi_v1"
+FINAL5_DIRECT_ROI_VERSION = "20261025_final5_aha_v1"
+DERIVED_ROI_SCHEMA = "final5_cropped_roi_bundle/v1"
+DIRECT_ROI_SCHEMA = "dyl_2_final5_aha_manual_roi/v1"
 ROI_TRANSFORMS = ("identity", "transpose", "flipud", "fliplr", "transpose_flipud", "transpose_fliplr")
 
 
@@ -35,23 +35,46 @@ def final5_endpoint_paths(final_root: str | Path, subject: str, case: str) -> di
     }
 
 
+def _is_final5_roi_bundle(folder: Path, subject: str) -> bool:
+    if not all((folder / name).is_file() for name in ROI_FILENAMES):
+        return False
+    manifest = folder / "roi_derivation_manifest.json"
+    if manifest.is_file():
+        try:
+            payload = json.loads(manifest.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            return False
+        return payload.get("schema") == DERIVED_ROI_SCHEMA and payload.get("subject") == subject and payload.get("resampling") is False
+    if subject == "DYL_2":
+        direct = folder / "final_aha_roi_provenance.json"
+        if not direct.is_file():
+            return False
+        try:
+            payload = json.loads(direct.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            return False
+        return payload.get("schema") == DIRECT_ROI_SCHEMA
+    return False
+
+
 def resolve_subject_roi(roi_root: str | Path, subject: str) -> Path | None:
-    """Resolve one subject's audited ROI by one declared, non-recursive layout."""
+    """Resolve a Final5-ready ROI by declared layout; legacy full-FOV ROI is never a fallback."""
     supplied = Path(roi_root)
-    # Callers may provide either this subject's exact audited folder or the
-    # documented staging root <root>/<SUBJECT>/roi.  Neither form searches.
-    if all((supplied / name).is_file() for name in ROI_FILENAMES):
-        folder = supplied
-    elif subject in AUDITED_ROI_VERSIONS:
-        # The established source-subject layout, not a filename search.
-        folder = supplied / subject / "data" / "roi" / AUDITED_ROI_VERSIONS[subject]
-        if not all((folder / name).is_file() for name in ROI_FILENAMES):
-            folder = supplied / subject / "roi"
+    candidates = [supplied]
+    if subject == "DYL_2":
+        candidates.extend((
+            supplied / subject / "data" / "roi" / FINAL5_DIRECT_ROI_VERSION,
+            supplied / subject / "roi",
+        ))
     else:
-        # DYL_2 has no inherited version or fallback: only its own explicit
-        # <roi-root>/DYL_2/roi staging folder can satisfy this branch.
-        folder = supplied / subject / "roi"
-    return folder if all((folder / name).is_file() for name in ROI_FILENAMES) else None
+        candidates.extend((
+            supplied / subject / "data" / "roi" / FINAL5_CROPPED_ROI_VERSION,
+            supplied / subject / "roi",
+        ))
+    for folder in candidates:
+        if _is_final5_roi_bundle(folder, subject):
+            return folder
+    return None
 
 
 def assess_final5_aha_readiness(final_root: str | Path, subject: str, case: str, roi_root: str | Path, *,
@@ -74,7 +97,7 @@ def assess_final5_aha_readiness(final_root: str | Path, subject: str, case: str,
     if mapping_path is None:
         return {**report, "status": "NATIVE_MAPPING_PENDING", "reason": "explicit standardization/physical native-to-ROI mapping is required"}
     try:
-        mapping = require_exact_native_roi_mapping(mapping_path, subject=subject, case=case)
+        mapping = require_exact_native_roi_mapping(mapping_path, subject=subject, case=case, roi_root=roi)
     except (FileNotFoundError, ValueError) as exc:
         return {**report, "status": "NATIVE_MAPPING_INVALID", "reason": str(exc)}
     return {**report, "status": "READY", "mapping": mapping}
@@ -85,7 +108,23 @@ def assess_final5_aha_cohort(final_root: str | Path, case: str, roi_root: str | 
     return [assess_final5_aha_readiness(final_root, subject, case, roi_root) for subject in FINAL5_SUBJECTS]
 
 
-def require_exact_native_roi_mapping(path: str | Path, *, subject: str, case: str) -> dict[str, Any]:
+def _require_mapping_derivation(payload: dict[str, Any], roi_root: Path, subject: str) -> None:
+    """Bind a legacy-subject Final5 mapping to the immutable derived ROI manifest."""
+    if subject == "DYL_2":
+        return
+    manifest = roi_root / "roi_derivation_manifest.json"
+    if not manifest.is_file():
+        raise ValueError("Final5 legacy subject ROI lacks derivation manifest")
+    derived = json.loads(manifest.read_text(encoding="utf-8"))
+    if derived.get("schema") != DERIVED_ROI_SCHEMA or derived.get("subject") != subject or derived.get("resampling") is not False:
+        raise ValueError("Final5 legacy subject ROI derivation manifest is invalid")
+    declared = payload.get("roi_derivation_manifest")
+    if not isinstance(declared, dict) or declared.get("path") != str(manifest.resolve()) or declared.get("sha256") != sha256(manifest):
+        raise ValueError("AHA mapping derivation manifest does not match the Final5 ROI bundle")
+
+
+def require_exact_native_roi_mapping(path: str | Path, *, subject: str, case: str,
+                                     roi_root: str | Path | None = None) -> dict[str, Any]:
     """Validate a declared physical/standardization mapping without guessing IDs."""
     path = Path(path)
     if not path.is_file():
@@ -131,6 +170,8 @@ def require_exact_native_roi_mapping(path: str | Path, *, subject: str, case: st
             point = np.asarray(plane.get(name), float)
             if point.shape != (2,) or not np.isfinite(point).all():
                 raise ValueError(f"AHA mapping requires finite {name}")
+    if roi_root is not None:
+        _require_mapping_derivation(payload, Path(roi_root), subject)
     return payload
 
 
