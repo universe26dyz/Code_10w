@@ -94,6 +94,17 @@ def assess_final5_aha_readiness(final_root: str | Path, subject: str, case: str,
         validate_sparse_endpoint_roots(endpoints["proposed"], endpoints["fit_first"], case, subject=subject)
     except (FileNotFoundError, ValueError) as exc:
         return {**report, "status": "ENDPOINTS_INVALID", "reason": str(exc)}
+    central = Path(final_root) / "05_formal_endpoints" / "central"
+    direct_bundle = central / "proposed_native_bundle" / subject / case
+    fit_bundle = central / "fit_first_native_bundle" / subject / case
+    if not (direct_bundle / "manifest.json").is_file() or not (fit_bundle / "manifest.json").is_file():
+        return {**report, "status": "NATIVE_BUNDLES_PENDING", "reason": "AHA observed SAX planes require both final-pose native bundles"}
+    try:
+        from ..phase2_clean.final5_partitioned_native_metrics import _validate_bundles
+        _validate_bundles(direct_root=direct_bundle, fit_root=fit_bundle, subject=subject, case=case,
+                          fit_endpoint=endpoints["fit_first"])
+    except (FileNotFoundError, ValueError) as exc:
+        return {**report, "status": "NATIVE_BUNDLES_INVALID", "reason": str(exc)}
     if mapping_path is None:
         return {**report, "status": "NATIVE_MAPPING_PENDING", "reason": "explicit standardization/physical native-to-ROI mapping is required"}
     try:

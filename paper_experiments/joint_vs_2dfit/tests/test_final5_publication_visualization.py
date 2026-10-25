@@ -50,7 +50,7 @@ def test_manifest_group_roles_keep_sax_and_do_not_invent_l100_heldout() -> None:
 
     source = {"sax": [0, 1], "2ch": [0, 1], "4ch": [0, 1]}
     sparse = {"case_id": "L50_fold0", "stacks": {"sax": {}, "2ch": {"retained_original_group_ids": [0], "heldout_original_group_ids": [1]}, "4ch": {"retained_original_group_ids": [1], "heldout_original_group_ids": [0]}}}
-    assert publication_group_roles(sparse, source) == {("sax", 0): "observed", ("sax", 1): "observed", ("2ch", 0): "retained", ("2ch", 1): "heldout", ("4ch", 0): "heldout", ("4ch", 1): "retained"}
+    assert publication_group_roles(sparse, source) == {("sax", 0): "observed", ("sax", 1): "observed", ("2ch", 0): "observed", ("2ch", 1): "heldout", ("4ch", 0): "heldout", ("4ch", 1): "observed"}
     assert set(publication_group_roles({"case_id": "L100", "stacks": {}}, source).values()) == {"observed"}
 
 
@@ -95,3 +95,22 @@ def test_dry_run_reports_missing_input_without_creating_output(tmp_path) -> None
     result = publication_readiness(final5_root=tmp_path / "missing-final5", subject="DYL_2", case_id="L100", output=output)
     assert result["status"] == "MISSING_INPUT"
     assert not output.exists()
+
+
+def test_sampling_geometry_is_final_pose_only_for_observed_planes() -> None:
+    from paper_experiments.joint_vs_2dfit.phase2_clean.final5_publication_visualization import sampling_geometry_for_role
+
+    assert sampling_geometry_for_role("observed") == "final_learned_pose_native_bundle"
+    assert sampling_geometry_for_role("heldout") == "original_native_endpoint_reprojection"
+    with pytest.raises(ValueError, match="unknown sampling role"):
+        sampling_geometry_for_role("retained")
+
+
+def test_sparse_direct_bundle_uses_manifest_derived_to_original_identity() -> None:
+    from paper_experiments.joint_vs_2dfit.phase2_clean.sparse_direct_native_bundles import _derived_to_original
+
+    profile = {"stacks": {"2ch": {"derived_to_original_group_idx": [
+        {"derived_group_idx": 0, "original_group_idx": 7},
+        {"derived_group_idx": 1, "original_group_idx": 2},
+    ]}}}
+    assert _derived_to_original(profile, "2ch") == [7, 2]

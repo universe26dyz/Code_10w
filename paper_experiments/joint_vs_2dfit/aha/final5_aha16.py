@@ -12,7 +12,7 @@ import numpy as np
 
 from ..phase2_clean.contracts import sha256, write_immutable_json
 from ..phase2_clean.final_sparse_native_metrics import validate_sparse_endpoint_roots
-from .final5_adapter import ROI_TRANSFORMS, require_exact_native_roi_mapping, reproject_current_endpoints_to_native_sax, resolve_subject_roi
+from .final5_adapter import ROI_TRANSFORMS, require_exact_native_roi_mapping, resolve_subject_roi
 from .legacy_aha16 import LEVELS, build_filled_masks, render_single_bullseye, sectorize, segment_statistics
 
 
@@ -116,6 +116,7 @@ def build_final5_aha16(*, final_root: str | Path, subject: str, case: str, roi_r
     """Build one immutable AHA16 downstream bundle; it never alters Final5 artifacts."""
     import nibabel as nib
     from .final5_adapter import final5_endpoint_paths
+    from ..phase2_clean.final5_partitioned_native_metrics import _bundle_plane, _validate_bundles
 
     output = require_new_aha_output(output)
     roi = resolve_subject_roi(roi_root, subject)
@@ -126,8 +127,11 @@ def build_final5_aha16(*, final_root: str | Path, subject: str, case: str, roi_r
     if {entry["level"] for entry in entries} != set(LEVELS) or len(entries) != 3:
         raise ValueError("AHA16 requires exactly one explicit SAX plane for basal, mid, and apical")
     endpoints = final5_endpoint_paths(final_root, subject, case)
-    volume_paths, endpoint_provenance = validate_sparse_endpoint_roots(endpoints["proposed"], endpoints["fit_first"], case, subject=subject)
-    images = {parameter: {method: nib.load(str(path)) for method, path in paths.items()} for parameter, paths in volume_paths.items()}
+    _volume_paths, endpoint_provenance = validate_sparse_endpoint_roots(endpoints["proposed"], endpoints["fit_first"], case, subject=subject)
+    central = Path(final_root) / "05_formal_endpoints" / "central"
+    direct_root, fit_root = central / "proposed_native_bundle" / subject / case, central / "fit_first_native_bundle" / subject / case
+    direct_bundle, fit_bundle = _validate_bundles(direct_root=direct_root, fit_root=fit_root, subject=subject, case=case,
+                                                  fit_endpoint=endpoints["fit_first"])
     outer, inner, points, composite = (nib.load(str(roi / name)) for name in (
         "Segmentation_1-out-label.nii.gz", "Segmentation_2-in-label.nii.gz", "Segmentation_3-label_point.nii.gz", "sax_composite_reference.nii.gz"))
     if any(image.shape != outer.shape or not np.allclose(image.affine, outer.affine, atol=1e-6, rtol=0) for image in (inner, points, composite)):
@@ -158,10 +162,13 @@ def build_final5_aha16(*, final_root: str | Path, subject: str, case: str, roi_r
             plane_report: dict[str, Any] = {"level": entry["level"], "native_group_idx": group, "roi_slice_index": entry["roi_slice_index"], "roi_transform": entry["roi_transform"], "parameters": {}}
             for parameter in ("t1", "t2"):
                 reference = np.asarray(native[f"{parameter}_ms"][index], float)
-                sampled = reproject_current_endpoints_to_native_sax(images[parameter]["proposed"], images[parameter]["fit_first"], native["affine_lps_rc"][index], reference.shape)
+                proposed, proposed_valid = _bundle_plane(direct_bundle, direct_root, parameter=parameter, stack="sax", group=int(group), method="proposed")
+                fit_first, fit_first_valid = _bundle_plane(fit_bundle, fit_root, parameter=parameter, stack="sax", group=int(group), method="fit_first")
+                if proposed.shape != reference.shape or fit_first.shape != reference.shape:
+                    raise ValueError("final-pose AHA native bundle plane shape mismatch")
                 result = build_paired_aha16_plane(level=entry["level"], reference=reference,
-                                                  proposed=sampled["proposed"][0], fit_first=sampled["fit_first"][0],
-                                                  proposed_valid=sampled["proposed"][1], fit_first_valid=sampled["fit_first"][1],
+                                                  proposed=proposed, fit_first=fit_first,
+                                                  proposed_valid=proposed_valid, fit_first_valid=fit_first_valid,
                                                   myocardium_core=masks["myocardium_core"], anterior_xy=anterior, inferior_xy=inferior)
                 plane_report["parameters"][parameter] = {key: value for key, value in result.items() if key not in ("labels", "paired_support", "proposed_support", "fit_first_support")}
                 for method in ("proposed", "fit_first"):
@@ -180,7 +187,9 @@ def build_final5_aha16(*, final_root: str | Path, subject: str, case: str, roi_r
             "manual_roi": {name: _record(roi / name) for name in ("Segmentation_1-out-label.nii.gz", "Segmentation_2-in-label.nii.gz", "Segmentation_3-label_point.nii.gz", "sax_composite_reference.nii.gz")},
             "roi_derivation": _record(roi / "roi_derivation_manifest.json") if (roi / "roi_derivation_manifest.json").is_file() else None,
             "mapping": _record(Path(mapping_path)), "planes": planes,
-            "support_equation": "manual_myocardium_core AND finite(reference) AND proposed_reprojection_valid AND fit_first_reprojection_valid AND finite(proposed, fit_first)",
+            "native_sampling": "SAX is observed in every Final5 sparse profile; Proposed and Fit-first use their final learned-pose native bundles, never endpoint-to-R0 reprojection",
+            "proposed_native_bundle": _record(direct_root / "manifest.json"), "fit_first_native_bundle": _record(fit_root / "manifest.json"),
+            "support_equation": "manual_myocardium_core AND finite(reference) AND proposed_final_pose_valid AND fit_first_final_pose_valid AND finite(proposed, fit_first)",
             "algorithm": "historical AHA16 basal6/mid6/apical4; no segment17; historical anterior/inferior orientation and sample SD", "downstream_only": True,
         })
         staging.rename(output)

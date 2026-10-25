@@ -73,9 +73,22 @@ def publication_group_roles(sparse: Mapping[str, Any], source_groups: Mapping[st
             raise ValueError(f"{stack}: retained/heldout IDs must be integer lists")
         if set(retained) & set(heldout) or set(retained) | set(heldout) != set(source_groups[stack]):
             raise ValueError(f"{stack}: manifest retained/heldout IDs do not partition native source groups")
-        roles.update({(stack, int(group)): "retained" for group in retained})
+        # ``retained`` is the sparse-manifest training term.  Publication and
+        # downstream geometry use the less ambiguous term ``observed``: these
+        # planes have a final learned pose and must not be sampled on their R0
+        # affine merely because a held-out plane in the same stack exists.
+        roles.update({(stack, int(group)): "observed" for group in retained})
         roles.update({(stack, int(group)): "heldout" for group in heldout})
     return roles
+
+
+def sampling_geometry_for_role(role: str) -> str:
+    """Return the only allowed query geometry for one declared plane role."""
+    if role == "observed":
+        return "final_learned_pose_native_bundle"
+    if role == "heldout":
+        return "original_native_endpoint_reprojection"
+    raise ValueError(f"unknown sampling role: {role}")
 
 
 def display_support(source_support: np.ndarray, reference: np.ndarray, proposed: np.ndarray, fit_first: np.ndarray, proposed_valid: np.ndarray, fit_first_valid: np.ndarray) -> np.ndarray:
@@ -133,10 +146,12 @@ def _paths(root: Path, subject: str, case_id: str) -> dict[str, Path]:
     central = root / "05_formal_endpoints" / "central"
     return {"sparse": root / "03_sparse_inputs" / subject / case_id / "sparse_manifest.json", "native": root / "02_standardized_12_15_10" / "native_dictionary" / subject,
             "proposed": central / "proposed" / subject / case_id, "fit_first": central / "fit_first" / subject / case_id,
+            "direct_bundle": central / "proposed_native_bundle" / subject / case_id,
+            "fit_bundle": central / "fit_first_native_bundle" / subject / case_id,
             "metric": root / "06_metrics" / "final_native_grid_v2" / subject / case_id}
 
 
-def _validated_inputs(root: Path, subject: str, case_id: str) -> tuple[dict[str, Path], dict[str, Any], dict[str, Any], dict[str, Any]]:
+def _validated_inputs(root: Path, subject: str, case_id: str) -> tuple[dict[str, Path], dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]:
     paths = _paths(root, subject, case_id)
     sparse_path, metric_path = paths["sparse"], paths["metric"] / "manifest.json"
     sparse = json.loads(sparse_path.read_text(encoding="utf-8"))
@@ -151,7 +166,18 @@ def _validated_inputs(root: Path, subject: str, case_id: str) -> tuple[dict[str,
     provenance = metric.get("endpoint_provenance")
     if not isinstance(provenance, Mapping) or provenance.get("proposed_manifest") != endpoint["proposed_manifest"] or provenance.get("fit_first_manifest") != endpoint["fit_first_manifest"]:
         raise ValueError("Final5 v2 metric endpoint provenance mismatch")
-    return paths, sparse, metric, volumes
+    direct_path, fit_path = paths["direct_bundle"] / "manifest.json", paths["fit_bundle"] / "manifest.json"
+    direct, fit = json.loads(direct_path.read_text(encoding="utf-8")), json.loads(fit_path.read_text(encoding="utf-8"))
+    expected_direct_schema = "direct_native_prediction_bundle/v1" if case_id == "L100" else "direct_sparse_native_prediction_bundle/v1"
+    if direct.get("schema") != expected_direct_schema or direct.get("endpoint") != "central":
+        raise ValueError("Proposed final-pose native bundle schema/endpoint mismatch")
+    if case_id != "L100" and (direct.get("subject"), direct.get("case_id")) != (subject, case_id):
+        raise ValueError("Proposed sparse final-pose native bundle identity mismatch")
+    if fit.get("schema") != "fit_first_native_prediction_bundle/v6" or fit.get("endpoint") != "central":
+        raise ValueError("Fit-first final-pose native bundle schema/endpoint mismatch")
+    if fit.get("endpoint_source_manifest") != _record(paths["fit_first"] / "manifest.json"):
+        raise ValueError("Fit-first final-pose native bundle endpoint provenance mismatch")
+    return paths, sparse, metric, volumes, direct, fit
 
 
 def publication_readiness(*, final5_root: str | Path, subject: str, case_id: str, output: str | Path) -> dict[str, Any]:
@@ -160,7 +186,7 @@ def publication_readiness(*, final5_root: str | Path, subject: str, case_id: str
     if output.exists():
         return {"status": "ALREADY_RENDERED", "output": str(output)}
     try:
-        paths, sparse, metric, _volumes = _validated_inputs(Path(final5_root), subject, case_id)
+        paths, sparse, metric, _volumes, _direct, _fit = _validated_inputs(Path(final5_root), subject, case_id)
         caches = {stack: _load_all_verified_native_cache_groups(paths["native"], paths["sparse"], stack) for stack in STACKS}
         roles = publication_group_roles(sparse, {stack: [int(group) for group in caches[stack]["group_idx"]] for stack in STACKS})
     except FileNotFoundError as exc:
@@ -168,6 +194,25 @@ def publication_readiness(*, final5_root: str | Path, subject: str, case_id: str
     except (ValueError, TypeError, json.JSONDecodeError) as exc:
         return {"status": "BLOCKED_INVALID", "reason": str(exc)}
     return {"status": "READY", "subject": subject, "case_id": case_id, "metric_schema": metric["schema"], "groups": {f"{stack}/{group}": role for (stack, group), role in roles.items()}}
+
+
+def _bundle_plane(manifest: Mapping[str, Any], root: Path, *, parameter: str, stack: str, group: int,
+                  method: str) -> tuple[np.ndarray, np.ndarray]:
+    """Load one observed final-pose bundle plane and its native validity mask."""
+    if method == "proposed":
+        record = next((item for item in manifest.get("planes", []) if item.get("stack") == stack and item.get("original_group_idx") == group), None)
+        if not isinstance(record, Mapping):
+            raise ValueError(f"observed {stack}/group{group:03d} is absent from Proposed final-pose bundle")
+        with np.load(root / str(record["path"]), allow_pickle=False) as data:
+            values = np.asarray(data[f"{parameter}_ms"], float)
+        return values, np.isfinite(values)
+    path = root / "planes" / parameter / stack / f"group{group:03d}.npz"
+    if not path.is_file():
+        raise ValueError(f"observed {parameter}/{stack}/group{group:03d} is absent from Fit-first final-pose bundle")
+    with np.load(path, allow_pickle=False) as data:
+        values = np.asarray(data["prediction_ms"], float)
+        valid = np.asarray(data["volume_geometry_valid"], bool) & np.asarray(data["query_effective_mask"], bool) & np.isfinite(values)
+    return values, valid
 
 
 def render_final5_publication_visualization(*, final5_root: str | Path, subject: str, case_id: str, output: str | Path, parameter: str | None = None, stack: str | None = None, group: int | None = None, dry_run: bool = False) -> Path | dict[str, Any]:
@@ -179,7 +224,7 @@ def render_final5_publication_visualization(*, final5_root: str | Path, subject:
         raise ValueError(f"publication visualization is not ready: {readiness}")
     require_new_publication_output(output)
     import nibabel as nib
-    paths, sparse, metric, volumes = _validated_inputs(Path(final5_root), subject, case_id)
+    paths, sparse, metric, volumes, direct_bundle, fit_bundle = _validated_inputs(Path(final5_root), subject, case_id)
     images = {name: {method: nib.load(str(path)) for method, path in entries.items()} for name, entries in volumes.items()}
     caches = {item: _load_all_verified_native_cache_groups(paths["native"], paths["sparse"], item) for item in STACKS}
     roles = publication_group_roles(sparse, {item: [int(value) for value in caches[item]["group_idx"]] for item in STACKS})
@@ -203,8 +248,15 @@ def render_final5_publication_visualization(*, final5_root: str | Path, subject:
                 affine = native_ras_affine(cache["affine_lps_rc"][index]); role = roles[(stack_name, original_group)]
                 for key in selected_parameters:
                     display = PARAMETERS[key]; reference = np.asarray(cache[f"{key}_ms"][index], float); foreground = np.asarray(cache["source_support"][index], bool)
-                    proposed, pvalid = reproject_volume_to_native_plane(images[key]["proposed"].get_fdata(), images[key]["proposed"].affine, affine, reference.shape)
-                    fit, fvalid = reproject_volume_to_native_plane(images[key]["fit_first"].get_fdata(), images[key]["fit_first"].affine, affine, reference.shape)
+                    geometry = sampling_geometry_for_role(role)
+                    if role == "observed":
+                        proposed, pvalid = _bundle_plane(direct_bundle, paths["direct_bundle"], parameter=key, stack=stack_name, group=original_group, method="proposed")
+                        fit, fvalid = _bundle_plane(fit_bundle, paths["fit_bundle"], parameter=key, stack=stack_name, group=original_group, method="fit_first")
+                    else:
+                        proposed, pvalid = reproject_volume_to_native_plane(images[key]["proposed"].get_fdata(), images[key]["proposed"].affine, affine, reference.shape)
+                        fit, fvalid = reproject_volume_to_native_plane(images[key]["fit_first"].get_fdata(), images[key]["fit_first"].affine, affine, reference.shape)
+                    if proposed.shape != reference.shape or fit.shape != reference.shape:
+                        raise ValueError("native final-pose bundle plane shape mismatch")
                     support = display_support(foreground, reference, proposed, fit, pvalid, fvalid); bounds = crop_bounds(support)
                     group_root = staging / subject / case_id / display / stack_name / role / f"group{original_group:03d}"
                     rendered = render_single_element_plane(group_root, reference, proposed, fit, support, parameter=display, bounds=bounds)
@@ -215,7 +267,7 @@ def render_final5_publication_visualization(*, final5_root: str | Path, subject:
                             if not np.array_equal(np.asarray(stored["native_affine_ras"], float), affine):
                                 raise ValueError("formal metric native affine mismatch")
                         formal_provenance["native_mask"] = _record(formal_mask)
-                    metadata = {"subject": subject, "case_id": case_id, "profile_id": sparse.get("profile_id"), "parameter": display, "stack": stack_name, "original_group_idx": original_group, "sampling_role": role, "native_affine_ras": affine.tolist(), "crop_bounds": bounds, "display_support_definition": "source_support AND finite(reference, proposed, fit_first) AND proposed_reprojection_valid AND fit_first_volume_geometry_valid; no connected-component filtering; not formal metric ROI", "formal_metric_support_provenance": formal_provenance, "proposed_endpoint_manifest": metric["endpoint_provenance"]["proposed_manifest"], "fit_first_endpoint_manifest": metric["endpoint_provenance"]["fit_first_manifest"], "sparse_manifest": _record(paths["sparse"]), "native_reference_provenance": cache["provenance"], "display_lut": bars.metadata["mapping_colormaps"][display], "display_range_ms": list(DISPLAY_RANGES_MS[display]), "error_range_ms": list(DISPLAY_RANGES_MS[display]), "error_display": "absolute_error_ms uses the same parameter LUT/range; no residual colorbar", "interpolation": {"maps": "linear order=1", "binary_masks": "nearest-neighbour order=0"}, "clean_single_element_files": {name: path.name for name, path in rendered.items()}, "git_sha": _git_sha()}
+                    metadata = {"subject": subject, "case_id": case_id, "profile_id": sparse.get("profile_id"), "parameter": display, "stack": stack_name, "original_group_idx": original_group, "sampling_role": role, "sampling_geometry": geometry, "native_affine_ras": affine.tolist(), "crop_bounds": bounds, "display_support_definition": "source_support AND finite(reference, proposed, fit_first) AND proposed_valid AND fit_first_valid; no connected-component filtering; not formal metric ROI", "formal_metric_support_provenance": formal_provenance, "proposed_endpoint_manifest": metric["endpoint_provenance"]["proposed_manifest"], "fit_first_endpoint_manifest": metric["endpoint_provenance"]["fit_first_manifest"], "proposed_final_pose_bundle": _record(paths["direct_bundle"] / "manifest.json") if role == "observed" else None, "fit_first_final_pose_bundle": _record(paths["fit_bundle"] / "manifest.json") if role == "observed" else None, "sparse_manifest": _record(paths["sparse"]), "native_reference_provenance": cache["provenance"], "display_lut": bars.metadata["mapping_colormaps"][display], "display_range_ms": list(DISPLAY_RANGES_MS[display]), "error_range_ms": list(DISPLAY_RANGES_MS[display]), "error_display": "absolute_error_ms uses the same parameter LUT/range; no residual colorbar", "interpolation": {"maps": "final-pose bundle direct query for observed; endpoint linear order=1 reprojection for held-out", "binary_masks": "nearest-neighbour order=0"}, "clean_single_element_files": {name: path.name for name, path in rendered.items()}, "git_sha": _git_sha()}
                     write_immutable_json(group_root / "metadata.json", metadata); records.append(metadata)
         write_immutable_json(staging / "publication_visualization_manifest.json", {"schema": "final5_publication_single_element_visualization/v1", "subject": subject, "case_id": case_id, "publication_consumer_only": True, "formal_metric_authority": str(paths["metric"].resolve()), "formal_metric_schema": METRIC_SCHEMA, "no_training": True, "no_reconstruction": True, "no_metric_recomputation": True, "records": records, "assets": {name: _published_record(path, output / "assets" / path.name) for name, path in {item.name: item for item in assets.glob("*.png")}.items()}})
         staging.rename(output)
