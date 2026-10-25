@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from types import SimpleNamespace
+import sys
 
 import pytest
 
@@ -21,6 +22,48 @@ def test_print_status_prioritizes_failed_over_ready(
 ) -> None:
     runner._print_status({"cases": {"CYJ/L100": {"stages": stages}}})
     assert f" {expected}\n" in capsys.readouterr().out
+
+
+def test_execute_records_metric_exception_as_failed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    record = runner.CaseRecord("CYJ", "L100", "L100", None, 1, tmp_path / "sparse.json", "a" * 64, "b" * 40, tmp_path)
+    stages = runner._case_stages(record)
+    monkeypatch.setattr(runner, "load_final5_registry", lambda _registry: [record])
+    monkeypatch.setattr(runner, "build_batch_plan", lambda *_args, **_kwargs: {"cases": {"CYJ/L100": {"stages": {stage: {"state": "SKIP_VALID", "reason": "valid"} for stage in stages[:-1]} | {"final_native_grid_metrics": {"state": "READY", "reason": "absent"}}}}})
+    monkeypatch.setattr(runner, "case_commands", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(runner, "_run_direct_stage", lambda *_args, **_kwargs: (_ for _ in ()).throw(ValueError("metric geometry failed")))
+    result = runner.execute_batch(tmp_path / "registry.json", tmp_path / "final", device="0", python="python", nesvor="nesvor", subject="CYJ", case="L100")
+    assert result["cases"]["CYJ/L100"]["stages"]["final_native_grid_metrics"]["state"] == "FAILED"
+    assert "ValueError: metric geometry failed" in (tmp_path / "final" / "00_inventory" / "final5_batch_v1" / "logs" / "CYJ" / "L100" / "final_native_grid_metrics.log").read_text()
+
+
+def test_cli_exits_nonzero_for_requested_post_validation_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    failed = {"cases": {"CYJ/L100": {"stages": {"final_native_grid_metrics": {"state": "FAILED", "reason": "post-stage validation failed"}}}}}
+    monkeypatch.setattr(runner, "execute_batch", lambda *_args, **_kwargs: failed)
+    monkeypatch.setattr(sys, "argv", ["final5_batch_runner.py", "execute", "--registry", "registry.json", "--final-root", "final"])
+    with pytest.raises(SystemExit, match="1"):
+        runner.main()
+
+
+def test_metric_only_batch_runs_only_requested_verified_endpoints(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    current = runner.CaseRecord("CYJ", "L100", "L100", None, 1, tmp_path / "sparse.json", "a" * 64, "b" * 40, tmp_path)
+    other = runner.CaseRecord("HJL", "L100", "L100", None, 1, tmp_path / "other.json", "a" * 64, "b" * 40, tmp_path)
+    stages = runner._case_stages(current)
+    plan = {
+        "cases": {
+            "CYJ/L100": {"stages": {stage: {"state": "SKIP_VALID", "reason": "valid"} for stage in stages[:-1]} | {"final_native_grid_metrics": {"state": "READY", "reason": "absent"}}},
+            "HJL/L100": {"stages": {"final_native_grid_metrics": {"state": "FAILED", "reason": "unrelated"}}},
+        },
+    }
+    monkeypatch.setattr(runner, "load_final5_registry", lambda _registry: [current, other])
+    monkeypatch.setattr(runner, "build_batch_plan", lambda *_args, **_kwargs: plan)
+    calls: list[str] = []
+    monkeypatch.setattr(runner, "_run_direct_stage", lambda stage, *_args, **_kwargs: calls.append(stage))
+    monkeypatch.setattr(runner, "_validate_stage_output", lambda stage, *_args: runner.ValidationResult(True, "SKIP_VALID", "published"))
+    result, selected = runner.execute_metric_batch(tmp_path / "registry.json", tmp_path / "final", device="0", subject="CYJ", case="L100")
+    assert calls == ["final_native_grid_metrics"]
+    assert [f"{item.subject}/{item.case_id}" for item in selected] == ["CYJ/L100"]
+    assert runner.requested_execution_succeeded(result, ["CYJ/L100"], stages=("final_native_grid_metrics",))
+    assert '"mode": "metrics_only"' in (tmp_path / "final" / "00_inventory" / "final5_batch_v1" / "events.jsonl").read_text()
 
 
 def _registry(tmp_path: Path, *, drop: tuple[str, str] | None = None) -> Path:

@@ -12,6 +12,7 @@ import json
 import os
 import subprocess
 import sys
+import traceback
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -654,6 +655,27 @@ def _run_direct_stage(stage: str, record: CaseRecord, root: Path, *, device: str
         build_final_native_grid_metrics(proposed_endpoint_root=paths["proposed_endpoint"], fit_first_endpoint_root=paths["fit_endpoint"], r0_native_maps_root=native, sparse_manifest=record.sparse_manifest, output=paths["final_native_grid_metrics"])
 
 
+def _selected_records(records: list[CaseRecord], subject: str | None, case: str | None) -> list[CaseRecord]:
+    selected = [record for record in records if (subject is None or record.subject == subject) and (case is None or record.case_id == case)]
+    if not selected:
+        raise ValueError("requested subject/case selection matched no Final5 registry records")
+    return selected
+
+
+def requested_execution_succeeded(plan: dict[str, Any], case_keys: list[str], *, stages: tuple[str, ...]) -> bool:
+    """Decide CLI status from requested targets, never unrelated registry rows."""
+    if not case_keys:
+        return False
+    for key in case_keys:
+        try:
+            case_stages = plan["cases"][key]["stages"]
+        except KeyError:
+            return False
+        if any(case_stages.get(stage, {}).get("state") != "SKIP_VALID" for stage in stages):
+            return False
+    return True
+
+
 def execute_batch(registry: str | Path, final_root: str | Path, *, device: str, python: str, nesvor: str, subject: str | None = None, case: str | None = None) -> dict[str, Any]:
     """Run serially after one strict preflight; never delete partial roots."""
     all_records = load_final5_registry(registry)
@@ -668,11 +690,7 @@ def execute_batch(registry: str | Path, final_root: str | Path, *, device: str, 
     if invalid:
         _write_state(root, result, name="status.json")
         raise RuntimeError(f"execute preflight found BLOCKED_EXISTING_INVALID: {', '.join(invalid)}")
-    records = all_records
-    if subject is not None:
-        records = [item for item in records if item.subject == subject]
-    if case is not None:
-        records = [item for item in records if item.case_id == case]
+    records = _selected_records(all_records, subject, case)
     records_by_key = {(item.subject, item.case_id): item for item in all_records}
     events = _state_root(root) / "events.jsonl"; events.parent.mkdir(parents=True, exist_ok=True)
     try:
@@ -694,8 +712,8 @@ def execute_batch(registry: str | Path, final_root: str | Path, *, device: str, 
                     try:
                         _run_direct_stage(stage, record, root, device=device, nesvor=nesvor)
                         code = 0
-                    except Exception as exc:
-                        log.parent.mkdir(parents=True, exist_ok=True); log.write_text(f"{type(exc).__name__}: {exc}\n", encoding="utf-8")
+                    except Exception:
+                        log.parent.mkdir(parents=True, exist_ok=True); log.write_text(traceback.format_exc(), encoding="utf-8")
                         code = 1
                 else:
                     raise RuntimeError(f"unknown final5 stage: {stage}")
@@ -717,6 +735,48 @@ def execute_batch(registry: str | Path, final_root: str | Path, *, device: str, 
     return result
 
 
+def execute_metric_batch(registry: str | Path, final_root: str | Path, *, device: str, subject: str | None = None, case: str | None = None) -> tuple[dict[str, Any], list[CaseRecord]]:
+    """Run only missing formal native-grid metrics after one global preflight."""
+    all_records = load_final5_registry(registry)
+    root = Path(final_root)
+    result = deepcopy(build_batch_plan(registry, root, device=device, records=all_records))
+    records = _selected_records(all_records, subject, case)
+    records_by_key = {(item.subject, item.case_id): item for item in all_records}
+    events = _state_root(root) / "events.jsonl"; events.parent.mkdir(parents=True, exist_ok=True)
+    stage = "final_native_grid_metrics"
+    for record in records:
+        stage_plan = result["cases"][f"{record.subject}/{record.case_id}"]["stages"][stage]
+        log = _state_root(root) / "logs" / record.subject / record.case_id / "metric_only_final_native_grid_metrics.log"
+        if stage_plan["state"] == "SKIP_VALID":
+            log.parent.mkdir(parents=True, exist_ok=True); log.write_text(f"SKIP_VALID: {stage_plan.get('reason', '')}\n", encoding="utf-8")
+            code = 0
+        elif stage_plan["state"] == "BLOCKED_EXISTING_INVALID":
+            log.parent.mkdir(parents=True, exist_ok=True); log.write_text(f"BLOCKED_EXISTING_INVALID: {stage_plan.get('reason', '')}\n", encoding="utf-8")
+            code = 1
+        else:
+            dependency_reason = _runtime_dependency_reason(stage, record, result, records_by_key)
+            if dependency_reason is not None:
+                stage_plan.update({"state": "BLOCKED_DEPENDENCY", "reason": dependency_reason})
+                log.parent.mkdir(parents=True, exist_ok=True); log.write_text(f"BLOCKED_DEPENDENCY: {dependency_reason}\n", encoding="utf-8")
+                code = 1
+            else:
+                try:
+                    _run_direct_stage(stage, record, root, device=device, nesvor="nesvor")
+                    post = _validate_stage_output(stage, record, root, records_by_key)
+                    if post.valid:
+                        stage_plan.update(_stage(post)); log.parent.mkdir(parents=True, exist_ok=True); log.write_text(f"SKIP_VALID: {post.reason}\n", encoding="utf-8"); code = 0
+                    else:
+                        stage_plan.update({"state": "FAILED", "reason": f"post-stage validation failed: {post.reason}"}); log.parent.mkdir(parents=True, exist_ok=True); log.write_text(f"FAILED: post-stage validation failed: {post.reason}\n", encoding="utf-8"); code = 1
+                except Exception:
+                    log.parent.mkdir(parents=True, exist_ok=True); log.write_text(traceback.format_exc(), encoding="utf-8")
+                    stage_plan.update({"state": "FAILED", "reason": "metric stage raised; see stage log"}); code = 1
+        with events.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps({"stage": stage, "mode": "metrics_only", "subject": record.subject, "case_id": record.case_id, "return_code": code, "validation_state": stage_plan["state"], "log_path": str(log), "finished_utc": _utc()}) + "\n")
+    _write_state(root, result, name="status.json")
+    _write_state(root, result, name="summary.json")
+    return result, records
+
+
 def _print_status(plan: dict[str, Any]) -> None:
     print("SUBJECT CASE                         PROP FIT EP-P EP-F METRIC STATUS")
     counts: dict[str, int] = {}
@@ -732,17 +792,25 @@ def _print_status(plan: dict[str, Any]) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("plan", "execute", "status", "validate"))
+    parser.add_argument("command", choices=("plan", "execute", "metrics", "status", "validate"))
     parser.add_argument("--registry", required=True); parser.add_argument("--final-root", required=True)
     parser.add_argument("--device", default="0"); parser.add_argument("--python", default=sys.executable); parser.add_argument("--nesvor", default="nesvor")
     parser.add_argument("--subject"); parser.add_argument("--case")
     args = parser.parse_args()
     if args.command == "execute":
         result = execute_batch(args.registry, args.final_root, device=args.device, python=args.python, nesvor=args.nesvor, subject=args.subject, case=args.case)
+        requested_keys = [key for key in result["cases"] if (args.subject is None or key.startswith(f"{args.subject}/")) and (args.case is None or key.endswith(f"/{args.case}"))]
+    elif args.command == "metrics":
+        result, records = execute_metric_batch(args.registry, args.final_root, device=args.device, subject=args.subject, case=args.case)
+        requested_keys = [f"{record.subject}/{record.case_id}" for record in records]
     else:
         result = build_batch_plan(args.registry, args.final_root, device=args.device)
         _write_state(Path(args.final_root), result, name="plan.json" if args.command == "plan" else "status.json")
     _print_status(result)
+    if args.command == "execute" and not requested_execution_succeeded(result, requested_keys, stages=("proposed_reconstruction", "fit_first_reconstruction", "proposed_endpoint", "fit_first_endpoint", "final_native_grid_metrics")):
+        raise SystemExit(1)
+    if args.command == "metrics" and not requested_execution_succeeded(result, requested_keys, stages=("final_native_grid_metrics",)):
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

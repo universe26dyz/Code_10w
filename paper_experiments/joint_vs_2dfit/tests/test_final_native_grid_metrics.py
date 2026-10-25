@@ -1,8 +1,55 @@
 """Contracts for the Final5 original-native-grid formal evaluator."""
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import numpy as np
 import pytest
+
+
+@pytest.fixture
+def nifti() -> object:
+    return pytest.importorskip("nibabel")
+
+
+@pytest.mark.parametrize("parameter", ("t1", "t2"))
+def test_raw_sparse_checkpoint_mask_uses_its_own_valid_native_geometry(nifti: object, parameter: str) -> None:
+    from paper_experiments.joint_vs_2dfit.phase2_clean.final_native_grid_metrics import (
+        _validate_sparse_checkpoint_mask,
+        reproject_binary_mask_to_native_plane,
+    )
+
+    raw = nifti.Nifti1Image(np.array([[[1]], [[0]], [[1]]], dtype=np.uint8), np.diag((2.0, 1.0, 1.0, 1.0)))
+    endpoint = nifti.Nifti1Image(np.ones((5, 1, 1)), np.eye(4))
+    assert raw.shape != endpoint.shape and not np.allclose(raw.affine, endpoint.affine)
+    _validate_sparse_checkpoint_mask(raw, parameter)
+    mapped = reproject_binary_mask_to_native_plane(raw.get_fdata(), raw.affine, np.diag((2.0, 1.0, 1.0, 1.0)), (3, 1))
+    assert np.array_equal(mapped[:, 0], np.array([True, False, True]))
+
+
+def test_effective_query_mask_geometry_must_match_fit_first_endpoint(nifti: object) -> None:
+    from paper_experiments.joint_vs_2dfit.phase2_clean.final_native_grid_metrics import _validate_effective_query_mask
+
+    fit = nifti.Nifti1Image(np.ones((2, 2, 2)), np.eye(4))
+    query = nifti.Nifti1Image(np.ones((3, 2, 2)), np.eye(4))
+    with pytest.raises(ValueError, match="effective query mask geometry"):
+        _validate_effective_query_mask(query, fit, "t1")
+
+
+@pytest.mark.parametrize(
+    "values, affine, message",
+    [
+        (np.array([[[2.0]]]), np.eye(4), "not binary"),
+        (np.array([[[np.nan]]]), np.eye(4), "not finite"),
+        (np.ones((1, 1, 1)), np.diag((1.0, 1.0, 0.0, 1.0)), "not invertible"),
+    ],
+)
+def test_sparse_checkpoint_mask_invalid_data_or_affine_fails_closed(nifti: object, values: np.ndarray, affine: np.ndarray, message: str) -> None:
+    from paper_experiments.joint_vs_2dfit.phase2_clean.final_native_grid_metrics import _validate_sparse_checkpoint_mask
+
+    image = nifti.Nifti1Image(values, affine) if message != "not invertible" else SimpleNamespace(shape=values.shape, affine=affine, get_fdata=lambda: values)
+    with pytest.raises(ValueError, match=message):
+        _validate_sparse_checkpoint_mask(image, "t2")
 
 
 def test_formal_regions_keep_disconnected_l100_sampling_support() -> None:

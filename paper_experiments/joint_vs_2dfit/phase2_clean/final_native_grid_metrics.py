@@ -57,6 +57,49 @@ def l100_region_mask(fit_first_effective_query_mask: np.ndarray) -> np.ndarray:
     return np.asarray(fit_first_effective_query_mask, bool)
 
 
+def _binary_mask_data(mask: Any, parameter: str, name: str) -> np.ndarray:
+    values = np.asarray(mask.get_fdata(), float)
+    if values.ndim != 3:
+        raise ValueError(f"{parameter}: {name} mask must be three-dimensional")
+    if not np.all(np.isfinite(values)):
+        raise ValueError(f"{parameter}: {name} mask is not finite")
+    if not np.all(np.isin(values, (0.0, 1.0))):
+        raise ValueError(f"{parameter}: {name} mask is not binary")
+    return values
+
+
+def _validate_mapping_affine(affine: np.ndarray, parameter: str, name: str) -> np.ndarray:
+    affine = np.asarray(affine, float)
+    if affine.shape != (4, 4) or not np.all(np.isfinite(affine)):
+        raise ValueError(f"{parameter}: {name} mask affine is not finite 4x4 geometry")
+    if not np.allclose(affine[3], (0.0, 0.0, 0.0, 1.0), atol=1e-6, rtol=0):
+        raise ValueError(f"{parameter}: {name} mask affine is not a homogeneous world mapping")
+    try:
+        np.linalg.inv(affine)
+    except np.linalg.LinAlgError as exc:
+        raise ValueError(f"{parameter}: {name} mask affine is not invertible") from exc
+    return affine
+
+
+def _validate_effective_query_mask(mask: Any, fit_first: Any, parameter: str) -> np.ndarray:
+    """Keep the sampled Fit-first query domain on its exact endpoint grid."""
+    values = _binary_mask_data(mask, parameter, "effective query")
+    if mask.shape != fit_first.shape or not np.allclose(mask.affine, fit_first.affine, atol=1e-6, rtol=0):
+        raise ValueError(f"{parameter}: effective query mask geometry differs from Fit-first endpoint volume")
+    return values
+
+
+def _validate_sparse_checkpoint_mask(mask: Any, parameter: str) -> np.ndarray:
+    """Validate the raw checkpoint mask before world-coordinate reprojection."""
+    values = _binary_mask_data(mask, parameter, "sparse checkpoint")
+    _validate_mapping_affine(mask.affine, parameter, "sparse checkpoint")
+    return values
+
+
+def _mask_geometry(mask: Any) -> dict[str, Any]:
+    return {"shape": [int(value) for value in mask.shape], "affine": np.asarray(mask.affine, float).tolist()}
+
+
 def mask_overlap_counts(first: np.ndarray, second: np.ndarray) -> dict[str, int | float]:
     """Deterministic binary-mask comparison for read-only historical audits."""
     first, second = np.asarray(first, bool), np.asarray(second, bool)
@@ -163,11 +206,16 @@ def build_final_native_grid_metrics(*, proposed_endpoint_root: str | Path, fit_f
     }
     for parameter in PARAMETERS:
         fit = images[parameter]["fit_first"]
-        for name, mask in (("effective query", effective[parameter]), ("sparse checkpoint", sparse_masks[parameter])):
-            if mask.shape != fit.shape or not np.allclose(mask.affine, fit.affine, atol=1e-6, rtol=0):
-                raise ValueError(f"{parameter}: {name} mask geometry differs from Fit-first endpoint volume")
-            if not np.all(np.isin(mask.get_fdata(), (0.0, 1.0))):
-                raise ValueError(f"{parameter}: {name} mask is not binary")
+        _validate_effective_query_mask(effective[parameter], fit, parameter)
+        _validate_sparse_checkpoint_mask(sparse_masks[parameter], parameter)
+    endpoint_provenance["mask_geometry"] = {
+        parameter: {
+            "fit_first_endpoint_volume": _mask_geometry(images[parameter]["fit_first"]),
+            "effective_query_mask": _mask_geometry(effective[parameter]),
+            "sparse_checkpoint_mask": _mask_geometry(sparse_masks[parameter]),
+        }
+        for parameter in PARAMETERS
+    }
     all_caches = {stack: _all_native_groups(native_root, sparse_manifest, stack) for stack in STACKS}
     all_groups = {stack: np.asarray(all_caches[stack]["group_idx"], int) for stack in STACKS}
     selected = evaluation_group_ids(condition, all_groups, _manifest_heldout(sparse))
