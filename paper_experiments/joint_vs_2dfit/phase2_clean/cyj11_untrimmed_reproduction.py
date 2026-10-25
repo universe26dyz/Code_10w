@@ -174,6 +174,16 @@ def _command(*items: str | Path) -> list[str]:
     return [str(item) for item in items]
 
 
+def _fit_first_sampling_device(device: str) -> str:
+    """Adapt the planner's Q002-style CUDA spelling to historical sampling CLI."""
+    value = str(device).strip()
+    if value == "-1" or value.isdecimal():
+        return value
+    if value.startswith("cuda:") and value.removeprefix("cuda:").isdecimal():
+        return value.removeprefix("cuda:")
+    raise ValueError("device must be cuda:N, a CUDA index N, or -1")
+
+
 def _sparse_command(inputs: ReproductionInputs, case: CaseSpec, sparse_root: Path) -> list[str]:
     values: list[str | Path] = [
         inputs.python_executable, "-m", "paper_experiments.joint_vs_2dfit.phase2_clean.sparse",
@@ -240,7 +250,7 @@ def build_reproduction_plan(inputs: ReproductionInputs, *, git_head: Callable[[P
             "--subject", inputs.subject, "--condition", inputs.case_id, "--l100-fit-first-root", inputs.l100_fit_first_root,
             "--sparse-fit-first-root", fit_root, "--sparse-manifest", sparse_manifest,
             "--r0-native-maps-root", inputs.native_cache_root, "--nesvor-executable", nesvor,
-            "--endpoint", "central", "--output", fit_endpoint, "--device", inputs.device,
+            "--endpoint", "central", "--output", fit_endpoint, "--device", _fit_first_sampling_device(inputs.device),
         )},
     ]
     if inputs.include_metric:

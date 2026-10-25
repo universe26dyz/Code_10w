@@ -87,6 +87,7 @@ def test_plan_preserves_historical_q002_and_fit_first_sampling_contract(tmp_path
     q002 = next(step["argv"] for step in plan["steps"] if step["id"] == "proposed_sparse")
     assert "Q002S640_B6_roi_same_anchor_mse" in q002
     assert q002[q002.index("--anchor-batch-size") + 1] == "640"
+    assert q002[q002.index("--device") + 1] == "cuda:0"
     assert "--endpoint-policy" not in q002
     fit_first = next(step for step in plan["steps"] if step["id"] == "fit_first_sparse_prepare")
     assert "baseline" in " ".join(fit_first["argv"])
@@ -96,6 +97,8 @@ def test_plan_preserves_historical_q002_and_fit_first_sampling_contract(tmp_path
     publications = [step for step in plan["steps"] if step["id"].endswith("_central")]
     assert {step["id"] for step in publications} == {"proposed_central", "fit_first_central", "metric_central"}
     assert all("central" in " ".join(step["argv"]) for step in publications)
+    fit_endpoint = next(step["argv"] for step in plan["steps"] if step["id"] == "fit_first_central")
+    assert fit_endpoint[fit_endpoint.index("--device") + 1] == "0"
 
 
 def test_plan_requires_only_the_l100_fit_first_dependency(tmp_path: Path) -> None:
