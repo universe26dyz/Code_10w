@@ -7,7 +7,7 @@ from pathlib import Path
 
 from .cyj11_adapter import cyj11_native_stack_root, derive_cyj11_historical_mapping, write_cyj11_mapping
 from .cyj11_aha16 import build_cyj11_aha16
-from .cyj11_legacy_roi import derive_cyj11_native_roi_bundle, roi_derivation_readiness
+from .cyj11_legacy_roi import derive_cyj11_native_roi_bundle, derive_cyj11_native_roi_config, roi_derivation_readiness
 from .cyj11_myocardial_roi_metrics import build_cyj11_myocardial_roi_metrics
 from .cyj11_runner import load_cyj11_endpoint_images
 
@@ -35,15 +35,21 @@ def _readiness(root: Path, subject: str, case: str, mapping: str | None, roi_bun
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--mode", choices=("readiness", "derive-roi", "derive-mapping", "write-mapping", "aha16", "myocardial"), required=True)
+    parser.add_argument("--mode", choices=("readiness", "derive-roi-config", "derive-roi", "derive-mapping", "write-mapping", "aha16", "myocardial"), required=True)
     parser.add_argument("--analysis-root")
     parser.add_argument("--subject")
     parser.add_argument("--case")
     parser.add_argument("--mapping")
     parser.add_argument("--roi-bundle")
+    parser.add_argument("--source-roi")
     parser.add_argument("--config")
     parser.add_argument("--output")
     args = parser.parse_args()
+    if args.mode == "derive-roi-config":
+        if not all((args.analysis_root, args.subject, args.source_roi, args.output)):
+            raise ValueError("derive-roi-config requires --analysis-root, --subject, --source-roi, and --output")
+        print(derive_cyj11_native_roi_config(analysis_root=args.analysis_root, subject=args.subject,
+                                              source_roi=args.source_roi, output=args.output)); return
     if args.mode == "derive-roi":
         if not args.config: raise ValueError("--config is required for derive-roi")
         if args.output is None:

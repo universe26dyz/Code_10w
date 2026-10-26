@@ -371,3 +371,51 @@ def test_cyj11_roi_derivation_copies_only_integer_native_lattice_pixels(tmp_path
         assert masks["myocardium_full"].shape == (3, 3, 4)
         assert not masks["landmark_labels"][1].any()
     assert json.loads((bundle / "manifest.json").read_text())["schema"] == "exact_native_myocardium_bundle/v2"
+
+
+def test_cyj11_config_derivation_writes_all_exact_native_plane_mappings(tmp_path, monkeypatch) -> None:
+    """The reusable config records every native group and its exact manual slice."""
+    from paper_experiments.joint_vs_2dfit.aha.cyj11_legacy_roi import (
+        ROI_FILENAMES, derive_cyj11_native_roi_config,
+    )
+    from paper_experiments.joint_vs_2dfit.phase2_clean.contracts import sha256
+
+    root, source = tmp_path / "analysis", tmp_path / "source"
+    source.mkdir()
+    arrays = {name: np.zeros((3, 4, 3), np.uint8) for name in ROI_FILENAMES}
+    composite_affine = np.eye(4); composite_affine[2, 2] = -1; composite_affine[2, 3] = 2
+    for name in ROI_FILENAMES:
+        (source / name).write_bytes(name.encode())
+    images = {
+        str(source / name): types.SimpleNamespace(
+            shape=array.shape,
+            affine=composite_affine if name == "sax_composite_reference.nii.gz" else np.eye(4),
+            dataobj=array,
+        )
+        for name, array in arrays.items()
+    }
+    monkeypatch.setitem(sys.modules, "nibabel", types.SimpleNamespace(load=lambda path: images[str(path)]))
+
+    prepared = root / "prepared/DYZ/sax/observations.npz"; prepared.parent.mkdir(parents=True)
+    np.savez_compressed(prepared, group_idx=np.repeat([0, 1, 2], 10), weight_idx=np.tile(np.arange(10), 3), images=np.zeros((30, 3, 4)))
+    native = root / "native_cache/DYZ/native_maps/sax"; native.mkdir(parents=True)
+    np.savez_compressed(native / "native_maps.npz", group_idx=np.array([0, 1, 2]),
+                        t1_ms=np.zeros((3, 3, 4)), t2_ms=np.zeros((3, 3, 4)), b1=np.zeros((3, 3, 4)))
+    affine_lps = np.repeat(np.diag([-1.0, -1.0, 1.0, 1.0])[None], 3, axis=0)
+    for index in range(3):
+        affine_lps[index, 2, 3] = 2 - index
+    np.savez_compressed(native / "geometry.npz", affine_lps_rc=affine_lps,
+                        pixel_spacing_rc_mm=np.ones((3, 2)), slice_thickness_mm=np.ones(3))
+    (native / "manifest.json").write_text(json.dumps({
+        "source_observations": {"path": str(prepared), "sha256": sha256(prepared)},
+        "native_maps_sha256": sha256(native / "native_maps.npz"),
+        "geometry_sha256": sha256(native / "geometry.npz"),
+    }))
+
+    output = root / "roi/config/DYZ/config.json"
+    config = derive_cyj11_native_roi_config(analysis_root=root, subject="DYZ", source_roi=source, output=output)
+    payload = json.loads(config.read_text())
+    assert payload["schema"] == "cyj11_native_roi_derivation_config/v1"
+    assert payload["prepared_sax"]["sha256"] == sha256(prepared)
+    assert [plane["native_group_idx"] for plane in payload["planes"]] == [0, 1, 2]
+    assert [plane["roi_slice_index"] for plane in payload["planes"]] == [2, 1, 0]
