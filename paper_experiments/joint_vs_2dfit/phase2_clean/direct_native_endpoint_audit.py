@@ -246,7 +246,8 @@ def _validate_rebuilt_training_space(rebuilt: Any, saved: Any, torch_module: Any
     if missing:
         raise ValueError(f"checkpoint/rebuilt training_space lacks: {sorted(missing)}")
     for key in keys:
-        expected, actual = torch_module.as_tensor(saved[key]), torch_module.as_tensor(current[key])
+        expected = torch_module.as_tensor(saved[key]).detach().cpu()
+        actual = torch_module.as_tensor(current[key]).detach().cpu()
         equal = expected.shape == actual.shape and torch_module.allclose(expected, actual, rtol=0, atol=1e-6)
         if not equal:
             kind = "bounding-box" if key in {"physical_bbox_ras_mm", "bbox_train"} else "geometry"

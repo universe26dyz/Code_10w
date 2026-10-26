@@ -100,6 +100,35 @@ def test_checkpoint_training_space_validation_rejects_bbox_mismatch() -> None:
         audit._validate_rebuilt_training_space(Space(), saved, torch)
 
 
+def test_checkpoint_training_space_validation_compares_cpu_copies() -> None:
+    """Checkpoint tensors may be restored on CUDA while rebuilt state is CPU."""
+    class Tensor:
+        shape = (1,)
+
+        def __init__(self, device: str): self.device = device
+        def detach(self): return self
+        def cpu(self): return Tensor("cpu")
+
+    class Torch:
+        @staticmethod
+        def as_tensor(value): return value
+
+        @staticmethod
+        def allclose(expected, actual, **_kwargs):
+            assert expected.device == actual.device == "cpu"
+            return True
+
+    values = {key: Tensor("cuda") for key in (
+        "center_ras_mm", "spatial_scaling", "physical_bbox_ras_mm", "bbox_train",
+        "group_resolution_xyz_mm", "group_axisangle_init_physical", "group_axisangle_init_train",
+    )}
+
+    class Space:
+        def state_dict(self): return {key: Tensor("cpu") for key in values}
+
+    audit._validate_rebuilt_training_space(Space(), values, Torch)
+
+
 def test_prepared_input_identity_uses_training_manifest_hash_not_local_path(tmp_path) -> None:
     """Catches using a same-named but content-different local observation file."""
     observations = []
