@@ -18,11 +18,62 @@ _MASK_FILENAMES = {
 }
 
 
+SCMR_EXACT_LATTICE_ATOL = 2e-4
+
+
 def _corners(shape: tuple[int, int, int]) -> np.ndarray:
     return np.array(
         [[x, y, z, 1.0] for x in (0, shape[0] - 1) for y in (0, shape[1] - 1) for z in (0, shape[2] - 1)],
         dtype=float,
     ).T
+
+
+def exact_native_plane_crop(
+    *,
+    source_affine: np.ndarray,
+    target_affine: np.ndarray,
+    source_shape: tuple[int, int, int] | list[int],
+    target_shape: tuple[int, int],
+    atol: float = SCMR_EXACT_LATTICE_ATOL,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, dict[str, Any]]:
+    """Return a verified source-lattice crop for one native 2-D target plane.
+
+    This is the crop analogue of :func:`classify_affine_relation`: values are
+    copied only after the complete physical transform rounds to one signed
+    axis permutation plus an integer origin.  ``atol`` deliberately matches
+    the established SCMR affine-audit tolerance, which admits NIfTI/DICOM
+    serialization noise but not a real fractional-pixel transform.
+    """
+    source_shape = tuple(int(value) for value in source_shape)
+    target_shape = tuple(int(value) for value in target_shape)
+    if len(source_shape) != 3 or len(target_shape) != 2:
+        raise ValueError("source must be 3-D and target must be a 2-D native plane")
+    transform = np.linalg.solve(np.asarray(source_affine, float), np.asarray(target_affine, float))
+    rounded = np.rint(transform).astype(int)
+    if not np.allclose(transform, rounded, atol=atol, rtol=0.0):
+        raise ValueError("native plane is not an integer crop/orientation of the manual ROI")
+    linear = rounded[:3, :3]
+    if not (
+        np.all(np.isin(linear, (-1, 0, 1)))
+        and np.all(np.count_nonzero(linear, axis=0) == 1)
+        and np.all(np.count_nonzero(linear, axis=1) == 1)
+        and np.array_equal(rounded[3], (0, 0, 0, 1))
+    ):
+        raise ValueError("native plane is not a signed-permutation manual ROI lattice")
+    row, column = np.indices(target_shape, dtype=int)
+    target = np.vstack((row.ravel(), column.ravel(), np.zeros(row.size, dtype=int), np.ones(row.size, dtype=int)))
+    source = rounded @ target
+    x, y, z = (values.reshape(target_shape) for values in source[:3])
+    if not (
+        x.min() >= 0 and y.min() >= 0 and z.min() >= 0
+        and x.max() < source_shape[0] and y.max() < source_shape[1] and z.max() < source_shape[2]
+    ):
+        raise ValueError("native crop lies outside manual ROI bounds")
+    return x, y, z, {
+        "raw_transform": transform.tolist(),
+        "integer_transform": rounded.tolist(),
+        "atol": float(atol),
+    }
 
 
 def classify_affine_relation(

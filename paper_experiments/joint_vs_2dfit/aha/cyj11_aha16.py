@@ -14,7 +14,8 @@ from ..phase2_clean.contracts import sha256, write_immutable_json
 from .cyj11_adapter import cyj11_native_stack_root, require_cyj11_mapping
 from .cyj11_legacy_roi import load_cyj11_roi_plane
 from .cyj11_runner import load_cyj11_run_inputs, native_sax_plane
-from .legacy_aha16 import LEVELS, build_filled_masks, aha16_labels, render_single_bullseye, segment_statistics
+from .legacy_aha16 import (LEVELS, aha16_labels, build_filled_masks, render_scmr_figure3,
+                           render_single_bullseye, segment_statistics, validate_aha16_statistics)
 
 
 SUPPORT_EQUATION = "manual anatomical ROI AND finite(reference) AND proposed-valid AND fit-first-valid AND finite(proposed, fit-first)"
@@ -90,6 +91,7 @@ def build_cyj11_aha16(*, analysis_root: str | Path, subject: str, case: str,
     try:
         rows: list[dict[str, Any]] = []
         figures = {method: {parameter: {} for parameter in ("t1", "t2")} for method in ("proposed", "fit_first")}
+        reference_figures = {parameter: {} for parameter in ("t1", "t2")}
         reports: list[dict[str, Any]] = []
         for entry in entries:
             group = int(entry["native_group_idx"])
@@ -112,6 +114,7 @@ def build_cyj11_aha16(*, analysis_root: str | Path, subject: str, case: str,
                 for method in ("proposed", "fit_first"):
                     for segment, values in result[f"{method}_statistics"].items():
                         figures[method][parameter][segment] = values["prediction_mean"]
+                        reference_figures[parameter][segment] = values["reference_mean"]
                         rows.append({"subject": subject, "case": case, "method": method, "parameter": parameter,
                                      "level": entry["level"], "segment": segment, **values})
             reports.append(report)
@@ -121,6 +124,13 @@ def build_cyj11_aha16(*, analysis_root: str | Path, subject: str, case: str,
                                        figures[method][parameter], parameter=parameter,
                                        title=f"{subject} {case} {method.replace('_', '-')} {parameter.upper()} AHA16")
         _write_csv(rows, staging / "aha16_segment_statistics.csv")
+        validation = validate_aha16_statistics(rows)
+        write_immutable_json(staging / "aha16_validation.json", validation)
+        if validation["status"] == "PASS":
+            for method in ("proposed", "fit_first"):
+                render_scmr_figure3(staging / "figures" / subject / case / method / "Figure3_bullseye_T1_T2.png",
+                                    reference=reference_figures, prediction=figures[method], subject=subject,
+                                    case=case, method=method)
         root = Path(analysis_root)
         write_immutable_json(staging / "manifest.json", {
             "schema": "cyj11_aha16_downstream/v1", "subject": subject, "case": case,
@@ -130,7 +140,7 @@ def build_cyj11_aha16(*, analysis_root: str | Path, subject: str, case: str,
                            for name in ("native_maps.npz", "geometry.npz", "manifest.json")},
             "endpoint_files": {parameter: {method: _record(image.get_filename()) for method, image in images.items()}
                                for parameter, images in endpoint_images.items()},
-            "planes": reports, "support_equation": SUPPORT_EQUATION,
+            "planes": reports, "support_equation": SUPPORT_EQUATION, "aha16_validation": validation,
             "algorithm": "historical AHA16 basal6/mid6/apical4; no segment17; historical orientation and sample SD",
             "downstream_only": True, "no_reconstruction": True, "no_formal_metric": True, "immutable_output": True,
         })

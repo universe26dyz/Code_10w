@@ -8,6 +8,36 @@ import numpy as np
 import pytest
 
 
+def test_scmr_exact_crop_admits_cyj_affine_serialization_drift() -> None:
+    """CYJ's 1.76e-5 native-index drift is an exact SCMR integer crop."""
+    from evaluation_common.myocardium.legacy_masks import exact_native_plane_crop
+
+    transform = np.array([
+        [0.0, 0.99999994, 0.00000010, 62.9999974],
+        [1.0, -0.00000003, -0.00000030, 70.9999914],
+        [0.0, -0.00000002, 0.99999994, 13.0000007],
+        [0.0, 0.0, 0.0, 1.0],
+    ])
+    x, y, z, evidence = exact_native_plane_crop(
+        source_affine=np.eye(4), target_affine=transform,
+        source_shape=(256, 288, 14), target_shape=(145, 129),
+    )
+
+    assert (x[0, 0], y[0, 0], z[0, 0]) == (63, 71, 13)
+    assert (x[-1, -1], y[-1, -1], z[-1, -1]) == (191, 215, 13)
+    assert evidence["integer_transform"] == [[0, 1, 0, 63], [1, 0, 0, 71], [0, 0, 1, 13], [0, 0, 0, 1]]
+
+
+def test_scmr_exact_crop_rejects_genuine_fractional_native_origin() -> None:
+    from evaluation_common.myocardium.legacy_masks import exact_native_plane_crop
+
+    transform = np.array([[0.0, 1.0, 0.0, 63.01], [1.0, 0.0, 0.0, 71.0],
+                          [0.0, 0.0, 1.0, 13.0], [0.0, 0.0, 0.0, 1.0]])
+    with pytest.raises(ValueError, match="integer"):
+        exact_native_plane_crop(source_affine=np.eye(4), target_affine=transform,
+                                source_shape=(256, 288, 14), target_shape=(145, 129))
+
+
 def test_cyj11_mapping_rejects_non_discrete_transform(tmp_path) -> None:
     from paper_experiments.joint_vs_2dfit.aha.cyj11_adapter import require_cyj11_mapping
     from paper_experiments.joint_vs_2dfit.phase2_clean.contracts import sha256
@@ -80,6 +110,26 @@ def test_cyj11_aha_and_roi_use_one_common_support() -> None:
 
     assert np.array_equal(aha["proposed_support"], aha["fit_first_support"])
     assert aha["proposed_support"].sum() == roi["common_support_voxels"] == 79
+
+
+def test_historical_scmr_aha_validation_requires_all_supported_segments() -> None:
+    from paper_experiments.joint_vs_2dfit.aha.legacy_aha16 import validate_aha16_statistics
+
+    rows = [{"parameter": parameter, "segment": segment, "n": 10}
+            for parameter in ("t1", "t2") for segment in range(1, 17)]
+    assert validate_aha16_statistics(rows)["status"] == "PASS"
+    rows[0]["n"] = 9
+    assert validate_aha16_statistics(rows)["status"] == "FAIL"
+
+
+def test_historical_scmr_figure3_adapter_writes_two_by_two_bullseye(tmp_path) -> None:
+    from paper_experiments.joint_vs_2dfit.aha.legacy_aha16 import render_scmr_figure3
+
+    values = {parameter: {segment: float(segment) for segment in range(1, 17)}
+              for parameter in ("t1", "t2")}
+    output = render_scmr_figure3(tmp_path / "figure3.png", reference=values, prediction=values,
+                                 subject="CYJ", case="L100_fold0", method="proposed")
+    assert output.is_file() and output.with_suffix(".pdf").is_file()
 
 
 def test_cyj11_native_sax_requires_manifest_bound_to_prepared_input(tmp_path) -> None:
@@ -198,12 +248,17 @@ def test_cyj11_myocardial_bundle_writes_per_plane_and_pooled_statistics(tmp_path
         {"level": "mid", "native_group_idx": 2, "roi_slice_index": 1, "roi_transform": "identity"},
         {"level": "apical", "native_group_idx": 3, "roi_slice_index": 2, "roi_transform": "identity"},
     ]}
-    native = {"group_idx": np.array([1, 2, 3]), "t1_ms": np.full((3, 7, 7), 1000.0),
-              "t2_ms": np.full((3, 7, 7), 80.0), "pixel_spacing_rc_mm": np.ones((3, 2))}
+    native = {"group_idx": np.array([1, 2, 3, 4]), "t1_ms": np.full((4, 7, 7), 1000.0),
+              "t2_ms": np.full((4, 7, 7), 80.0), "pixel_spacing_rc_mm": np.ones((4, 2))}
+    (tmp_path / "manifest.json").write_text(json.dumps({"schema": "exact_native_myocardium_bundle/v2", "status": "PASS"}))
+    np.savez_compressed(
+        tmp_path / "sax_myocardium_masks.npz", group_idx=native["group_idx"],
+        myocardium_full=np.ones((4, 7, 7), np.uint8),
+        myocardium_core_legacy=np.ones((4, 7, 7), np.uint8),
+        myocardium_core_1px=np.ones((4, 7, 7), np.uint8),
+    )
     monkeypatch.setattr(metrics, "require_cyj11_mapping", lambda *args, **kwargs: mapping)
     monkeypatch.setattr(metrics, "load_cyj11_run_inputs", lambda *args, **kwargs: (native, {"t1": {}, "t2": {}}))
-    monkeypatch.setattr(metrics, "load_cyj11_roi_plane", lambda *args, **kwargs: {
-        "outer": np.ones((7, 7), bool), "inner": np.zeros((7, 7), bool), "points": np.zeros((7, 7), np.uint8)})
     monkeypatch.setattr(metrics, "native_sax_plane", lambda **kwargs: {
         "reference": native[f"{kwargs['parameter']}_ms"][kwargs["group"] - 1],
         "proposed": native[f"{kwargs['parameter']}_ms"][kwargs["group"] - 1] + 2,
@@ -217,7 +272,7 @@ def test_cyj11_myocardial_bundle_writes_per_plane_and_pooled_statistics(tmp_path
                                                        output=output) == output
     per_plane = json.loads((output / "per_plane_statistics.json").read_text())
     pooled = json.loads((output / "pooled_sax_statistics.json").read_text())
-    assert len(per_plane["planes"]) == 3
+    assert [plane["native_group_idx"] for plane in per_plane["planes"]] == [1, 2, 3, 4]
     assert pooled["pooled_sax"]["t1"]["myocardium_full"]["proposed"]["bias"] == 2.0
 
 
@@ -231,7 +286,7 @@ def test_cyj11_roi_derivation_copies_only_integer_native_lattice_pixels(tmp_path
     source_root = tmp_path / "source"; source_root.mkdir()
     arrays = {name: np.zeros((3, 4, 3), np.uint8) for name in ROI_FILENAMES}
     arrays["Segmentation_1-out-label.nii.gz"][:, :, :] = 1
-    arrays["Segmentation_3-label_point.nii.gz"][1, 1, :] = 1
+    arrays["Segmentation_3-label_point.nii.gz"][1, 1, 0] = 1
     for name in ROI_FILENAMES: (source_root / name).write_bytes(name.encode())
     composite_affine = np.eye(4); composite_affine[2, 2] = -1; composite_affine[2, 3] = 2
     images = {
@@ -260,4 +315,9 @@ def test_cyj11_roi_derivation_copies_only_integer_native_lattice_pixels(tmp_path
 
     bundle = derive_cyj11_native_roi_bundle(config=config, output=tmp_path / "derived")
     plane = load_cyj11_roi_plane(bundle, group=2, expected_shape=(3, 4))
-    assert plane["outer"].all() and plane["points"][1, 1]
+    assert plane["outer"].all() and not plane["points"].any()
+    with np.load(bundle / "sax_myocardium_masks.npz", allow_pickle=False) as masks:
+        assert masks["group_idx"].tolist() == [0, 1, 2]
+        assert masks["myocardium_full"].shape == (3, 3, 4)
+        assert not masks["landmark_labels"][1].any()
+    assert json.loads((bundle / "manifest.json").read_text())["schema"] == "exact_native_myocardium_bundle/v2"

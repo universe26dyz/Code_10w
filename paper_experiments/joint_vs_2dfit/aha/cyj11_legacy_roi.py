@@ -12,6 +12,8 @@ import numpy as np
 from .cyj11_adapter import apply_roi_transform
 from ..phase2_clean.contracts import sha256
 from ..phase2_clean.final_native_grid_metrics import native_ras_affine
+from evaluation_common.myocardium.build_native_bundle import myocardium_core_1px, myocardium_core_legacy
+from evaluation_common.myocardium.legacy_masks import exact_native_plane_crop
 
 
 ROI_FILENAMES = ("Segmentation_1-out-label.nii.gz", "Segmentation_2-in-label.nii.gz",
@@ -80,24 +82,21 @@ def _verified_record(record: Any, label: str) -> Path:
 
 
 def _native_plane_indices(source_affine: np.ndarray, target_affine: np.ndarray, source_slice: int,
-                          target_shape: tuple[int, int]) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    rows, columns = target_shape
-    row, column = np.indices((rows, columns), dtype=float)
-    target = np.vstack((row.ravel(), column.ravel(), np.zeros(row.size), np.ones(row.size)))
-    source = np.linalg.inv(np.asarray(source_affine, float)) @ np.asarray(target_affine, float) @ target
-    rounded = np.rint(source[:3])
-    if not np.allclose(source[:3], rounded, atol=1e-5, rtol=0):
-        raise ValueError("CYJ1.1 native plane is not an integer crop/orientation of the manual ROI")
-    x, y, z = (value.astype(int).reshape(target_shape) for value in rounded)
+                          target_shape: tuple[int, int], source_shape: tuple[int, int, int]) -> tuple[np.ndarray, np.ndarray, np.ndarray, dict[str, Any]]:
+    x, y, z, evidence = exact_native_plane_crop(
+        source_affine=source_affine, target_affine=target_affine,
+        source_shape=source_shape, target_shape=target_shape,
+    )
     if not np.all(z == int(source_slice)):
         raise ValueError("CYJ1.1 native plane does not map to its declared manual ROI slice")
+    rows, columns = target_shape
     steps = []
     if rows > 1: steps.append((int(x[1, 0] - x[0, 0]), int(y[1, 0] - y[0, 0])))
     if columns > 1: steps.append((int(x[0, 1] - x[0, 0]), int(y[0, 1] - y[0, 0])))
     axes = {(-1, 0), (1, 0), (0, -1), (0, 1)}
     if any(step not in axes for step in steps) or len(set(steps)) != len(steps):
         raise ValueError("CYJ1.1 native plane is not a signed-permutation manual ROI lattice")
-    return x, y, z
+    return x, y, z, evidence
 
 
 def _composite_to_manual_index_transform(manual: Any, composite: Any) -> np.ndarray:
@@ -155,6 +154,7 @@ def derive_cyj11_native_roi_bundle(*, config: str | Path, output: str | Path) ->
     staging = Path(tempfile.mkdtemp(prefix=f".{output.name}.staging-", dir=output.parent))
     try:
         seen: set[int] = set(); manifest_planes: list[dict[str, Any]] = []
+        copied_by_group: dict[int, dict[str, np.ndarray]] = {}
         for item in planes:
             if not isinstance(item, dict) or not isinstance(item.get("native_group_idx"), int) or not isinstance(item.get("roi_slice_index"), int):
                 raise ValueError("CYJ1.1 ROI derivation plane requires native group and ROI slice integers")
@@ -162,7 +162,10 @@ def derive_cyj11_native_roi_bundle(*, config: str | Path, output: str | Path) ->
             if group in seen or group not in index_by_group or not 0 <= source_slice < outer.shape[2]:
                 raise ValueError("CYJ1.1 ROI derivation plane identity is duplicate or out of range")
             index = index_by_group[group]; shape = tuple(map(int, native["t1_ms"][index].shape))
-            x, y, z = _native_plane_indices(outer.affine, native_ras_affine(native["affine_lps_rc"][index]), source_slice, shape)
+            x, y, z, lattice_evidence = _native_plane_indices(
+                outer.affine, native_ras_affine(native["affine_lps_rc"][index]), source_slice,
+                shape, tuple(map(int, outer.shape)),
+            )
             if x.min() < 0 or y.min() < 0 or x.max() >= outer.shape[0] or y.max() >= outer.shape[1]:
                 raise ValueError("CYJ1.1 native crop lies outside manual ROI bounds")
             copied = {"outer": np.asarray(source["Segmentation_1-out-label.nii.gz"].dataobj)[x, y, z],
@@ -176,10 +179,31 @@ def derive_cyj11_native_roi_bundle(*, config: str | Path, output: str | Path) ->
             np.savez_compressed(plane_path, **copied)
             final_plane_path = output / "planes" / plane_path.name
             manifest_planes.append({"native_group_idx": group, "roi_slice_index": source_slice, "shape": list(shape),
-                                    "plane": {"path": str(final_plane_path.resolve()), "sha256": sha256(plane_path)}})
+                                    "plane": {"path": str(final_plane_path.resolve()), "sha256": sha256(plane_path)},
+                                    "lattice_evidence": lattice_evidence})
+            copied_by_group[group] = copied
             seen.add(group)
         if seen != set(index_by_group):
             raise ValueError("CYJ1.1 ROI derivation does not cover each native SAX group")
+        group_order = [int(group) for group in native["group_idx"]]
+        outer_stack = np.stack([copied_by_group[group]["outer"] > 0 for group in group_order])
+        inner_stack = np.stack([copied_by_group[group]["inner"] > 0 for group in group_order])
+        points_stack = np.stack([copied_by_group[group]["points"] for group in group_order])
+        spacing = np.asarray(native["pixel_spacing_rc_mm"], float)
+        if not np.allclose(spacing, spacing[0], atol=1e-6, rtol=0):
+            raise ValueError("CYJ1.1 SCMR myocardium bundle requires one shared SAX in-plane spacing")
+        blood = inner_stack & outer_stack
+        full = outer_stack & ~blood
+        core_legacy = myocardium_core_legacy(full, tuple(map(float, spacing[0][:2])))
+        core_1px = myocardium_core_1px(full)
+        np.savez_compressed(
+            staging / "sax_myocardium_masks.npz",
+            group_idx=np.asarray(group_order, dtype=np.int64),
+            outer_filled=outer_stack.astype(np.uint8), inner_filled=inner_stack.astype(np.uint8),
+            blood_pool=blood.astype(np.uint8), myocardium_full=full.astype(np.uint8),
+            myocardium_core_legacy=core_legacy.astype(np.uint8), myocardium_core_1px=core_1px.astype(np.uint8),
+            landmark_labels=points_stack,
+        )
         write_immutable_json(staging / "roi_derivation_manifest.json", {
             "schema": ROI_BUNDLE_SCHEMA, "subject": payload["subject"], "resampling": False,
             "derivation_config": _record(config), "prepared_sax": _record(prepared),
@@ -187,6 +211,26 @@ def derive_cyj11_native_roi_bundle(*, config: str | Path, output: str | Path) ->
             "source_roi": {name: _record(path) for name, path in source_paths.items()}, "planes": manifest_planes,
             "composite_index_to_manual_index": composite_transform.tolist(),
             "native_mapping": "all target pixels must map to an integer signed-permutation source ROI lattice; no interpolation",
+            "immutable_output": True,
+        })
+        write_immutable_json(staging / "manifest.json", {
+            "schema": "exact_native_myocardium_bundle/v2", "status": "PASS", "subject_id": payload["subject"],
+            "method": "SCMR signed axis permutation/reversal plus integer crop; no interpolation",
+            "source_roi_derivation_manifest": {"path": str((output / "roi_derivation_manifest.json").resolve()),
+                                                 "sha256": sha256(staging / "roi_derivation_manifest.json")},
+            "sax_myocardium_masks": {"path": str((output / "sax_myocardium_masks.npz").resolve()),
+                                       "sha256": sha256(staging / "sax_myocardium_masks.npz")},
+            "shape_group_row_col": list(full.shape), "group_idx": group_order,
+            "spacing_rc_mm": list(map(float, spacing[0][:2])),
+            "core_definitions": {
+                "myocardium_core_legacy": "distance_transform_edt(myocardium_full, sampling=row/col spacing) > 1.0 mm",
+                "myocardium_core_1px": "binary_erosion(myocardium_full, structure=ones((3,3)), iterations=1, border_value=0), independently per SAX slice",
+            },
+            "inner_outside_outer_voxels_trimmed": int(np.count_nonzero(inner_stack & ~outer_stack)),
+            "per_slice_counts": [{"group_idx": group, "myocardium_full": int(full[index].sum()),
+                                  "myocardium_core_legacy": int(core_legacy[index].sum()),
+                                  "myocardium_core_1px": int(core_1px[index].sum())}
+                                 for index, group in enumerate(group_order)],
             "immutable_output": True,
         })
         staging.rename(output)

@@ -102,6 +102,27 @@ def segment_statistics(reference: np.ndarray, prediction: np.ndarray, labels: np
     return result
 
 
+def validate_aha16_statistics(rows: Iterable[Mapping[str, object]], *, minimum_segment_pixels: int = 10) -> dict[str, object]:
+    """Historical SCMR AHA16 presence/support gate, adapted to paired rows."""
+    if minimum_segment_pixels < 1:
+        raise ValueError("minimum AHA segment pixels must be positive")
+    by_parameter: dict[str, dict[int, list[int]]] = {}
+    for row in rows:
+        parameter, segment, count = str(row["parameter"]).lower(), int(row["segment"]), int(row["n"])
+        by_parameter.setdefault(parameter, {}).setdefault(segment, []).append(count)
+    failures: list[dict[str, object]] = []
+    for parameter in ("t1", "t2"):
+        segments = by_parameter.get(parameter, {})
+        missing = sorted(set(range(1, 17)) - set(segments))
+        if missing:
+            failures.append({"parameter": parameter, "missing_segments": missing})
+        for segment, counts in sorted(segments.items()):
+            if any(count < minimum_segment_pixels for count in counts):
+                failures.append({"parameter": parameter, "segment": segment, "reason": "insufficient support", "counts": counts})
+    return {"status": "PASS" if not failures else "FAIL", "minimum_segment_pixels": minimum_segment_pixels,
+            "failures": failures, "note": "Visual AHA orientation QC remains mandatory before final Figure 3."}
+
+
 def render_single_bullseye(output_png: str | Path, values: Mapping[int, float], *, parameter: str, title: str) -> Path:
     """Save exactly one historical-style AHA16 bullseye as immutable PNG/PDF."""
     import os
@@ -137,4 +158,51 @@ def render_single_bullseye(output_png: str | Path, values: Mapping[int, float], 
     fig.savefig(output, dpi=200, bbox_inches="tight", facecolor="white")
     fig.savefig(pdf, bbox_inches="tight", facecolor="white")
     plt.close(fig)
+    return output
+
+
+def render_scmr_figure3(output_png: str | Path, *, reference: Mapping[str, Mapping[int, float]],
+                        prediction: Mapping[str, Mapping[int, float]], subject: str, case: str,
+                        method: str) -> Path:
+    """Render the historical SCMR Figure-3 2x2 composition for one method.
+
+    The layout, segment geometry, limits, labels, and white boundaries follow
+    ``visualization.scmr.make_figure3_bullseye``; only the paired endpoint
+    names differ from its historical original/reprojection inputs.
+    """
+    import os
+    os.environ.setdefault("MPLBACKEND", "Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib.patches import Wedge
+
+    output = Path(output_png)
+    pdf = output.with_suffix(".pdf")
+    if output.exists() or pdf.exists():
+        raise FileExistsError(f"refusing overwrite: {output} or {pdf}")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    figure, axes = plt.subplots(2, 2, figsize=(8, 8))
+    for column, parameter in enumerate(("t1", "t2")):
+        vmin, vmax = DISPLAY_RANGES[parameter]
+        cmap, norm = plt.get_cmap("viridis"), plt.Normalize(vmin, vmax)
+        for row, (values, label) in enumerate(((reference[parameter], "Native 2D"),
+                                               (prediction[parameter], method.replace("_", "-") + " endpoint"))):
+            axis = axes[row, column]
+            for inner, outer, segments in ((.66, 1., range(1, 7)), (.34, .66, range(7, 13)), (.08, .34, range(13, 17))):
+                segment_list = list(segments); width = 360 / len(segment_list)
+                for index, segment in enumerate(segment_list):
+                    value = float(values.get(segment, float("nan")))
+                    color = cmap(norm(value)) if np.isfinite(value) else "lightgray"
+                    axis.add_patch(Wedge((0, 0), outer, 90 - (index + 1) * width, 90 - index * width,
+                                         width=outer - inner, facecolor=color, edgecolor="white", linewidth=1))
+                    theta, radius = np.deg2rad(90 - (index + .5) * width), (inner + outer) / 2
+                    axis.text(radius * np.cos(theta), radius * np.sin(theta),
+                              f"{segment}\n{value:.0f}" if np.isfinite(value) else str(segment),
+                              ha="center", va="center", fontsize=6)
+            axis.set(xlim=(-1.05, 1.05), ylim=(-1.05, 1.05), aspect="equal")
+            axis.axis("off"); axis.set_title(f"{parameter.upper()} {label}")
+        figure.colorbar(plt.cm.ScalarMappable(norm=norm, cmap=cmap), ax=axes[:, column], fraction=.025, label="ms")
+    figure.suptitle(f"{subject} {case} AHA16 myocardial regional means")
+    figure.savefig(output, dpi=200, bbox_inches="tight", facecolor="white")
+    figure.savefig(pdf, bbox_inches="tight", facecolor="white")
+    plt.close(figure)
     return output
