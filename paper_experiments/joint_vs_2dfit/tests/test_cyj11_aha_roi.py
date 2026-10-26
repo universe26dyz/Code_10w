@@ -100,6 +100,20 @@ def test_cyj11_native_sax_requires_manifest_bound_to_prepared_input(tmp_path) ->
     assert native["group_idx"].tolist() == [3]
 
 
+def test_cyj11_runner_uses_the_unified_native_maps_cache_layout(tmp_path, monkeypatch) -> None:
+    """CYJ historical and r2/r3 imports share native_cache/<subject>/native_maps/<stack>."""
+    from paper_experiments.joint_vs_2dfit.aha import cyj11_runner
+
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(cyj11_runner, "load_cyj11_native_sax", lambda cache, prepared: captured.update(cache=cache, prepared=prepared) or {})
+    monkeypatch.setattr(cyj11_runner, "load_cyj11_endpoint_images", lambda *args: {})
+
+    cyj11_runner.load_cyj11_run_inputs(tmp_path, "CYJ", "L100_fold0")
+
+    assert captured["cache"] == tmp_path / "native_cache" / "CYJ" / "native_maps" / "sax"
+    assert captured["prepared"] == tmp_path / "prepared" / "CYJ" / "sax" / "observations.npz"
+
+
 def test_cyj11_roi_plane_uses_only_explicit_discrete_mapping() -> None:
     from paper_experiments.joint_vs_2dfit.aha.cyj11_legacy_roi import mapped_manual_roi_plane
 

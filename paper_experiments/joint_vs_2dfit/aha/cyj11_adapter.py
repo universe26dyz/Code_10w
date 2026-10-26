@@ -22,6 +22,13 @@ def cyj11_endpoint_paths(analysis_root: str | Path, subject: str, case: str) -> 
             for name in ("proposed", "fit_first")}
 
 
+def cyj11_native_stack_root(analysis_root: str | Path, subject: str, stack: str = "sax") -> Path:
+    """Return the fixed unified-root R0 cache layout used by all imported subjects."""
+    if stack not in ("sax", "2ch", "4ch"):
+        raise ValueError(f"unknown CYJ1.1 native cache stack: {stack}")
+    return Path(analysis_root) / "native_cache" / subject / "native_maps" / stack
+
+
 def _verified_record(record: Any, label: str, override: str | Path | None = None) -> Path:
     if not isinstance(record, dict):
         raise ValueError(f"{label} provenance record is required")

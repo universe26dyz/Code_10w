@@ -5,7 +5,7 @@ import argparse
 import json
 from pathlib import Path
 
-from .cyj11_adapter import write_cyj11_mapping
+from .cyj11_adapter import cyj11_native_stack_root, write_cyj11_mapping
 from .cyj11_aha16 import build_cyj11_aha16
 from .cyj11_legacy_roi import derive_cyj11_native_roi_bundle, roi_derivation_readiness
 from .cyj11_myocardial_roi_metrics import build_cyj11_myocardial_roi_metrics
@@ -15,7 +15,7 @@ from .cyj11_runner import load_cyj11_endpoint_images
 def _readiness(root: Path, subject: str, case: str, mapping: str | None, roi_bundle: str | None) -> dict[str, str]:
     report = {"subject": subject, "case": case}
     prepared = root / "prepared" / subject / "sax" / "observations.npz"
-    cache = root / "native_cache" / subject / "sax"
+    cache = cyj11_native_stack_root(root, subject)
     if not prepared.is_file() or not all((cache / name).is_file() for name in ("native_maps.npz", "geometry.npz", "manifest.json")):
         return {**report, "status": "INPUTS_PENDING", "reason": "prepared SAX or native SAX cache is absent"}
     try:

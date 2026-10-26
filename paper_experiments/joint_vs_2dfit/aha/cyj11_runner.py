@@ -9,7 +9,7 @@ import numpy as np
 
 from ..phase2_clean.evaluation import reproject_binary_mask_to_native_plane, reproject_volume_to_native_plane
 from ..phase2_clean.final_native_grid_metrics import native_ras_affine
-from .cyj11_adapter import cyj11_endpoint_paths, load_cyj11_native_sax
+from .cyj11_adapter import cyj11_endpoint_paths, cyj11_native_stack_root, load_cyj11_native_sax
 
 
 def load_cyj11_endpoint_images(analysis_root: str | Path, subject: str, case: str) -> dict[str, dict[str, Any]]:
@@ -45,5 +45,5 @@ def native_sax_plane(*, native: dict[str, np.ndarray], group: int, endpoint_imag
 
 def load_cyj11_run_inputs(analysis_root: str | Path, subject: str, case: str) -> tuple[dict[str, np.ndarray], dict[str, dict[str, Any]]]:
     root = Path(analysis_root)
-    native = load_cyj11_native_sax(root / "native_cache" / subject / "sax", root / "prepared" / subject / "sax" / "observations.npz")
+    native = load_cyj11_native_sax(cyj11_native_stack_root(root, subject), root / "prepared" / subject / "sax" / "observations.npz")
     return native, load_cyj11_endpoint_images(root, subject, case)

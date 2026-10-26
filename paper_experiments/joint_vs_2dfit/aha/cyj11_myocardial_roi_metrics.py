@@ -10,7 +10,7 @@ from typing import Any
 import numpy as np
 
 from ..phase2_clean.contracts import sha256, write_immutable_json
-from .cyj11_adapter import require_cyj11_mapping
+from .cyj11_adapter import cyj11_native_stack_root, require_cyj11_mapping
 from .cyj11_legacy_roi import load_cyj11_roi_plane
 from .cyj11_runner import load_cyj11_run_inputs, native_sax_plane
 
@@ -84,7 +84,7 @@ def build_cyj11_myocardial_roi_metrics(*, analysis_root: str | Path, subject: st
             "schema": "cyj11_local_myocardial_roi_metrics/v1", "subject": subject, "case": case,
             "mapping": _record(mapping_path), "roi_bundle": _record(roi_bundle / "roi_derivation_manifest.json"),
             "prepared_sax": _record(root / "prepared" / subject / "sax" / "observations.npz"),
-            "native_sax": {name: _record(root / "native_cache" / subject / "sax" / name) for name in ("native_maps.npz", "geometry.npz", "manifest.json")},
+            "native_sax": {name: _record(cyj11_native_stack_root(root, subject) / name) for name in ("native_maps.npz", "geometry.npz", "manifest.json")},
             "endpoint_files": {parameter: {method: _record(image.get_filename()) for method, image in images.items()} for parameter, images in endpoint_images.items()},
             "roi_names": list(ROI_NAMES), "support_equation": SUPPORT_EQUATION,
             "roi_policy": {"myocardium_full": "outer AND NOT inner", "myocardium_core_legacy": "myocardium_full AND EDT(...) > 1.0 mm", "myocardium_core_1px": "one in-plane 3x3 erosion", "transform": "derived native lattice; no interpolation"},
