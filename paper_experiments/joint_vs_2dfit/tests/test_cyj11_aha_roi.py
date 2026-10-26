@@ -90,6 +90,33 @@ def test_cyj11_mapping_binds_explicit_group_to_prepared_observations(tmp_path) -
         require_cyj11_mapping(mapping, subject="DYZ", case="L100_fold0")
 
 
+def test_cyj11_derives_historical_aha_mapping_from_six_landmark_labels(tmp_path) -> None:
+    from paper_experiments.joint_vs_2dfit.aha.cyj11_adapter import derive_cyj11_historical_mapping
+    from paper_experiments.joint_vs_2dfit.phase2_clean.contracts import sha256
+
+    prepared = tmp_path / "observations.npz"
+    np.savez_compressed(prepared, group_idx=np.repeat([5, 7, 9], 10), weight_idx=np.tile(np.arange(10), 3))
+    derived = tmp_path / "derived"; derived.mkdir()
+    derivation = derived / "roi_derivation_manifest.json"
+    derivation.write_text(json.dumps({"schema": "cyj11_native_roi_bundle/v1", "subject": "CYJ", "planes": [
+        {"native_group_idx": 5, "roi_slice_index": 8}, {"native_group_idx": 7, "roi_slice_index": 6},
+        {"native_group_idx": 9, "roi_slice_index": 4},
+    ]}))
+    points = np.zeros((3, 7, 7), np.uint8)
+    points[0, 2, 5], points[0, 2, 1] = 5, 6
+    points[1, 3, 5], points[1, 3, 1] = 1, 2
+    points[2, 4, 5], points[2, 4, 1] = 3, 4
+    (derived / "manifest.json").write_text(json.dumps({"schema": "exact_native_myocardium_bundle/v2", "status": "PASS"}))
+    np.savez_compressed(derived / "sax_myocardium_masks.npz", group_idx=np.array([5, 7, 9]), landmark_labels=points)
+
+    mapping = derive_cyj11_historical_mapping(subject="CYJ", case="L100_fold0", prepared_sax=prepared,
+                                               roi_bundle=derived, output=tmp_path / "mapping.json")
+    payload = json.loads(mapping.read_text())
+    assert [(entry["level"], entry["native_group_idx"], entry["roi_slice_index"])
+            for entry in payload["planes"]] == [("basal", 5, 8), ("mid", 7, 6), ("apical", 9, 4)]
+    assert payload["prepared_sax"]["sha256"] == sha256(prepared)
+
+
 def test_cyj11_aha_and_roi_use_one_common_support() -> None:
     from paper_experiments.joint_vs_2dfit.aha.cyj11_aha16 import build_paired_aha16_plane
     from paper_experiments.joint_vs_2dfit.aha.cyj11_myocardial_roi_metrics import paired_roi_statistics

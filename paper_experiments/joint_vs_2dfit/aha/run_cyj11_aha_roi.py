@@ -5,7 +5,7 @@ import argparse
 import json
 from pathlib import Path
 
-from .cyj11_adapter import cyj11_native_stack_root, write_cyj11_mapping
+from .cyj11_adapter import cyj11_native_stack_root, derive_cyj11_historical_mapping, write_cyj11_mapping
 from .cyj11_aha16 import build_cyj11_aha16
 from .cyj11_legacy_roi import derive_cyj11_native_roi_bundle, roi_derivation_readiness
 from .cyj11_myocardial_roi_metrics import build_cyj11_myocardial_roi_metrics
@@ -35,7 +35,7 @@ def _readiness(root: Path, subject: str, case: str, mapping: str | None, roi_bun
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--mode", choices=("readiness", "derive-roi", "write-mapping", "aha16", "myocardial"), required=True)
+    parser.add_argument("--mode", choices=("readiness", "derive-roi", "derive-mapping", "write-mapping", "aha16", "myocardial"), required=True)
     parser.add_argument("--analysis-root")
     parser.add_argument("--subject")
     parser.add_argument("--case")
@@ -53,6 +53,13 @@ def main() -> None:
         if not all((args.config, args.output, args.subject, args.case)):
             raise ValueError("write-mapping requires --config, --output, --subject, and --case")
         print(write_cyj11_mapping(template=args.config, output=args.output, subject=args.subject, case=args.case)); return
+    if args.mode == "derive-mapping":
+        if not all((args.analysis_root, args.subject, args.case, args.roi_bundle, args.output)):
+            raise ValueError("derive-mapping requires --analysis-root, --subject, --case, --roi-bundle, and --output")
+        root = Path(args.analysis_root)
+        print(derive_cyj11_historical_mapping(subject=args.subject, case=args.case,
+                                               prepared_sax=root / "prepared" / args.subject / "sax" / "observations.npz",
+                                               roi_bundle=args.roi_bundle, output=args.output)); return
     if not all((args.analysis_root, args.subject, args.case)):
         raise ValueError("--analysis-root, --subject, and --case are required")
     root = Path(args.analysis_root)
