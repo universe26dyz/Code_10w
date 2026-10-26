@@ -20,7 +20,7 @@ from typing import Any, Callable, Iterable
 
 PLAN_SCHEMA = "cyj11_r4_reporting_plan/v1"
 FIXED_00D88_COMMIT = "00d88b45c75f272f05538997e38fbda85988e7aa"
-DIRECT_NATIVE_AUDIT_COMPAT_COMMIT = "8b8d21358c984778417d6e74da3457a37d94a2cd"
+DIRECT_NATIVE_AUDIT_COMPAT_COMMIT = "d596308c3816864bb6e5f55a3ce91544f422fc43"
 R4_SOURCE = "r4_00d88b45c75f"
 SUBJECTS = ("CYJ", "DYZ", "HJL", "HHZ", "DYL_2")
 PROFILE_CASES = (
@@ -143,13 +143,13 @@ def build_r4_plan(inputs: R4Inputs, *, git_head: Callable[[Path], str] = _git_he
     if git_head(inputs.historical_worktree) != FIXED_00D88_COMMIT:
         raise ValueError(f"r4 fixed historical worktree must be pinned to 00d88b45 ({FIXED_00D88_COMMIT})")
     if inputs.direct_native_audit_worktree is None:
-        raise ValueError("r4 requires an explicit direct-native audit worktree pinned to 8b8d213")
+        raise ValueError("r4 requires an explicit direct-native audit worktree pinned to d596308")
     audit_worktree = inputs.direct_native_audit_worktree.resolve()
     _require_directory(audit_worktree, "r4 direct-native audit compatibility worktree")
     if git_head(audit_worktree) != DIRECT_NATIVE_AUDIT_COMPAT_COMMIT:
         raise ValueError(
             "r4 direct-native audit worktree must be pinned to "
-            f"8b8d213 ({DIRECT_NATIVE_AUDIT_COMPAT_COMMIT})"
+            f"d596308 ({DIRECT_NATIVE_AUDIT_COMPAT_COMMIT})"
         )
     prepared = (inputs.prepared_root or root / "prepared" / inputs.subject).resolve()
     _require_directory(prepared, "r4 cropped prepared root")

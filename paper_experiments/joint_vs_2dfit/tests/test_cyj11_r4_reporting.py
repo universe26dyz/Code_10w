@@ -48,14 +48,14 @@ def _inputs(tmp_path: Path, *, protocol: str = "profile-v2"):
     if protocol == "profile-v2":
         _case_inputs(root, subject, "SAX100_2CH0_4CH0", profile=True)
     historical = tmp_path / "fit-00d88"; historical.mkdir()
-    direct_native_audit = tmp_path / "direct-native-audit-8b8d"; direct_native_audit.mkdir()
+    direct_native_audit = tmp_path / "direct-native-audit-d596"; direct_native_audit.mkdir()
     cases = ("SAX100_2CH0_4CH0",) if protocol == "profile-v2" else ("L100_fold0",)
     return R4Inputs(subject=subject, protocol=protocol, analysis_root=root, historical_worktree=historical, direct_native_audit_worktree=direct_native_audit, python_executable="python", device="cuda:0", cases=cases)
 
 
 def _head(_path: Path) -> str:
     from paper_experiments.joint_vs_2dfit.phase2_clean.cyj11_r4_reporting import DIRECT_NATIVE_AUDIT_COMPAT_COMMIT, FIXED_00D88_COMMIT
-    return DIRECT_NATIVE_AUDIT_COMPAT_COMMIT if _path.name == "direct-native-audit-8b8d" else FIXED_00D88_COMMIT
+    return DIRECT_NATIVE_AUDIT_COMPAT_COMMIT if _path.name == "direct-native-audit-d596" else FIXED_00D88_COMMIT
 
 
 def _step(plan: dict[str, object], identifier: str) -> dict[str, object]:
@@ -111,7 +111,7 @@ def test_direct_native_audit_uses_its_checkpoint_compatible_worktree_only(tmp_pa
 def test_direct_native_audit_is_pinned_to_r3_l100_provenance_compatibility_fix() -> None:
     from paper_experiments.joint_vs_2dfit.phase2_clean.cyj11_r4_reporting import DIRECT_NATIVE_AUDIT_COMPAT_COMMIT
 
-    assert DIRECT_NATIVE_AUDIT_COMPAT_COMMIT == "8b8d21358c984778417d6e74da3457a37d94a2cd"
+    assert DIRECT_NATIVE_AUDIT_COMPAT_COMMIT == "d596308c3816864bb6e5f55a3ce91544f422fc43"
 
 
 def test_profile_figure_configuration_preserves_explicit_custom_case_identity(tmp_path: Path) -> None:
@@ -199,7 +199,7 @@ def test_r4_runner_dry_run_writes_no_analysis_artifact(tmp_path: Path) -> None:
     inputs = _inputs(tmp_path)
     fake_bin = tmp_path / "bin"; fake_bin.mkdir()
     fake_git = fake_bin / "git"
-    fake_git.write_text("#!/bin/sh\nif [ \"$3\" = rev-parse ]; then case \"$2\" in *direct-native-audit-8b8d) echo 8b8d21358c984778417d6e74da3457a37d94a2cd ;; *) echo 00d88b45c75f272f05538997e38fbda85988e7aa ;; esac; exit 0; fi\nexit 2\n", encoding="utf-8")
+    fake_git.write_text("#!/bin/sh\nif [ \"$3\" = rev-parse ]; then case \"$2\" in *direct-native-audit-d596) echo d596308c3816864bb6e5f55a3ce91544f422fc43 ;; *) echo 00d88b45c75f272f05538997e38fbda85988e7aa ;; esac; exit 0; fi\nexit 2\n", encoding="utf-8")
     fake_git.chmod(0o755)
     repo = Path(__file__).resolve().parents[3]
     script = repo / "paper_experiments/joint_vs_2dfit/phase2_clean/server_commands/run_cyj11_r4_reporting.sh"
