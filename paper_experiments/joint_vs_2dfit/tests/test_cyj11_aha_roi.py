@@ -177,6 +177,29 @@ def test_cyj11_native_sax_requires_manifest_bound_to_prepared_input(tmp_path) ->
     assert native["group_idx"].tolist() == [3]
 
 
+def test_cyj11_native_sax_accepts_historical_unsealed_dictionary_manifest(tmp_path) -> None:
+    """Unified imported CYJ cache predates per-file digest fields but binds its prepared SAX source."""
+    from paper_experiments.joint_vs_2dfit.aha.cyj11_adapter import load_cyj11_native_sax
+    from paper_experiments.joint_vs_2dfit.phase2_clean.contracts import sha256
+    from paper_experiments.joint_vs_2dfit.phase2_clean.fit_first import NATIVE_FIT_METHOD
+
+    prepared = tmp_path / "prepared.npz"
+    np.savez_compressed(prepared, group_idx=np.repeat([3], 10), weight_idx=np.arange(10), images=np.zeros((10, 2, 3)))
+    cache = tmp_path / "cache"; cache.mkdir()
+    np.savez_compressed(cache / "native_maps.npz", group_idx=np.array([3]), t1_ms=np.zeros((1, 2, 3)), t2_ms=np.zeros((1, 2, 3)), b1=np.zeros((1, 2, 3)))
+    np.savez_compressed(cache / "geometry.npz", affine_lps_rc=np.eye(4)[None], pixel_spacing_rc_mm=np.ones((1, 2)), slice_thickness_mm=np.ones(1))
+    (cache / "manifest.json").write_text(json.dumps({
+        "method": NATIVE_FIT_METHOD,
+        "source_observations": {"path": str(prepared), "sha256": sha256(prepared)},
+        "dictionary_cache_entries": 1,
+        "baseline_pose_policy": "historical-current-pose",
+        "next_formal_step": "independent registration",
+    }))
+
+    native = load_cyj11_native_sax(cache, prepared)
+    assert native["group_idx"].tolist() == [3]
+
+
 def test_cyj11_runner_uses_the_unified_native_maps_cache_layout(tmp_path, monkeypatch) -> None:
     """CYJ historical and r2/r3 imports share native_cache/<subject>/native_maps/<stack>."""
     from paper_experiments.joint_vs_2dfit.aha import cyj11_runner

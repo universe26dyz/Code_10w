@@ -10,6 +10,7 @@ from typing import Any
 import numpy as np
 
 from ..phase2_clean.contracts import sha256, write_immutable_json
+from ..phase2_clean.fit_first import NATIVE_FIT_METHOD
 
 
 MAPPING_SCHEMA = "cyj11_aha_native_roi_mapping/v1"
@@ -188,8 +189,20 @@ def load_cyj11_native_sax(cache_root: str | Path, prepared_sax_path: str | Path)
     source = manifest.get("source_observations", {})
     if source.get("sha256") != sha256(prepared):
         raise ValueError("CYJ1.1 native SAX cache is not bound to the selected prepared input")
-    if manifest.get("native_maps_sha256") != sha256(maps_path) or manifest.get("geometry_sha256") != sha256(geometry_path):
-        raise ValueError("CYJ1.1 native SAX cache manifest SHA256 mismatch")
+    maps_hash, geometry_hash = manifest.get("native_maps_sha256"), manifest.get("geometry_sha256")
+    if maps_hash is not None or geometry_hash is not None:
+        if (not isinstance(maps_hash, str) or not isinstance(geometry_hash, str)
+                or maps_hash != sha256(maps_path) or geometry_hash != sha256(geometry_path)):
+            raise ValueError("CYJ1.1 native SAX cache manifest SHA256 mismatch")
+    elif not (
+        manifest.get("method") == NATIVE_FIT_METHOD
+        and isinstance(manifest.get("dictionary_cache_entries"), int)
+        and not isinstance(manifest.get("dictionary_cache_entries"), bool)
+        and manifest["dictionary_cache_entries"] > 0
+        and isinstance(manifest.get("baseline_pose_policy"), str)
+        and isinstance(manifest.get("next_formal_step"), str)
+    ):
+        raise ValueError("CYJ1.1 native SAX cache lacks sealed SHA256 provenance")
     with np.load(prepared, allow_pickle=False) as observations, np.load(maps_path, allow_pickle=False) as maps, np.load(geometry_path, allow_pickle=False) as geometry:
         required_maps = ("group_idx", "t1_ms", "t2_ms", "b1")
         required_geometry = ("affine_lps_rc", "pixel_spacing_rc_mm", "slice_thickness_mm")
