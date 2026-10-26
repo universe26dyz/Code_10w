@@ -128,7 +128,19 @@ def _validate(inputs: R3Inputs, *, git_head: Callable[[Path], str]) -> dict[str,
         manifests[stack] = str(manifest.resolve()) if manifest.is_file() else None
 
     root = inputs.analysis_root.resolve()
-    planned_destinations = [root / "prepared" / inputs.subject, root / "native_cache" / inputs.subject]
+    prepared_destination = root / "prepared" / inputs.subject
+    prepared_destination_mode = "copied_from_source"
+    if prepared_destination.exists():
+        _require_directory(prepared_destination, "existing unified prepared root")
+        for stack, source_record in observations.items():
+            destination_record = _audit_observations(prepared_destination / stack / "observations.npz")
+            if destination_record["sha256"] != source_record["sha256"]:
+                raise ValueError(
+                    f"{stack}: existing unified prepared observation SHA256 disagrees with source; "
+                    f"refusing r3 reuse at {prepared_destination}"
+                )
+        prepared_destination_mode = "reused_after_sha256_verification"
+    planned_destinations = [root / "native_cache" / inputs.subject]
     for case in CASES:
         planned_destinations.extend((
             root / "sparse_inputs" / inputs.subject / case,
@@ -144,6 +156,7 @@ def _validate(inputs: R3Inputs, *, git_head: Callable[[Path], str]) -> dict[str,
         "observations": observations,
         "manifests": manifests,
         "source_manifest_absent": any(path is None for path in manifests.values()),
+        "prepared_destination_mode": prepared_destination_mode,
     }
 
 
@@ -158,7 +171,7 @@ def build_r3_plan(inputs: R3Inputs, *, git_head: Callable[[Path], str] = _git_he
     steps: list[dict[str, object]] = [
         {
             "id": "copy_prepared",
-            "kind": "copy_prepared",
+            "kind": "reuse_prepared" if source_audit["prepared_destination_mode"] == "reused_after_sha256_verification" else "copy_prepared",
             "source": str(inputs.source_prepared_root.resolve()),
             "destination": str(prepared_subject),
             "provenance_output": str(migration_record),

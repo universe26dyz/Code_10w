@@ -160,6 +160,17 @@ def execute_r3_plan(plan_path: Path, commands_log: Path) -> dict[str, object]:
     with commands_log.open("x", encoding="utf-8") as log:
         for step in plan["steps"]:
             kind = step.get("kind")
+            if kind == "reuse_prepared":
+                destination = Path(step["destination"])
+                if not destination.is_dir():
+                    raise FileNotFoundError(f"planned reusable prepared root is missing: {destination}")
+                for stack, record in plan["source"]["observations"].items():
+                    observation = destination / stack / "observations.npz"
+                    if not observation.is_file() or _sha256(observation) != record["sha256"]:
+                        raise ValueError(f"{stack}: prepared reuse SHA256 changed after r3 dry-run: {observation}")
+                log.write(f"# {step['id']}\nverified prepared reuse {destination}\n")
+                created.append({"id": step["id"], "destination": str(destination), "mode": "reused_after_sha256_verification"})
+                continue
             if kind in {"copy_prepared", "copy_native_cache"}:
                 source, destination = Path(step["source"]), Path(step["destination"])
                 log.write(f"# {step['id']}\ncopytree {source} {destination}\n")

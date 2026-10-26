@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import os
 from pathlib import Path
+import shutil
 import subprocess
 
 import numpy as np
@@ -89,6 +90,18 @@ def test_r3_plan_marks_dyl2_missing_source_manifests_without_fabricating_them(tm
 
     assert plan["source"]["source_manifest_absent"] is True
     assert plan["source"]["manifests"] == {"sax": None, "2ch": None, "4ch": None}
+
+
+def test_r3_plan_reuses_matching_prepared_input_already_in_unified_root(tmp_path: Path) -> None:
+    from paper_experiments.joint_vs_2dfit.phase2_clean.cyj11_r3_reproduction import build_r3_plan
+
+    inputs = _inputs(tmp_path)
+    shutil.copytree(inputs.source_prepared_root, inputs.analysis_root / "prepared" / "DYZ")
+
+    plan = build_r3_plan(inputs, git_head=_dad_head)
+
+    assert _step(plan, "copy_prepared")["kind"] == "reuse_prepared"
+    assert plan["source"]["prepared_destination_mode"] == "reused_after_sha256_verification"
 
 
 def test_r3_plan_rejects_wrong_historical_head_and_existing_case_destination(tmp_path: Path) -> None:
