@@ -14,7 +14,7 @@ MODE=${1:---dry-run}
 : "${CYJ11_R4_PROTOCOL:?set CYJ11_R4_PROTOCOL to profile-v2 or legacy-density}"
 : "${CYJ11_R4_ANALYSIS_ROOT:?set CYJ11_R4_ANALYSIS_ROOT}"
 : "${CYJ11_R4_HISTORICAL_WORKTREE:?set CYJ11_R4_HISTORICAL_WORKTREE at 00d88b45}"
-: "${CYJ11_R4_DIRECT_NATIVE_AUDIT_WORKTREE:?set CYJ11_R4_DIRECT_NATIVE_AUDIT_WORKTREE at 5ceebbe}"
+: "${CYJ11_R4_DIRECT_NATIVE_AUDIT_WORKTREE:?set CYJ11_R4_DIRECT_NATIVE_AUDIT_WORKTREE at 8b8d213}"
 
 case "$CYJ11_R4_SUBJECT" in CYJ|DYZ|HJL|HHZ|DYL_2) ;; *) echo "invalid CYJ11_R4_SUBJECT: $CYJ11_R4_SUBJECT" >&2; exit 2;; esac
 case "$CYJ11_R4_PROTOCOL" in profile-v2|legacy-density) ;; *) echo "invalid CYJ11_R4_PROTOCOL: $CYJ11_R4_PROTOCOL" >&2; exit 2;; esac
@@ -73,7 +73,7 @@ printf '\n' >> "$PLAN_PATH.command.sh"
 
 (cd "$REPO" && "$CYJ11_R4_PYTHON" -m paper_experiments.joint_vs_2dfit.phase2_clean.cyj11_analysis_archive archive-git --repository "$REPO" --commit "$RUNNER_COMMIT" --output "$CYJ11_R4_ANALYSIS_ROOT/code_snapshots/r4/orchestrator/$RUNNER_COMMIT")
 (cd "$REPO" && "$CYJ11_R4_PYTHON" -m paper_experiments.joint_vs_2dfit.phase2_clean.cyj11_analysis_archive archive-git --repository "$CYJ11_R4_HISTORICAL_WORKTREE" --commit 00d88b45c75f272f05538997e38fbda85988e7aa --output "$CYJ11_R4_ANALYSIS_ROOT/code_snapshots/r4/historical/00d88b45c75f272f05538997e38fbda85988e7aa")
-(cd "$REPO" && "$CYJ11_R4_PYTHON" -m paper_experiments.joint_vs_2dfit.phase2_clean.cyj11_analysis_archive archive-git --repository "$CYJ11_R4_DIRECT_NATIVE_AUDIT_WORKTREE" --commit 5ceebbeb5f510cb4cf53b3d2e0744d3ab62e3d0a --output "$CYJ11_R4_ANALYSIS_ROOT/code_snapshots/r4/direct_native_audit/5ceebbeb5f510cb4cf53b3d2e0744d3ab62e3d0a")
+(cd "$REPO" && "$CYJ11_R4_PYTHON" -m paper_experiments.joint_vs_2dfit.phase2_clean.cyj11_analysis_archive archive-git --repository "$CYJ11_R4_DIRECT_NATIVE_AUDIT_WORKTREE" --commit 8b8d21358c984778417d6e74da3457a37d94a2cd --output "$CYJ11_R4_ANALYSIS_ROOT/code_snapshots/r4/direct_native_audit/8b8d21358c984778417d6e74da3457a37d94a2cd")
 {
     echo "python_executable=$CYJ11_R4_PYTHON"
     "$CYJ11_R4_PYTHON" --version
