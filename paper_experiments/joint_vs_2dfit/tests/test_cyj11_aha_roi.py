@@ -233,8 +233,12 @@ def test_cyj11_roi_derivation_copies_only_integer_native_lattice_pixels(tmp_path
     arrays["Segmentation_1-out-label.nii.gz"][:, :, :] = 1
     arrays["Segmentation_3-label_point.nii.gz"][1, 1, :] = 1
     for name in ROI_FILENAMES: (source_root / name).write_bytes(name.encode())
-    images = {str(source_root / name): types.SimpleNamespace(shape=array.shape, affine=np.eye(4), dataobj=array)
-              for name, array in arrays.items()}
+    composite_affine = np.eye(4); composite_affine[2, 2] = -1; composite_affine[2, 3] = 2
+    images = {
+        str(source_root / name): types.SimpleNamespace(
+            shape=array.shape, affine=composite_affine if name == "sax_composite_reference.nii.gz" else np.eye(4), dataobj=array)
+        for name, array in arrays.items()
+    }
     monkeypatch.setitem(sys.modules, "nibabel", types.SimpleNamespace(load=lambda path: images[str(path)]))
 
     prepared = tmp_path / "observations.npz"

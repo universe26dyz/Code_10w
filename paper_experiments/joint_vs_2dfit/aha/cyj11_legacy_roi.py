@@ -100,6 +100,27 @@ def _native_plane_indices(source_affine: np.ndarray, target_affine: np.ndarray, 
     return x, y, z
 
 
+def _composite_to_manual_index_transform(manual: Any, composite: Any) -> np.ndarray:
+    """Admit only an exact integer signed-permutation composite provenance grid."""
+    if len(manual.shape) != 3 or len(composite.shape) != 3:
+        raise ValueError("CYJ1.1 manual ROI and composite reference must be 3-D")
+    transform = np.linalg.inv(np.asarray(manual.affine, float)) @ np.asarray(composite.affine, float)
+    rounded = np.rint(transform)
+    if not np.allclose(transform, rounded, atol=1e-5, rtol=0):
+        raise ValueError("CYJ1.1 composite reference is not an integer manual-ROI lattice transform")
+    linear = rounded[:3, :3].astype(int)
+    if not (np.all(np.isin(linear, (-1, 0, 1)))
+            and np.all(np.sum(np.abs(linear), axis=0) == 1)
+            and np.all(np.sum(np.abs(linear), axis=1) == 1)
+            and np.array_equal(rounded[3], (0, 0, 0, 1))):
+        raise ValueError("CYJ1.1 composite reference is not a signed-permutation manual-ROI grid")
+    corners = np.array(np.meshgrid(*[(0, size - 1) for size in composite.shape], indexing="ij")).reshape(3, -1)
+    mapped = rounded @ np.vstack((corners, np.ones(corners.shape[1])))
+    if not np.all((mapped[:3] >= 0) & (mapped[:3] < np.asarray(manual.shape)[:, None])):
+        raise ValueError("CYJ1.1 composite reference extends outside manual ROI geometry")
+    return rounded.astype(int)
+
+
 def derive_cyj11_native_roi_bundle(*, config: str | Path, output: str | Path) -> Path:
     """Copy manual ROI pixels to every explicit native SAX plane with no resampling."""
     import nibabel as nib
@@ -119,9 +140,11 @@ def derive_cyj11_native_roi_bundle(*, config: str | Path, output: str | Path) ->
         raise FileNotFoundError("CYJ1.1 source ROI lacks canonical four-file set")
     source = {name: nib.load(str(path)) for name, path in source_paths.items()}
     outer = source["Segmentation_1-out-label.nii.gz"]
+    triad = ("Segmentation_1-out-label.nii.gz", "Segmentation_2-in-label.nii.gz", "Segmentation_3-label_point.nii.gz")
     if any(image.shape != outer.shape or not np.allclose(image.affine, outer.affine, atol=1e-6, rtol=0)
-           for image in source.values()):
-        raise ValueError("CYJ1.1 source manual ROI geometry differs across canonical files")
+           for name, image in source.items() if name in triad):
+        raise ValueError("CYJ1.1 outer/inner/point manual ROI geometry differs")
+    composite_transform = _composite_to_manual_index_transform(outer, source["sax_composite_reference.nii.gz"])
     native_root = Path(str(payload.get("native_sax_root", "")))
     native = load_cyj11_native_sax(native_root, prepared)
     index_by_group = {int(group): index for index, group in enumerate(native["group_idx"])}
@@ -162,6 +185,7 @@ def derive_cyj11_native_roi_bundle(*, config: str | Path, output: str | Path) ->
             "derivation_config": _record(config), "prepared_sax": _record(prepared),
             "native_sax": {name: _record(native_root / name) for name in ("native_maps.npz", "geometry.npz", "manifest.json")},
             "source_roi": {name: _record(path) for name, path in source_paths.items()}, "planes": manifest_planes,
+            "composite_index_to_manual_index": composite_transform.tolist(),
             "native_mapping": "all target pixels must map to an integer signed-permutation source ROI lattice; no interpolation",
             "immutable_output": True,
         })
