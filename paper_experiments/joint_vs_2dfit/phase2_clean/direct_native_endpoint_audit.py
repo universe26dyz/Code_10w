@@ -118,8 +118,21 @@ def _sparse_contract(path: Path) -> dict[str, Any]:
     if not path.is_file():
         raise FileNotFoundError(path)
     payload = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(payload, dict) or payload.get("schema_version") != "phase4r_sparse_profile_v2" or payload.get("status") != "ELIGIBLE":
-        raise ValueError("direct-native audit requires an eligible phase4r_sparse_profile_v2 manifest")
+    if not isinstance(payload, dict) or payload.get("status") != "ELIGIBLE":
+        raise ValueError("direct-native audit requires an eligible sparse manifest")
+    schema = payload.get("schema_version")
+    if schema == "phase4r_sparse_v1":
+        subject, condition, phase, generator = payload.get("subject"), payload.get("condition"), payload.get("phase"), payload.get("git_sha")
+        if not isinstance(subject, str) or condition != "L100" or phase != 0 or not isinstance(generator, str) or len(generator) != 40:
+            raise ValueError("direct-native audit accepts phase4r_sparse_v1 only for L100_fold0")
+        stacks = payload.get("stacks")
+        if not isinstance(stacks, Mapping) or set(stacks) != set(STACKS):
+            raise ValueError("sparse manifest lacks exact sax/2ch/4ch stack records")
+        return {"path": path.resolve(), "sha256": sha256(path), "subject": subject,
+                "case": "L100", "generator_git_sha": generator, "active_stacks": STACKS,
+                "schema_version": schema}
+    if schema != "phase4r_sparse_profile_v2":
+        raise ValueError("direct-native audit requires phase4r_sparse_profile_v2 or L100 phase4r_sparse_v1")
     subject, case, generator = payload.get("subject"), payload.get("case_id"), payload.get("git_sha")
     if not isinstance(subject, str) or not isinstance(case, str) or not isinstance(generator, str) or len(generator) != 40:
         raise ValueError("sparse manifest lacks subject/case/generator provenance")
@@ -130,16 +143,20 @@ def _sparse_contract(path: Path) -> dict[str, Any]:
     if not active or (case == "L100" and active != STACKS):
         raise ValueError("sparse manifest active stacks are incompatible with the requested case")
     return {"path": path.resolve(), "sha256": sha256(path), "subject": subject, "case": case,
-            "generator_git_sha": generator, "active_stacks": active}
+            "generator_git_sha": generator, "active_stacks": active, "schema_version": schema}
 
 
 def _validate_checkpoint_sparse_provenance(checkpoint: Path, sparse: Mapping[str, Any]) -> None:
     """Bind the audit's supplied sparse profile to Q002's recorded profile identity."""
     manifest = _checkpoint_manifest(checkpoint)
+    if manifest.get("subject_id") != sparse["subject"]:
+        raise ValueError("checkpoint sparse subject/case provenance mismatch")
+    if sparse["schema_version"] == "phase4r_sparse_v1":
+        return
     recorded = manifest.get("sparse_manifest")
     if not isinstance(recorded, Mapping):
         raise ValueError("checkpoint experiment manifest lacks sparse manifest provenance")
-    if manifest.get("subject_id") != sparse["subject"] or manifest.get("case_id") != sparse["case"]:
+    if manifest.get("case_id") != sparse["case"]:
         raise ValueError("checkpoint sparse subject/case provenance mismatch")
     if recorded.get("sha256") != sparse["sha256"]:
         raise ValueError("checkpoint sparse manifest SHA256 mismatch")

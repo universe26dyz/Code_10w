@@ -200,6 +200,31 @@ def test_q002_manifest_validates_mirrored_inputs_by_stack_hash_and_sparse_proven
     audit._validate_checkpoint_sparse_provenance(checkpoint, active)
 
 
+def test_r3_l100_manifest_uses_per_stack_hashes_without_profile_sparse_record(tmp_path) -> None:
+    """R3 L100 is full-input identity data, not a profile-v2 sparse case."""
+    inputs = []
+    for stack in ("sax", "2ch", "4ch"):
+        path = tmp_path / "local" / stack / "observations.npz"; path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(stack.encode()); inputs.append(path)
+    sparse = tmp_path / "sparse.json"
+    sparse.write_text(json.dumps({
+        "schema_version": "phase4r_sparse_v1", "status": "ELIGIBLE", "subject": "DYZ",
+        "condition": "L100", "phase": 0, "git_sha": "d" * 40,
+        "stacks": {stack: {} for stack in ("sax", "2ch", "4ch")},
+    }))
+    checkpoint = tmp_path / "run" / "model.pt"; checkpoint.parent.mkdir(); checkpoint.touch()
+    records = {f"/data/server/DYZ/{path.parent.name}/observations.npz": audit.sha256(path) for path in inputs}
+    (checkpoint.parent / "experiment_manifest.json").write_text(json.dumps({
+        "subject_id": "DYZ", "prepared_inputs_sha256": records,
+    }))
+
+    contract = audit._sparse_contract(sparse)
+
+    assert contract["active_stacks"] == ("sax", "2ch", "4ch")
+    audit._validate_prepared_input_identity(checkpoint, inputs, contract["active_stacks"])
+    audit._validate_checkpoint_sparse_provenance(checkpoint, contract)
+
+
 def test_sparse_case_accepts_only_manifest_active_stack_subset_in_canonical_order(tmp_path) -> None:
     """Catches treating absent 2CH/4CH sparse stacks as mandatory audit inputs."""
     sparse = tmp_path / "sparse.json"; _sparse_manifest(sparse, case="SAX100_2CH0_4CH0", active=("sax",))
