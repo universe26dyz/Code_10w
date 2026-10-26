@@ -175,6 +175,16 @@ def test_plan_rejects_changed_explicit_input_or_dependency_hash(tmp_path: Path) 
         build_reproduction_plan(mismatched_decoder, git_head=_historical_heads)
 
 
+def test_profile_planner_rejects_legacy_density_case(tmp_path: Path) -> None:
+    """Legacy-density inputs require the separate dad9698b r3 route."""
+    from paper_experiments.joint_vs_2dfit.phase2_clean.cyj11_untrimmed_reproduction import build_reproduction_plan
+
+    inputs = replace(_inputs(tmp_path), case_id="L50_fold0")
+    with pytest.raises(ValueError, match="r3"):
+        build_reproduction_plan(inputs, git_head=_historical_heads)
+    assert not inputs.output_root.exists()
+
+
 def test_plan_rejects_incomplete_r0_native_cache_before_any_output(tmp_path: Path) -> None:
     """A selected-map-only directory must fail before sparse/Q002 commands are emitted."""
     from paper_experiments.joint_vs_2dfit.phase2_clean.cyj11_untrimmed_reproduction import build_reproduction_plan

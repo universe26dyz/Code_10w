@@ -137,6 +137,11 @@ def _validate_inputs(inputs: ReproductionInputs, *, git_head: Callable[[Path], s
         case = CASE_SPECS[inputs.case_id]
     except KeyError as exc:
         raise ValueError(f"unknown historical CYJ case: {inputs.case_id}") from exc
+    if case.legacy_condition is not None:
+        raise ValueError(
+            f"{inputs.case_id} is a legacy-density case and is not compatible with the "
+            "profile-v2 route; use the dedicated CYJ1.1 r3 runner pinned to dad9698b"
+        )
     _require_directory(inputs.prepared_root, "untrimmed prepared root")
     observation_records: dict[str, dict[str, str]] = {}
     counts: dict[str, int] = {}
