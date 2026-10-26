@@ -21,3 +21,18 @@ if [[ "$MODE" == "--dry-run" ]]; then
 fi
 
 (cd "$REPO" && "$CYJ11_R2_PYTHON" -m paper_experiments.joint_vs_2dfit.phase2_clean.cyj11_analysis_archive import-r2 --r2-root "$CYJ11_R2_SOURCE_ROOT" --analysis-root "$CYJ11_R2_ANALYSIS_ROOT" --subject "$CYJ11_R2_SUBJECT")
+
+: "${CYJ11_R2_ORCHESTRATOR_WORKTREE:?set the ed2feb7 r2 orchestration checkout}"
+: "${CYJ11_R2_SPARSE_WORKTREE:?set the 6f4142 sparse worktree}"
+: "${CYJ11_R2_Q002_WORKTREE:?set the de41aef Q002 worktree}"
+: "${CYJ11_R2_FIT_FIRST_WORKTREE:?set the 00d88b fit-first worktree}"
+: "${CYJ11_R2_RUNNER_SCRIPT:?set the exact r2 runner script path}"
+R2_CODE_ROOT="$CYJ11_R2_ANALYSIS_ROOT/code_snapshots/r2"
+(cd "$REPO" && "$CYJ11_R2_PYTHON" -m paper_experiments.joint_vs_2dfit.phase2_clean.cyj11_analysis_archive archive-git --repository "$CYJ11_R2_ORCHESTRATOR_WORKTREE" --commit ed2feb75b551db2a34adf5e94f22b54785986617 --output "$R2_CODE_ROOT/orchestrator/ed2feb75b551db2a34adf5e94f22b54785986617")
+(cd "$REPO" && "$CYJ11_R2_PYTHON" -m paper_experiments.joint_vs_2dfit.phase2_clean.cyj11_analysis_archive archive-git --repository "$CYJ11_R2_SPARSE_WORKTREE" --commit 6f4142cccc17782ba6e985e74531822560b369f3 --output "$R2_CODE_ROOT/sparse/6f4142cccc17782ba6e985e74531822560b369f3")
+(cd "$REPO" && "$CYJ11_R2_PYTHON" -m paper_experiments.joint_vs_2dfit.phase2_clean.cyj11_analysis_archive archive-git --repository "$CYJ11_R2_Q002_WORKTREE" --commit de41aef1c52b12037efed20f71cdf0db4696d49c --output "$R2_CODE_ROOT/q002/de41aef1c52b12037efed20f71cdf0db4696d49c")
+(cd "$REPO" && "$CYJ11_R2_PYTHON" -m paper_experiments.joint_vs_2dfit.phase2_clean.cyj11_analysis_archive archive-git --repository "$CYJ11_R2_FIT_FIRST_WORKTREE" --commit 00d88b45c75f272f05538997e38fbda85988e7aa --output "$R2_CODE_ROOT/fit_first/00d88b45c75f272f05538997e38fbda85988e7aa")
+R2_CONFIG="$CYJ11_R2_ANALYSIS_ROOT/configs/r2/$CYJ11_R2_SUBJECT"
+[[ ! -e "$R2_CONFIG/run_cyj11_untrimmed_reproduction.sh" ]] || { echo "r2 config archive already exists" >&2; exit 1; }
+mkdir -p "$R2_CONFIG"
+cp "$CYJ11_R2_RUNNER_SCRIPT" "$R2_CONFIG/run_cyj11_untrimmed_reproduction.sh"

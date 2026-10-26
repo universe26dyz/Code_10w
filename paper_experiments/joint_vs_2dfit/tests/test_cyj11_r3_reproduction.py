@@ -153,6 +153,8 @@ def _r2_case(root: Path, subject: str, case: str) -> None:
         path = root / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(relative.as_posix(), encoding="utf-8")
+    (root / "reproduction_plan.json").write_text("{}", encoding="utf-8")
+    (root / "commands.log").write_text("r2 command\n", encoding="utf-8")
 
 
 def test_r2_import_copies_only_supported_case_artifacts_and_writes_migration(tmp_path: Path) -> None:
@@ -169,5 +171,18 @@ def test_r2_import_copies_only_supported_case_artifacts_and_writes_migration(tmp
     assert record["subject"] == subject
     assert (analysis_root / "reconstruction/proposed/DYZ/SAX100_2CH0_4CH0/T1_3D.nii.gz").is_file()
     assert (analysis_root / "endpoints/central/fit_first/DYZ/S2CH100_4CH50_fold1/manifest.json").is_file()
+    assert (analysis_root / "jobs/r2/DYZ/SAX100_2CH0_4CH0.reproduction_plan.json").is_file()
+    assert (analysis_root / "logs/r2/DYZ.SAX100_2CH0_4CH0.commands.log").is_file()
     assert not (analysis_root / "metrics").exists()
     assert (analysis_root / "migrations/r2_import/DYZ.json").is_file()
+
+
+def test_git_archive_reuses_only_the_same_immutable_commit(tmp_path: Path) -> None:
+    from paper_experiments.joint_vs_2dfit.phase2_clean.cyj11_analysis_archive import archive_git_commit
+
+    repository = Path(__file__).resolve().parents[3]
+    output = tmp_path / "snapshot"
+    first = archive_git_commit(repository, "HEAD", output)
+    second = archive_git_commit(repository, first["commit"], output)
+
+    assert second == first

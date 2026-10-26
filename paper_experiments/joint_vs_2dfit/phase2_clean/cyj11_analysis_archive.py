@@ -60,6 +60,15 @@ def copytree_new(source: Path, destination: Path) -> None:
     shutil.copytree(source, destination)
 
 
+def copyfile_new(source: Path, destination: Path) -> None:
+    if not source.is_file():
+        raise FileNotFoundError(f"copy source is not a file: {source}")
+    if destination.exists():
+        raise FileExistsError(f"refusing overwrite: {destination}")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source, destination)
+
+
 def import_r2_subject(r2_root: Path, analysis_root: Path, subject: str) -> dict[str, object]:
     """Physically import only the r2 artifacts required by later analysis."""
     r2_root, analysis_root = r2_root.resolve(), analysis_root.resolve()
@@ -85,6 +94,18 @@ def import_r2_subject(r2_root: Path, analysis_root: Path, subject: str) -> dict[
                 "source_tree_sha256": tree_sha256(source),
                 "destination_tree_sha256": tree_sha256(destination),
             })
+        for source_name, destination in (
+            ("reproduction_plan.json", analysis_root / "jobs" / "r2" / subject / f"{case}.reproduction_plan.json"),
+            ("commands.log", analysis_root / "logs" / "r2" / f"{subject}.{case}.commands.log"),
+        ):
+            source = case_root / source_name
+            copyfile_new(source, destination)
+            copied.append({
+                "source": str(source),
+                "destination": str(destination),
+                "source_sha256": _sha256(source),
+                "destination_sha256": _sha256(destination),
+            })
     record = {
         "schema": "ismrm_five_subject_r2_import/v1",
         "subject": subject,
@@ -101,9 +122,15 @@ def import_r2_subject(r2_root: Path, analysis_root: Path, subject: str) -> dict[
 def archive_git_commit(repository: Path, commit: str, output: Path) -> dict[str, object]:
     """Create an immutable source tarball plus admission record from one commit."""
     repository, output = repository.resolve(), output.resolve()
-    if output.exists():
-        raise FileExistsError(f"refusing overwrite: {output}")
     actual = subprocess.check_output(["git", "-C", str(repository), "rev-parse", commit], text=True).strip()
+    if output.exists():
+        record_path, archive = output / "COMMIT.json", output / "source.tar"
+        if not record_path.is_file() or not archive.is_file():
+            raise FileExistsError(f"refusing incomplete existing archive: {output}")
+        record = json.loads(record_path.read_text(encoding="utf-8"))
+        if record.get("repository") != str(repository) or record.get("commit") != actual or record.get("archive_sha256") != _sha256(archive):
+            raise FileExistsError(f"refusing mismatched existing archive: {output}")
+        return record
     subject = subprocess.check_output(["git", "-C", str(repository), "show", "-s", "--format=%s", actual], text=True).strip()
     output.mkdir(parents=True)
     archive = output / "source.tar"
