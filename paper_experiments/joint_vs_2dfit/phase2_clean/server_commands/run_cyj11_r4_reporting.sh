@@ -14,6 +14,7 @@ MODE=${1:---dry-run}
 : "${CYJ11_R4_PROTOCOL:?set CYJ11_R4_PROTOCOL to profile-v2 or legacy-density}"
 : "${CYJ11_R4_ANALYSIS_ROOT:?set CYJ11_R4_ANALYSIS_ROOT}"
 : "${CYJ11_R4_HISTORICAL_WORKTREE:?set CYJ11_R4_HISTORICAL_WORKTREE at 00d88b45}"
+: "${CYJ11_R4_DIRECT_NATIVE_AUDIT_WORKTREE:?set CYJ11_R4_DIRECT_NATIVE_AUDIT_WORKTREE at 5ceebbe}"
 
 case "$CYJ11_R4_SUBJECT" in CYJ|DYZ|HJL|HHZ|DYL_2) ;; *) echo "invalid CYJ11_R4_SUBJECT: $CYJ11_R4_SUBJECT" >&2; exit 2;; esac
 case "$CYJ11_R4_PROTOCOL" in profile-v2|legacy-density) ;; *) echo "invalid CYJ11_R4_PROTOCOL: $CYJ11_R4_PROTOCOL" >&2; exit 2;; esac
@@ -28,6 +29,7 @@ PLAN_COMMAND=(
     "$CYJ11_R4_PYTHON" -m paper_experiments.joint_vs_2dfit.phase2_clean.cyj11_r4_reporting
     --subject "$CYJ11_R4_SUBJECT" --protocol "$CYJ11_R4_PROTOCOL"
     --analysis-root "$CYJ11_R4_ANALYSIS_ROOT" --historical-worktree "$CYJ11_R4_HISTORICAL_WORKTREE"
+    --direct-native-audit-worktree "$CYJ11_R4_DIRECT_NATIVE_AUDIT_WORKTREE"
     --python-executable "$CYJ11_R4_PYTHON" --device "${CYJ11_R4_DEVICE:-cuda:0}"
 )
 [[ -z ${CYJ11_R4_PREPARED_ROOT:-} ]] || PLAN_COMMAND+=(--prepared-root "$CYJ11_R4_PREPARED_ROOT")
@@ -71,6 +73,7 @@ printf '\n' >> "$PLAN_PATH.command.sh"
 
 (cd "$REPO" && "$CYJ11_R4_PYTHON" -m paper_experiments.joint_vs_2dfit.phase2_clean.cyj11_analysis_archive archive-git --repository "$REPO" --commit "$RUNNER_COMMIT" --output "$CYJ11_R4_ANALYSIS_ROOT/code_snapshots/r4/orchestrator/$RUNNER_COMMIT")
 (cd "$REPO" && "$CYJ11_R4_PYTHON" -m paper_experiments.joint_vs_2dfit.phase2_clean.cyj11_analysis_archive archive-git --repository "$CYJ11_R4_HISTORICAL_WORKTREE" --commit 00d88b45c75f272f05538997e38fbda85988e7aa --output "$CYJ11_R4_ANALYSIS_ROOT/code_snapshots/r4/historical/00d88b45c75f272f05538997e38fbda85988e7aa")
+(cd "$REPO" && "$CYJ11_R4_PYTHON" -m paper_experiments.joint_vs_2dfit.phase2_clean.cyj11_analysis_archive archive-git --repository "$CYJ11_R4_DIRECT_NATIVE_AUDIT_WORKTREE" --commit 5ceebbeb5f510cb4cf53b3d2e0744d3ab62e3d0a --output "$CYJ11_R4_ANALYSIS_ROOT/code_snapshots/r4/direct_native_audit/5ceebbeb5f510cb4cf53b3d2e0744d3ab62e3d0a")
 {
     echo "python_executable=$CYJ11_R4_PYTHON"
     "$CYJ11_R4_PYTHON" --version

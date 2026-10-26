@@ -1,8 +1,10 @@
-"""Plan and execute r4 metrics/reporting with the immutable CYJ1.1 00d88 code.
+"""Plan and execute r4 metrics/reporting with immutable CYJ1.1 code.
 
 This module deliberately owns only admission, paths, provenance and physical
-publication.  Every scientific calculation and every figure is run as a
-subprocess in the detached ``00d88b45...`` worktree.
+publication.  Metrics, masks, figures and aggregation run in the detached
+``00d88b45...`` worktree.  The direct-native support audit runs in the narrow
+post-00d compatibility fix that restores each checkpoint's saved training
+space before evaluating its INR.
 """
 from __future__ import annotations
 
@@ -18,6 +20,7 @@ from typing import Any, Callable, Iterable
 
 PLAN_SCHEMA = "cyj11_r4_reporting_plan/v1"
 FIXED_00D88_COMMIT = "00d88b45c75f272f05538997e38fbda85988e7aa"
+DIRECT_NATIVE_AUDIT_COMPAT_COMMIT = "5ceebbeb5f510cb4cf53b3d2e0744d3ab62e3d0a"
 R4_SOURCE = "r4_00d88b45c75f"
 SUBJECTS = ("CYJ", "DYZ", "HJL", "HHZ", "DYL_2")
 PROFILE_CASES = (
@@ -35,6 +38,7 @@ class R4Inputs:
     protocol: str
     analysis_root: Path
     historical_worktree: Path
+    direct_native_audit_worktree: Path | None = None
     python_executable: str = sys.executable
     device: str = "cuda:0"
     prepared_root: Path | None = None
@@ -138,6 +142,15 @@ def build_r4_plan(inputs: R4Inputs, *, git_head: Callable[[Path], str] = _git_he
     _require_directory(inputs.historical_worktree, "r4 fixed historical worktree")
     if git_head(inputs.historical_worktree) != FIXED_00D88_COMMIT:
         raise ValueError(f"r4 fixed historical worktree must be pinned to 00d88b45 ({FIXED_00D88_COMMIT})")
+    if inputs.direct_native_audit_worktree is None:
+        raise ValueError("r4 requires an explicit direct-native audit worktree pinned to 5ceebbe")
+    audit_worktree = inputs.direct_native_audit_worktree.resolve()
+    _require_directory(audit_worktree, "r4 direct-native audit compatibility worktree")
+    if git_head(audit_worktree) != DIRECT_NATIVE_AUDIT_COMPAT_COMMIT:
+        raise ValueError(
+            "r4 direct-native audit worktree must be pinned to "
+            f"5ceebbe ({DIRECT_NATIVE_AUDIT_COMPAT_COMMIT})"
+        )
     prepared = (inputs.prepared_root or root / "prepared" / inputs.subject).resolve()
     _require_directory(prepared, "r4 cropped prepared root")
     for stack in ("sax", "2ch", "4ch"):
@@ -190,7 +203,7 @@ def build_r4_plan(inputs: R4Inputs, *, git_head: Callable[[Path], str] = _git_he
 
     fixed = inputs.historical_worktree.resolve()
     steps: list[dict[str, Any]] = [
-        {"id": "direct_native_l100_audit", "kind": "command", "cwd": str(fixed), "argv": _command(
+        {"id": "direct_native_l100_audit", "kind": "command", "cwd": str(audit_worktree), "argv": _command(
             inputs.python_executable, "-m", "paper_experiments.joint_vs_2dfit.phase2_clean.direct_native_endpoint_audit",
             "--checkpoint", checkpoint, "--prepared-root", prepared, "--r0-native-maps-root", native_cache,
             "--sparse-manifest", l100["sparse"], "--central-t1", l100["proposed"] / "T1_3D.nii.gz",
@@ -228,16 +241,18 @@ def build_r4_plan(inputs: R4Inputs, *, git_head: Callable[[Path], str] = _git_he
         "schema": "cyj11_r4_generation/v1", "status": "COMPLETE", "subject": inputs.subject,
         "protocol": inputs.protocol, "cases": list(cases), "r4_source": R4_SOURCE,
         "fixed_metrics_visualization_commit": FIXED_00D88_COMMIT,
+        "direct_native_audit_commit": DIRECT_NATIVE_AUDIT_COMPAT_COMMIT,
         "metrics_root": str((root / "metrics" / "central" / inputs.subject).resolve()),
         "report_collection": str(collection), "summary": str(summary), "figures_enabled": render_figures,
     }})
     return {
         "schema": PLAN_SCHEMA,
         "fixed_metrics_visualization_commit": FIXED_00D88_COMMIT,
+        "direct_native_audit_commit": DIRECT_NATIVE_AUDIT_COMPAT_COMMIT,
         "identity": {"subject": inputs.subject, "protocol": inputs.protocol, "cases": list(cases)},
         "analysis_root": str(root),
         "r4_source": R4_SOURCE,
-        "provenance": {"prepared_root": str(prepared), "r0_native_maps_root": str(native_cache.resolve()), "l100_proposed_checkpoint": str(checkpoint), "l100_sparse_manifest": str(l100["sparse"].resolve()), "fixed_worktree": str(fixed)},
+        "provenance": {"prepared_root": str(prepared), "r0_native_maps_root": str(native_cache.resolve()), "l100_proposed_checkpoint": str(checkpoint), "l100_sparse_manifest": str(l100["sparse"].resolve()), "fixed_worktree": str(fixed), "direct_native_audit_worktree": str(audit_worktree)},
         "publication": {"metrics": str(root / "metrics" / "central" / inputs.subject), "report_collection": str(collection), "summary": str(summary), "figures_enabled": render_figures},
         "steps": steps,
     }
@@ -349,6 +364,7 @@ def _parse_inputs(argv: Iterable[str] | None = None) -> tuple[R4Inputs, bool]:
     parser.add_argument("--protocol", required=True, choices=tuple(PROTOCOL_CASES))
     parser.add_argument("--analysis-root", required=True)
     parser.add_argument("--historical-worktree", required=True)
+    parser.add_argument("--direct-native-audit-worktree", required=True)
     parser.add_argument("--prepared-root")
     parser.add_argument("--r0-native-maps-root")
     parser.add_argument("--l100-proposed-checkpoint")
@@ -357,7 +373,7 @@ def _parse_inputs(argv: Iterable[str] | None = None) -> tuple[R4Inputs, bool]:
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--render-figures", action="store_true")
     args = parser.parse_args(argv)
-    return R4Inputs(subject=args.subject, protocol=args.protocol, analysis_root=Path(args.analysis_root), historical_worktree=Path(args.historical_worktree), prepared_root=Path(args.prepared_root) if args.prepared_root else None, r0_native_maps_root=Path(args.r0_native_maps_root) if args.r0_native_maps_root else None, l100_proposed_checkpoint=Path(args.l100_proposed_checkpoint) if args.l100_proposed_checkpoint else None, cases=tuple(args.case), python_executable=args.python_executable, device=args.device), args.render_figures
+    return R4Inputs(subject=args.subject, protocol=args.protocol, analysis_root=Path(args.analysis_root), historical_worktree=Path(args.historical_worktree), direct_native_audit_worktree=Path(args.direct_native_audit_worktree), prepared_root=Path(args.prepared_root) if args.prepared_root else None, r0_native_maps_root=Path(args.r0_native_maps_root) if args.r0_native_maps_root else None, l100_proposed_checkpoint=Path(args.l100_proposed_checkpoint) if args.l100_proposed_checkpoint else None, cases=tuple(args.case), python_executable=args.python_executable, device=args.device), args.render_figures
 
 
 def main(argv: Iterable[str] | None = None) -> None:

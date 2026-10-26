@@ -48,13 +48,14 @@ def _inputs(tmp_path: Path, *, protocol: str = "profile-v2"):
     if protocol == "profile-v2":
         _case_inputs(root, subject, "SAX100_2CH0_4CH0", profile=True)
     historical = tmp_path / "fit-00d88"; historical.mkdir()
+    direct_native_audit = tmp_path / "direct-native-audit-5ce"; direct_native_audit.mkdir()
     cases = ("SAX100_2CH0_4CH0",) if protocol == "profile-v2" else ("L100_fold0",)
-    return R4Inputs(subject=subject, protocol=protocol, analysis_root=root, historical_worktree=historical, python_executable="python", device="cuda:0", cases=cases)
+    return R4Inputs(subject=subject, protocol=protocol, analysis_root=root, historical_worktree=historical, direct_native_audit_worktree=direct_native_audit, python_executable="python", device="cuda:0", cases=cases)
 
 
 def _head(_path: Path) -> str:
-    from paper_experiments.joint_vs_2dfit.phase2_clean.cyj11_r4_reporting import FIXED_00D88_COMMIT
-    return FIXED_00D88_COMMIT
+    from paper_experiments.joint_vs_2dfit.phase2_clean.cyj11_r4_reporting import DIRECT_NATIVE_AUDIT_COMPAT_COMMIT, FIXED_00D88_COMMIT
+    return DIRECT_NATIVE_AUDIT_COMPAT_COMMIT if _path.name == "direct-native-audit-5ce" else FIXED_00D88_COMMIT
 
 
 def _step(plan: dict[str, object], identifier: str) -> dict[str, object]:
@@ -72,13 +73,39 @@ def test_profile_plan_uses_fixed_worktree_and_separate_r4_namespace(tmp_path: Pa
     assert plan["identity"] == {"subject": "CYJ", "protocol": "profile-v2", "cases": ["SAX100_2CH0_4CH0"]}
     assert not (inputs.analysis_root / "metrics").exists()
     audit = _step(plan, "direct_native_l100_audit")
-    assert audit["cwd"] == str(inputs.historical_worktree.resolve())
+    assert audit["cwd"] == str(inputs.direct_native_audit_worktree.resolve())
     assert audit["argv"][1:3] == ["-m", "paper_experiments.joint_vs_2dfit.phase2_clean.direct_native_endpoint_audit"]
     metric = _step(plan, "metrics_SAX100_2CH0_4CH0")
     assert metric["cwd"] == str(inputs.historical_worktree.resolve())
     assert metric["argv"][1:3] == ["-m", "paper_experiments.joint_vs_2dfit.phase2_clean.final_stratified_native_metrics"]
     assert "r4_00d88b45c75f" in " ".join(metric["argv"])
     assert "historical" not in " ".join(metric["argv"]).lower()
+
+
+def test_direct_native_audit_uses_its_checkpoint_compatible_worktree_only(tmp_path: Path) -> None:
+    """The support audit must restore r3's post-stack-init checkpoint space.
+
+    Metrics, masks, figures and aggregation remain fixed to 00d88; only the
+    compatibility audit is allowed to run from the post-00d repair commit.
+    """
+    from paper_experiments.joint_vs_2dfit.phase2_clean.cyj11_r4_reporting import (
+        DIRECT_NATIVE_AUDIT_COMPAT_COMMIT,
+        R4Inputs,
+        build_r4_plan,
+    )
+
+    inputs = _inputs(tmp_path)
+    audit_worktree = inputs.direct_native_audit_worktree
+    assert audit_worktree is not None
+
+    def heads(path: Path) -> str:
+        return DIRECT_NATIVE_AUDIT_COMPAT_COMMIT if path == audit_worktree else _head(path)
+
+    plan = build_r4_plan(inputs, git_head=heads)
+
+    assert _step(plan, "direct_native_l100_audit")["cwd"] == str(audit_worktree.resolve())
+    assert _step(plan, "current_native_masks")["cwd"] == str(inputs.historical_worktree.resolve())
+    assert _step(plan, "metrics_SAX100_2CH0_4CH0")["cwd"] == str(inputs.historical_worktree.resolve())
 
 
 def test_profile_figure_configuration_preserves_explicit_custom_case_identity(tmp_path: Path) -> None:
@@ -166,7 +193,7 @@ def test_r4_runner_dry_run_writes_no_analysis_artifact(tmp_path: Path) -> None:
     inputs = _inputs(tmp_path)
     fake_bin = tmp_path / "bin"; fake_bin.mkdir()
     fake_git = fake_bin / "git"
-    fake_git.write_text("#!/bin/sh\nif [ \"$3\" = rev-parse ]; then echo 00d88b45c75f272f05538997e38fbda85988e7aa; exit 0; fi\nexit 2\n", encoding="utf-8")
+    fake_git.write_text("#!/bin/sh\nif [ \"$3\" = rev-parse ]; then case \"$2\" in *direct-native-audit-5ce) echo 5ceebbeb5f510cb4cf53b3d2e0744d3ab62e3d0a ;; *) echo 00d88b45c75f272f05538997e38fbda85988e7aa ;; esac; exit 0; fi\nexit 2\n", encoding="utf-8")
     fake_git.chmod(0o755)
     repo = Path(__file__).resolve().parents[3]
     script = repo / "paper_experiments/joint_vs_2dfit/phase2_clean/server_commands/run_cyj11_r4_reporting.sh"
@@ -174,6 +201,7 @@ def test_r4_runner_dry_run_writes_no_analysis_artifact(tmp_path: Path) -> None:
         **os.environ, "PATH": str(fake_bin) + os.pathsep + os.environ["PATH"], "REPO": str(repo),
         "CYJ11_R4_PYTHON": os.sys.executable, "CYJ11_R4_SUBJECT": "CYJ", "CYJ11_R4_PROTOCOL": "profile-v2",
         "CYJ11_R4_ANALYSIS_ROOT": str(inputs.analysis_root), "CYJ11_R4_HISTORICAL_WORKTREE": str(inputs.historical_worktree),
+        "CYJ11_R4_DIRECT_NATIVE_AUDIT_WORKTREE": str(inputs.direct_native_audit_worktree),
         "CYJ11_R4_CASES": "SAX100_2CH0_4CH0",
     }
     result = subprocess.run(["bash", str(script), "--dry-run"], cwd=repo, env=env, text=True, capture_output=True, check=True)
