@@ -123,7 +123,9 @@ def validate_aha16_statistics(rows: Iterable[Mapping[str, object]], *, minimum_s
             "failures": failures, "note": "Visual AHA orientation QC remains mandatory before final Figure 3."}
 
 
-def render_single_bullseye(output_png: str | Path, values: Mapping[int, float], *, parameter: str, title: str) -> Path:
+def render_single_bullseye(output_png: str | Path, values: Mapping[int, float], *, parameter: str, title: str,
+                           display_range: tuple[float, float] | None = None,
+                           colorbar_label: str | None = None) -> Path:
     """Save exactly one historical-style AHA16 bullseye as immutable PNG/PDF."""
     import os
     os.environ.setdefault("MPLBACKEND", "Agg")
@@ -138,7 +140,9 @@ def render_single_bullseye(output_png: str | Path, values: Mapping[int, float], 
     if output.exists() or pdf.exists():
         raise FileExistsError(f"refusing overwrite: {output} or {pdf}")
     output.parent.mkdir(parents=True, exist_ok=True)
-    vmin, vmax = DISPLAY_RANGES[parameter]
+    vmin, vmax = DISPLAY_RANGES[parameter] if display_range is None else tuple(map(float, display_range))
+    if not (np.isfinite((vmin, vmax)).all() and vmin < vmax):
+        raise ValueError("bullseye display range must be finite and increasing")
     fig, axis = plt.subplots(figsize=(4.2, 4.8), constrained_layout=True)
     norm, cmap = plt.Normalize(vmin, vmax), plt.get_cmap("viridis")
     for inner, outer, segments in ((.66, 1., range(1, 7)), (.34, .66, range(7, 13)), (.08, .34, range(13, 17))):
@@ -154,7 +158,8 @@ def render_single_bullseye(output_png: str | Path, values: Mapping[int, float], 
             axis.text(radius * np.cos(theta), radius * np.sin(theta), label, ha="center", va="center", fontsize=6)
     axis.set(xlim=(-1.05, 1.05), ylim=(-1.05, 1.05), aspect="equal")
     axis.axis("off"); axis.set_title(title, fontsize=9)
-    fig.colorbar(plt.cm.ScalarMappable(norm=norm, cmap=cmap), ax=axis, label=f"{parameter.upper()} (ms)", shrink=.8)
+    fig.colorbar(plt.cm.ScalarMappable(norm=norm, cmap=cmap), ax=axis,
+                 label=colorbar_label or f"{parameter.upper()} (ms)", shrink=.8)
     fig.savefig(output, dpi=200, bbox_inches="tight", facecolor="white")
     fig.savefig(pdf, bbox_inches="tight", facecolor="white")
     plt.close(fig)
