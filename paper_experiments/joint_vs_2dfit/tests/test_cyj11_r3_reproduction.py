@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import hashlib
+import os
 from pathlib import Path
+import subprocess
 
 import numpy as np
 
@@ -107,3 +109,65 @@ def test_r3_plan_rejects_wrong_historical_head_and_existing_case_destination(tmp
         assert "non-empty r3 destination" in str(error)
     else:
         raise AssertionError("occupied r3 case destination must be rejected")
+
+
+def test_r3_runner_dry_run_binds_subject_without_creating_analysis_root(tmp_path: Path) -> None:
+    inputs = _inputs(tmp_path)
+    fake_bin = tmp_path / "bin"; fake_bin.mkdir()
+    fake_git = fake_bin / "git"
+    fake_git.write_text(
+        "#!/bin/sh\nif [ \"$3\" = rev-parse ]; then echo dad9698b5b2b5cd98267a6d23f1eb866b54791d3; exit 0; fi\nexit 2\n",
+        encoding="utf-8",
+    )
+    fake_git.chmod(0o755)
+    repo = Path(__file__).resolve().parents[3]
+    script = repo / "paper_experiments/joint_vs_2dfit/phase2_clean/server_commands/run_cyj11_r3_reproduction.sh"
+    env = {
+        **os.environ,
+        "PATH": str(fake_bin) + os.pathsep + os.environ["PATH"],
+        "REPO": str(repo),
+        "CYJ11_R3_PYTHON": os.sys.executable,
+        "CYJ11_R3_SUBJECT": "DYZ",
+        "CYJ11_R3_SOURCE_PREPARED_ROOT": str(inputs.source_prepared_root),
+        "CYJ11_R3_ANALYSIS_ROOT": str(inputs.analysis_root),
+        "CYJ11_R3_HISTORICAL_WORKTREE": str(inputs.historical_worktree),
+        "CYJ11_R3_B6_MODEL": str(inputs.b6_model),
+        "CYJ11_R3_SIGNAL_SIMULATOR": str(inputs.signal_simulator),
+        "CYJ11_R3_NESVOR_EXECUTABLE": str(inputs.nesvor_executable),
+        "CYJ11_R3_EXPECTED_B6_SHA256": inputs.expected_b6_model_sha256,
+        "CYJ11_R3_EXPECTED_SIGNAL_SIMULATOR_SHA256": inputs.expected_signal_simulator_sha256,
+    }
+    result = subprocess.run(["bash", str(script), "--dry-run"], cwd=repo, env=env, text=True, capture_output=True, check=True)
+    assert '"subject": "DYZ"' in result.stdout
+    assert not inputs.analysis_root.exists()
+
+
+def _r2_case(root: Path, subject: str, case: str) -> None:
+    for relative in (
+        Path("sparse_inputs") / subject / case / "sparse_manifest.json",
+        Path("proposed") / subject / case / "T1_3D.nii.gz",
+        Path("fit_first") / subject / case / "input_manifest.json",
+        Path("formal_endpoints/Q002S640") / subject / case / "central" / "manifest.json",
+        Path("formal_endpoints/Fit-first") / subject / case / "central" / "manifest.json",
+    ):
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(relative.as_posix(), encoding="utf-8")
+
+
+def test_r2_import_copies_only_supported_case_artifacts_and_writes_migration(tmp_path: Path) -> None:
+    from paper_experiments.joint_vs_2dfit.phase2_clean.cyj11_analysis_archive import R2_CASES, import_r2_subject
+
+    source = tmp_path / "r2"; subject = "DYZ"
+    for case in R2_CASES:
+        _r2_case(source / subject / case, subject, case)
+    metrics = source / subject / R2_CASES[0] / "metrics" / "must_not_copy.txt"
+    metrics.parent.mkdir(parents=True); metrics.write_text("metrics", encoding="utf-8")
+    analysis_root = tmp_path / "analysis"
+    record = import_r2_subject(source, analysis_root, subject)
+
+    assert record["subject"] == subject
+    assert (analysis_root / "reconstruction/proposed/DYZ/SAX100_2CH0_4CH0/T1_3D.nii.gz").is_file()
+    assert (analysis_root / "endpoints/central/fit_first/DYZ/S2CH100_4CH50_fold1/manifest.json").is_file()
+    assert not (analysis_root / "metrics").exists()
+    assert (analysis_root / "migrations/r2_import/DYZ.json").is_file()
