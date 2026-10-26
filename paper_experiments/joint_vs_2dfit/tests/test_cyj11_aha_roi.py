@@ -180,7 +180,7 @@ def test_cyj11_native_sax_requires_manifest_bound_to_prepared_input(tmp_path) ->
 def test_cyj11_native_sax_accepts_historical_unsealed_dictionary_manifest(tmp_path) -> None:
     """Unified imported CYJ cache predates per-file digest fields but binds its prepared SAX source."""
     from paper_experiments.joint_vs_2dfit.aha.cyj11_adapter import load_cyj11_native_sax
-    from paper_experiments.joint_vs_2dfit.phase2_clean.contracts import sha256
+    from paper_experiments.joint_vs_2dfit.phase2_clean.contracts import BASELINE_POSE_POLICY, sha256
     from paper_experiments.joint_vs_2dfit.phase2_clean.fit_first import NATIVE_FIT_METHOD
 
     prepared = tmp_path / "prepared.npz"
@@ -192,7 +192,7 @@ def test_cyj11_native_sax_accepts_historical_unsealed_dictionary_manifest(tmp_pa
         "method": NATIVE_FIT_METHOD,
         "source_observations": {"path": str(prepared), "sha256": sha256(prepared)},
         "dictionary_cache_entries": 1,
-        "baseline_pose_policy": "historical-current-pose",
+        "baseline_pose_policy": BASELINE_POSE_POLICY,
         "next_formal_step": "independent registration",
     }))
 

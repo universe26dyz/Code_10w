@@ -9,7 +9,7 @@ from typing import Any
 
 import numpy as np
 
-from ..phase2_clean.contracts import sha256, write_immutable_json
+from ..phase2_clean.contracts import BASELINE_POSE_POLICY, sha256, write_immutable_json
 from ..phase2_clean.fit_first import NATIVE_FIT_METHOD
 
 
@@ -199,7 +199,7 @@ def load_cyj11_native_sax(cache_root: str | Path, prepared_sax_path: str | Path)
         and isinstance(manifest.get("dictionary_cache_entries"), int)
         and not isinstance(manifest.get("dictionary_cache_entries"), bool)
         and manifest["dictionary_cache_entries"] > 0
-        and isinstance(manifest.get("baseline_pose_policy"), str)
+        and manifest.get("baseline_pose_policy") == BASELINE_POSE_POLICY
         and isinstance(manifest.get("next_formal_step"), str)
     ):
         raise ValueError("CYJ1.1 native SAX cache lacks sealed SHA256 provenance")
