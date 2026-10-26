@@ -214,6 +214,17 @@ def test_cyj11_runner_uses_the_unified_native_maps_cache_layout(tmp_path, monkey
     assert captured["prepared"] == tmp_path / "prepared" / "CYJ" / "sax" / "observations.npz"
 
 
+def test_cyj11_native_stack_root_accepts_direct_subject_cache_layout(tmp_path) -> None:
+    from paper_experiments.joint_vs_2dfit.aha.cyj11_adapter import cyj11_native_stack_root
+
+    direct = tmp_path / "native_cache" / "DYZ" / "sax"
+    direct.mkdir(parents=True)
+    for name in ("native_maps.npz", "geometry.npz", "manifest.json"):
+        (direct / name).write_bytes(b"fixture")
+
+    assert cyj11_native_stack_root(tmp_path, "DYZ") == direct
+
+
 def test_cyj11_roi_plane_uses_only_explicit_discrete_mapping() -> None:
     from paper_experiments.joint_vs_2dfit.aha.cyj11_legacy_roi import mapped_manual_roi_plane
 
