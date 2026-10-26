@@ -183,6 +183,7 @@ def build_r3_plan(inputs: R3Inputs, *, git_head: Callable[[Path], str] = _git_he
         sparse_root = root / "sparse_inputs"
         sparse_case = sparse_root / inputs.subject / case
         sparse_manifest = sparse_case / "sparse_manifest.json"
+        reconstruction_prepared = prepared_subject if case == "L100_fold0" else sparse_case
         proposed_root = root / "reconstruction" / "proposed" / inputs.subject / case
         fit_root = root / "reconstruction" / "fit_first" / inputs.subject / case
         proposed_endpoint = root / "endpoints" / "central" / "proposed" / inputs.subject / case
@@ -194,13 +195,13 @@ def build_r3_plan(inputs: R3Inputs, *, git_head: Callable[[Path], str] = _git_he
         )})
         steps.append({"id": f"proposed_{case}", "cwd": str(inputs.historical_worktree.resolve()), "argv": _command(
             inputs.python_executable, "-m", "paper_experiments.joint_vs_2dfit.phase2_clean.proposed",
-            "--prepared-root", sparse_case, "--decoder", inputs.signal_simulator,
+            "--prepared-root", reconstruction_prepared, "--decoder", inputs.signal_simulator,
             "--b6-model", inputs.b6_model, "--output", proposed_root,
             "--subject-id", inputs.subject, "--device", inputs.device, "--execute",
         )})
         baseline = _command(
             inputs.python_executable, "-m", "paper_experiments.joint_vs_2dfit.phase2_clean.baseline",
-            "--prepared-root", sparse_case, "--subject-id", inputs.subject, "--output", fit_root,
+            "--prepared-root", reconstruction_prepared, "--subject-id", inputs.subject, "--output", fit_root,
             "--nesvor-executable", inputs.nesvor_executable,
         )
         if case != "L100_fold0":

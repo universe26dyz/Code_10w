@@ -83,6 +83,20 @@ def test_r3_plan_builds_the_three_case_historical_dag_without_final5_reuse(tmp_p
         assert fit_endpoint[fit_endpoint.index("--r0-native-maps-root") + 1].endswith("native_cache/DYZ")
 
 
+def test_r3_l100_uses_full_prepared_observations_but_sparse_cases_use_case_roots(tmp_path: Path) -> None:
+    from paper_experiments.joint_vs_2dfit.phase2_clean.cyj11_r3_reproduction import build_r3_plan
+
+    plan = build_r3_plan(_inputs(tmp_path), git_head=_dad_head)
+
+    for step_id in ("proposed_L100_fold0", "fit_first_L100_fold0"):
+        argv = _step(plan, step_id)["argv"]
+        assert argv[argv.index("--prepared-root") + 1].endswith("prepared/DYZ")
+    for case in ("L50_fold0", "L25_fold0"):
+        for step_id in (f"proposed_{case}", f"fit_first_{case}"):
+            argv = _step(plan, step_id)["argv"]
+            assert argv[argv.index("--prepared-root") + 1].endswith(f"sparse_inputs/DYZ/{case}")
+
+
 def test_r3_plan_marks_dyl2_missing_source_manifests_without_fabricating_them(tmp_path: Path) -> None:
     from paper_experiments.joint_vs_2dfit.phase2_clean.cyj11_r3_reproduction import build_r3_plan
 
