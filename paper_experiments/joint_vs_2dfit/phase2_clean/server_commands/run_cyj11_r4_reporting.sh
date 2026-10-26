@@ -18,6 +18,11 @@ MODE=${1:---dry-run}
 case "$CYJ11_R4_SUBJECT" in CYJ|DYZ|HJL|HHZ|DYL_2) ;; *) echo "invalid CYJ11_R4_SUBJECT: $CYJ11_R4_SUBJECT" >&2; exit 2;; esac
 case "$CYJ11_R4_PROTOCOL" in profile-v2|legacy-density) ;; *) echo "invalid CYJ11_R4_PROTOCOL: $CYJ11_R4_PROTOCOL" >&2; exit 2;; esac
 case "${CYJ11_R4_RENDER_FIGURES:-0}" in 0|1) ;; *) echo "CYJ11_R4_RENDER_FIGURES must be 0 or 1" >&2; exit 2;; esac
+RUN_LABEL=${CYJ11_R4_RUN_LABEL:-}
+[[ -z "$RUN_LABEL" || "$RUN_LABEL" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || {
+    echo "CYJ11_R4_RUN_LABEL must contain only letters, digits, dot, underscore, or dash" >&2
+    exit 2
+}
 
 PLAN_COMMAND=(
     "$CYJ11_R4_PYTHON" -m paper_experiments.joint_vs_2dfit.phase2_clean.cyj11_r4_reporting
@@ -26,6 +31,7 @@ PLAN_COMMAND=(
     --python-executable "$CYJ11_R4_PYTHON" --device "${CYJ11_R4_DEVICE:-cuda:0}"
 )
 [[ -z ${CYJ11_R4_PREPARED_ROOT:-} ]] || PLAN_COMMAND+=(--prepared-root "$CYJ11_R4_PREPARED_ROOT")
+[[ -z ${CYJ11_R4_R0_NATIVE_MAPS_ROOT:-} ]] || PLAN_COMMAND+=(--r0-native-maps-root "$CYJ11_R4_R0_NATIVE_MAPS_ROOT")
 [[ -z ${CYJ11_R4_L100_PROPOSED_CHECKPOINT:-} ]] || PLAN_COMMAND+=(--l100-proposed-checkpoint "$CYJ11_R4_L100_PROPOSED_CHECKPOINT")
 if [[ -n ${CYJ11_R4_CASES:-} ]]; then
     for CASE in $CYJ11_R4_CASES; do PLAN_COMMAND+=(--case "$CASE"); done
@@ -49,10 +55,12 @@ trap 'rm -f "$PLAN_TMP"' EXIT
 JOBS_ROOT="$CYJ11_R4_ANALYSIS_ROOT/jobs/r4"
 LOGS_ROOT="$CYJ11_R4_ANALYSIS_ROOT/logs/r4"
 RUNNER_COMMIT=$(git -C "$REPO" rev-parse HEAD)
-CONFIG_ROOT="$CYJ11_R4_ANALYSIS_ROOT/configs/r4/runners/$CYJ11_R4_SUBJECT.$CYJ11_R4_PROTOCOL.$RUNNER_COMMIT"
+RUN_ID="$CYJ11_R4_SUBJECT.$CYJ11_R4_PROTOCOL.$(basename "$CYJ11_R4_HISTORICAL_WORKTREE")"
+[[ -z "$RUN_LABEL" ]] || RUN_ID="$RUN_ID.$RUN_LABEL"
+CONFIG_ROOT="$CYJ11_R4_ANALYSIS_ROOT/configs/r4/runners/$RUN_ID.$RUNNER_COMMIT"
 ENV_ROOT="$CYJ11_R4_ANALYSIS_ROOT/environments/r4"
-PLAN_PATH="$JOBS_ROOT/$CYJ11_R4_SUBJECT.$CYJ11_R4_PROTOCOL.$(basename "$CYJ11_R4_HISTORICAL_WORKTREE").plan.json"
-COMMAND_LOG="$LOGS_ROOT/$CYJ11_R4_SUBJECT.$CYJ11_R4_PROTOCOL.$(basename "$CYJ11_R4_HISTORICAL_WORKTREE").commands.log"
+PLAN_PATH="$JOBS_ROOT/$RUN_ID.plan.json"
+COMMAND_LOG="$LOGS_ROOT/$RUN_ID.commands.log"
 [[ ! -e "$PLAN_PATH" ]] || { echo "r4 plan already exists: $PLAN_PATH" >&2; exit 1; }
 [[ ! -e "$COMMAND_LOG" ]] || { echo "r4 command log already exists: $COMMAND_LOG" >&2; exit 1; }
 mkdir -p "$JOBS_ROOT" "$LOGS_ROOT" "$CONFIG_ROOT" "$ENV_ROOT"
@@ -67,6 +75,6 @@ printf '\n' >> "$PLAN_PATH.command.sh"
     echo "python_executable=$CYJ11_R4_PYTHON"
     "$CYJ11_R4_PYTHON" --version
     "$CYJ11_R4_PYTHON" -m pip freeze
-} > "$ENV_ROOT/$CYJ11_R4_SUBJECT.$CYJ11_R4_PROTOCOL.txt"
+} > "$ENV_ROOT/$RUN_ID.txt"
 
 (cd "$REPO" && "$CYJ11_R4_PYTHON" -m paper_experiments.joint_vs_2dfit.phase2_clean.cyj11_r4_reporting execute-r4-plan --plan "$PLAN_PATH" --commands-log "$COMMAND_LOG")

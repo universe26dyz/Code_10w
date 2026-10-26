@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+from dataclasses import replace
 from pathlib import Path
 import subprocess
 
@@ -91,6 +92,23 @@ def test_profile_figure_configuration_preserves_explicit_custom_case_identity(tm
     assert config["case_id"] == "SAX100_2CH0_4CH0"
     assert set(config["methods"]) == {"Q002S640", "Fit-first"}
     assert config["native"]["stacks"] == ["sax", "2ch", "4ch"]
+
+
+def test_plan_uses_explicit_versioned_native_cache_root_everywhere(tmp_path: Path) -> None:
+    from paper_experiments.joint_vs_2dfit.phase2_clean.cyj11_r4_reporting import build_r4_plan
+
+    inputs = _inputs(tmp_path)
+    versioned_cache = tmp_path / "versioned_cache" / "CYJ"
+    for stack in ("sax", "2ch", "4ch"):
+        for name in ("native_maps.npz", "geometry.npz", "manifest.json"):
+            _write(versioned_cache / stack / name, "{}")
+    plan = build_r4_plan(replace(inputs, r0_native_maps_root=versioned_cache), git_head=_head, render_figures=True)
+
+    assert plan["provenance"]["r0_native_maps_root"] == str(versioned_cache.resolve())
+    audit = _step(plan, "direct_native_l100_audit")
+    assert audit["argv"][audit["argv"].index("--r0-native-maps-root") + 1] == str(versioned_cache.resolve())
+    figure_config = _step(plan, "figure_config_SAX100_2CH0_4CH0")["payload"]
+    assert figure_config["native"]["r0_native_maps_root"] == str(versioned_cache.resolve())
 
 
 def test_plan_rejects_wrong_fixed_commit_and_existing_r4_destination(tmp_path: Path) -> None:

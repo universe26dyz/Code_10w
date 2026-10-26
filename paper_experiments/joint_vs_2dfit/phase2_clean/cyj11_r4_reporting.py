@@ -38,6 +38,7 @@ class R4Inputs:
     python_executable: str = sys.executable
     device: str = "cuda:0"
     prepared_root: Path | None = None
+    r0_native_maps_root: Path | None = None
     l100_proposed_checkpoint: Path | None = None
     cases: tuple[str, ...] = ()
 
@@ -97,7 +98,7 @@ def _load_sparse(path: Path, *, subject: str, protocol: str, case: str) -> dict[
     return payload
 
 
-def _figure_config(*, root: Path, subject: str, case: str, sparse: Path, profile: dict[str, Any] | None, native_mask_root: Path) -> dict[str, Any]:
+def _figure_config(*, root: Path, subject: str, case: str, sparse: Path, profile: dict[str, Any] | None, native_mask_root: Path, r0_native_maps_root: Path) -> dict[str, Any]:
     paths = _paths(root, subject, case)
     fit = paths["fit_first"]
     proposed = paths["proposed"]
@@ -116,7 +117,7 @@ def _figure_config(*, root: Path, subject: str, case: str, sparse: Path, profile
         },
         "longitudinal": {"axis": 1, "index": "support_median", "common_support_contract": "frozen_L100_display_mask AND in_volume(all configured comparison methods) AND finite(all configured comparison methods)"},
         "native_mask_root": str(native_mask_root.resolve()),
-        "native": {"mode": "all_source_groups", "stacks": ["sax", "2ch", "4ch"], "sparse_manifest": str(sparse.resolve()), "r0_native_maps_root": str((root / "native_cache" / subject).resolve())},
+        "native": {"mode": "all_source_groups", "stacks": ["sax", "2ch", "4ch"], "sparse_manifest": str(sparse.resolve()), "r0_native_maps_root": str(r0_native_maps_root.resolve())},
     }
     if profile is not None:
         config.update({"profile_id": profile["profile_id"], "case_id": case})
@@ -141,7 +142,7 @@ def build_r4_plan(inputs: R4Inputs, *, git_head: Callable[[Path], str] = _git_he
     _require_directory(prepared, "r4 cropped prepared root")
     for stack in ("sax", "2ch", "4ch"):
         _require_file(prepared / stack / "observations.npz", f"r4 prepared {stack} observation")
-    native_cache = root / "native_cache" / inputs.subject
+    native_cache = (inputs.r0_native_maps_root or root / "native_cache" / inputs.subject).resolve()
     _require_directory(native_cache, "r4 R0 native cache")
     for stack in ("sax", "2ch", "4ch"):
         for name in ("native_maps.npz", "geometry.npz", "manifest.json"):
@@ -213,7 +214,7 @@ def build_r4_plan(inputs: R4Inputs, *, git_head: Callable[[Path], str] = _git_he
         steps.append({"id": f"copy_metric_{case}", "kind": "copytree", "source": str(paths["metric"]), "destination": str(report_case)})
         if render_figures:
             config_path = root / "configs" / "r4" / inputs.subject / inputs.protocol / R4_SOURCE / f"{case}.central.figure.json"
-            steps.append({"id": f"figure_config_{case}", "kind": "write_json", "path": str(config_path), "payload": _figure_config(root=root, subject=inputs.subject, case=case, sparse=paths["sparse"], profile=sparse_records[case] if inputs.protocol == "profile-v2" else None, native_mask_root=native_masks)})
+            steps.append({"id": f"figure_config_{case}", "kind": "write_json", "path": str(config_path), "payload": _figure_config(root=root, subject=inputs.subject, case=case, sparse=paths["sparse"], profile=sparse_records[case] if inputs.protocol == "profile-v2" else None, native_mask_root=native_masks, r0_native_maps_root=native_cache)})
             steps.append({"id": f"figures_{case}", "kind": "command", "cwd": str(fixed), "argv": _command(
                 inputs.python_executable, "-m", "paper_experiments.joint_vs_2dfit.phase2_clean.final_cyj_reporting", "figures",
                 "--config", config_path, "--output", figure_root / case,
@@ -348,13 +349,14 @@ def _parse_inputs(argv: Iterable[str] | None = None) -> tuple[R4Inputs, bool]:
     parser.add_argument("--analysis-root", required=True)
     parser.add_argument("--historical-worktree", required=True)
     parser.add_argument("--prepared-root")
+    parser.add_argument("--r0-native-maps-root")
     parser.add_argument("--l100-proposed-checkpoint")
     parser.add_argument("--case", action="append", default=[])
     parser.add_argument("--python-executable", default=sys.executable)
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--render-figures", action="store_true")
     args = parser.parse_args(argv)
-    return R4Inputs(subject=args.subject, protocol=args.protocol, analysis_root=Path(args.analysis_root), historical_worktree=Path(args.historical_worktree), prepared_root=Path(args.prepared_root) if args.prepared_root else None, l100_proposed_checkpoint=Path(args.l100_proposed_checkpoint) if args.l100_proposed_checkpoint else None, cases=tuple(args.case), python_executable=args.python_executable, device=args.device), args.render_figures
+    return R4Inputs(subject=args.subject, protocol=args.protocol, analysis_root=Path(args.analysis_root), historical_worktree=Path(args.historical_worktree), prepared_root=Path(args.prepared_root) if args.prepared_root else None, r0_native_maps_root=Path(args.r0_native_maps_root) if args.r0_native_maps_root else None, l100_proposed_checkpoint=Path(args.l100_proposed_checkpoint) if args.l100_proposed_checkpoint else None, cases=tuple(args.case), python_executable=args.python_executable, device=args.device), args.render_figures
 
 
 def main(argv: Iterable[str] | None = None) -> None:
