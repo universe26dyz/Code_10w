@@ -160,8 +160,9 @@ def build_r4_plan(inputs: R4Inputs, *, git_head: Callable[[Path], str] = _git_he
         _require_file(path, label)
     sparse_records: dict[str, dict[str, Any]] = {}
     destinations: list[Path] = []
-    native_support = root / "metrics" / R4_SOURCE / "native_support" / inputs.subject / "L100_fold0" / "direct_native_endpoint_audit"
-    native_masks = root / "metrics" / R4_SOURCE / "native_support" / inputs.subject / "L100_fold0" / "current_native_masks"
+    native_support_root = root / "metrics" / R4_SOURCE / "native_support" / inputs.subject / inputs.protocol / "L100_fold0"
+    native_support = native_support_root / "direct_native_endpoint_audit"
+    native_masks = native_support_root / "current_native_masks"
     destinations.extend((native_support, native_masks))
     for case in cases:
         paths = _paths(root, inputs.subject, case)

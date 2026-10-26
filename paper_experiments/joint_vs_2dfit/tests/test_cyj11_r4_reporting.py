@@ -111,6 +111,23 @@ def test_plan_uses_explicit_versioned_native_cache_root_everywhere(tmp_path: Pat
     assert figure_config["native"]["r0_native_maps_root"] == str(versioned_cache.resolve())
 
 
+def test_legacy_plan_keeps_l100_native_support_separate_from_profile_support(tmp_path: Path) -> None:
+    from paper_experiments.joint_vs_2dfit.phase2_clean.cyj11_r4_reporting import build_r4_plan
+
+    inputs = _inputs(tmp_path, protocol="legacy-density")
+    shared_profile_path = (
+        inputs.analysis_root / "metrics" / "r4_00d88b45c75f" / "native_support" / "CYJ"
+        / "L100_fold0" / "direct_native_endpoint_audit"
+    )
+    shared_profile_path.mkdir(parents=True)
+
+    plan = build_r4_plan(inputs, git_head=_head)
+    audit = _step(plan, "direct_native_l100_audit")
+    output = Path(audit["argv"][audit["argv"].index("--output") + 1])
+    assert "legacy-density" in output.parts
+    assert output != shared_profile_path
+
+
 def test_plan_rejects_wrong_fixed_commit_and_existing_r4_destination(tmp_path: Path) -> None:
     from paper_experiments.joint_vs_2dfit.phase2_clean.cyj11_r4_reporting import build_r4_plan
 
