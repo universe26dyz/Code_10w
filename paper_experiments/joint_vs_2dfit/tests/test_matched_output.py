@@ -73,3 +73,26 @@ def test_boundary_discrepancy_keeps_l100_primary_but_marks_decomposition_inexact
     assert exact["primary_region"] == "l100_full" and exact["decomposition_exact"] is True
     assert inexact["primary_region"] == "l100_full" and inexact["decomposition_exact"] is False
     assert inexact["diagnostic_boundary_discrepancy_voxels"] == 2
+
+
+def test_historical_v1_effective_query_mask_accepts_migrated_source_path_by_digest(tmp_path: Path) -> None:
+    root = tmp_path / "fit_first"
+    mask = root / "t1" / "query_effective_mask.nii.gz"
+    _volume(mask)
+    (root / "manifest.json").write_text(json.dumps({
+        "schema": "phase4r_fixed_l100_fit_first_export_bundle/v1",
+        "parameters": {
+            "t1": {
+                "effective_query_mask": {
+                    "path": "/historical/source/t1/query_effective_mask.nii.gz",
+                    "sha256": matched_output.sha256(mask),
+                }
+            }
+        },
+    }), encoding="utf-8")
+
+    resolved, record = matched_output.verified_fit_first_effective_query_mask(root, "t1")
+
+    assert resolved == mask
+    assert record["path"] == str(mask.resolve())
+    assert record["sha256"] == matched_output.sha256(mask)

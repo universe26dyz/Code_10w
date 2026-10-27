@@ -116,11 +116,20 @@ def verified_fit_first_effective_query_mask(endpoint_root: str | Path, parameter
     root = Path(endpoint_root)
     manifest_path = root / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    if manifest.get("schema") != "phase4r_fixed_l100_fit_first_export_bundle/v2":
+    schema = manifest.get("schema")
+    if schema not in {
+        "phase4r_fixed_l100_fit_first_export_bundle/v1",
+        "phase4r_fixed_l100_fit_first_export_bundle/v2",
+    }:
         raise ValueError("Fit-first formal endpoint schema mismatch")
     record = manifest.get("parameters", {}).get(parameter, {}).get("effective_query_mask")
     expected = root / parameter / "query_effective_mask.nii.gz"
-    if not isinstance(record, Mapping) or Path(str(record.get("path", ""))).resolve() != expected.resolve():
+    if not isinstance(record, Mapping):
+        raise ValueError(f"{parameter}: formal endpoint effective query mask provenance mismatch")
+    # v2 is produced locally and must be path-bound.  Historical v1 bundles
+    # retain the original source path after migration, so their local copy is
+    # bound by the recorded digest instead.
+    if schema == "phase4r_fixed_l100_fit_first_export_bundle/v2" and Path(str(record.get("path", ""))).resolve() != expected.resolve():
         raise ValueError(f"{parameter}: formal endpoint effective query mask provenance mismatch")
     if not expected.is_file() or record.get("sha256") != sha256(expected):
         raise ValueError(f"{parameter}: formal endpoint effective query mask SHA256 mismatch")
