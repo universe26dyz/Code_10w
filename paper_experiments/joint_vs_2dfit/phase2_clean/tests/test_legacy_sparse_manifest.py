@@ -17,7 +17,9 @@ def _write_source(path: Path, group_count: int) -> None:
     affine[:, :3, 0] = [1.0, 0.0, 0.0]
     affine[:, :3, 1] = [0.0, 1.0, 0.0]
     affine[:, :3, 2] = [0.0, 0.0, 5.0]
-    affine[:, 2, 3] = groups.astype(float)
+    # Legacy manifests preserve group_idx order, while this fixture's physical
+    # stack order is intentionally reversed (as in HHZ).
+    affine[:, 2, 3] = -groups.astype(float)
     np.savez_compressed(
         path,
         images=np.ones((rows, 2, 2), dtype=np.float32),

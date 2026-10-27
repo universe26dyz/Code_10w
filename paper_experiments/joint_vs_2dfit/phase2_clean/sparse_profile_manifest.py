@@ -277,8 +277,9 @@ def _validate_legacy_v1_manifest(
             mapping = _mapping(item.get("derived_to_original_group_idx"), stack=stack, retained=retained)
             with np.load(derived_path, allow_pickle=False) as derived:
                 derived_groups, derived_positions, _ = _physical_group_order(derived, derived_path)
-                if derived_groups != list(range(len(retained))):
-                    _fail(f"legacy {stack}: derived NPZ groups must be renumbered consecutively from zero")
+                derived_ids = sorted(int(value) for value in np.unique(derived["group_idx"]))
+                if derived_ids != list(range(len(retained))):
+                    _fail(f"legacy {stack}: derived NPZ group IDs must be renumbered consecutively from zero")
                 _gap_audit(item.get("stack_gap_qc"), stack=stack, positions=[derived_positions[group] for group in derived_groups])
                 for derived_group, original_group in mapping:
                     _same_group_content(source, original_group, derived, derived_group, stack=stack)
