@@ -34,6 +34,7 @@ PLAN_COMMAND=(
 [[ -z ${CYJ11_R5_R4_NATIVE_MASK_ROOT:-} ]] || PLAN_COMMAND+=(--r4-native-mask-root "$CYJ11_R5_R4_NATIVE_MASK_ROOT")
 [[ -z ${CYJ11_R5_L100_PROPOSED_CHECKPOINT:-} ]] || PLAN_COMMAND+=(--l100-proposed-checkpoint "$CYJ11_R5_L100_PROPOSED_CHECKPOINT")
 [[ -z ${CYJ11_R5_L100_FIT_FIRST_BASELINE_ROOT:-} ]] || PLAN_COMMAND+=(--l100-fit-first-baseline-root "$CYJ11_R5_L100_FIT_FIRST_BASELINE_ROOT")
+[[ -z ${CYJ11_R5_OUTPUT_SOURCE:-} ]] || PLAN_COMMAND+=(--output-source "$CYJ11_R5_OUTPUT_SOURCE")
 if [[ -n ${CYJ11_R5_CASES:-} ]]; then
     for CASE in $CYJ11_R5_CASES; do PLAN_COMMAND+=(--case "$CASE"); done
 fi

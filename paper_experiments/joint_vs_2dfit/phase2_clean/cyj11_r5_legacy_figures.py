@@ -43,6 +43,7 @@ class R5Inputs:
     r4_native_mask_root: Path | None = None
     l100_proposed_checkpoint: Path | None = None
     l100_fit_first_baseline_root: Path | None = None
+    output_source: str = R5_SOURCE
     cases: tuple[str, ...] = CASES
 
 
@@ -127,6 +128,8 @@ def build_r5_plan(inputs: R5Inputs, *, git_head: Callable[[Path], str] = _git_he
     """Return a no-overwrite r5 plan after validating all source artifacts."""
     if inputs.subject not in SUBJECTS:
         raise ValueError(f"r5 subject must be one of {', '.join(SUBJECTS)}")
+    if not inputs.output_source or any(char not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-" for char in inputs.output_source):
+        raise ValueError("r5 output_source must contain only letters, digits, dot, underscore, or dash")
     cases = _selected_cases(inputs)
     root = inputs.analysis_root.resolve()
     fixed, direct = inputs.historical_worktree.resolve(), inputs.direct_native_worktree.resolve()
@@ -150,13 +153,14 @@ def build_r5_plan(inputs: R5Inputs, *, git_head: Callable[[Path], str] = _git_he
     baseline = (inputs.l100_fit_first_baseline_root or root / "reconstruction" / "fit_first" / inputs.subject / "L100_fold0").resolve()
     _require_directory(baseline, "r5 L100 Fit-first baseline root")
     destinations: list[Path] = []
-    support = root / "metrics" / R5_SOURCE / "native_bundles" / inputs.subject / "legacy-density" / "L100_fold0"
+    source = inputs.output_source
+    support = root / "metrics" / source / "native_bundles" / inputs.subject / "legacy-density" / "L100_fold0"
     proposed_bundle = support / "proposed_direct_native"
     pose_audit = support / "fit_first_native_pose_audit"
     fit_first_bundle = support / "fit_first_native"
     destinations.extend((proposed_bundle, pose_audit, fit_first_bundle))
-    figure_root = root / "visualizations" / R5_SOURCE / inputs.subject / "legacy-density"
-    config_root = root / "configs" / "r5" / inputs.subject / "legacy-density" / R5_SOURCE
+    figure_root = root / "visualizations" / source / inputs.subject / "legacy-density"
+    config_root = root / "configs" / "r5" / inputs.subject / "legacy-density" / source
     for case in cases:
         paths = _case_paths(root, inputs.subject, case)
         _require_file(paths["sparse"], f"r5 {case} sparse manifest")
@@ -172,7 +176,7 @@ def build_r5_plan(inputs: R5Inputs, *, git_head: Callable[[Path], str] = _git_he
         destinations.extend((config_root / f"{case}.central.figure.json", figure_root / case))
     for parameter in ("t1", "t2"):
         _require_file(root / "endpoints" / "central" / "fit_first" / inputs.subject / "L100_fold0" / parameter / "l100_checkpoint_mask.nii.gz", f"r5 L100 {parameter} checkpoint mask")
-    migration = root / "migrations" / "r5_generation" / f"{inputs.subject}.legacy-density.{R5_SOURCE}.json"
+    migration = root / "migrations" / "r5_generation" / f"{inputs.subject}.legacy-density.{source}.json"
     destinations.append(migration)
     existing = next((path for path in destinations if path.exists()), None)
     if existing is not None:
@@ -201,12 +205,12 @@ def build_r5_plan(inputs: R5Inputs, *, git_head: Callable[[Path], str] = _git_he
         ))
     steps.append({"id": "publish_migration_record", "kind": "write_json", "path": str(migration), "payload": {
         "schema": "cyj11_r5_legacy_figure_generation/v1", "status": "COMPLETE", "subject": inputs.subject,
-        "protocol": "legacy-density", "cases": list(cases), "r5_source": R5_SOURCE,
+        "protocol": "legacy-density", "cases": list(cases), "r5_source": source,
         "fixed_figure_commit": FIXED_FIGURE_COMMIT, "direct_native_compat_commit": DIRECT_NATIVE_COMPAT_COMMIT,
         "r4_native_mask_root": str(native_masks), "native_bundle_root": str(support), "figure_root": str(figure_root),
         "no_reconstruction": True, "no_r4_metric_modified": True,
     }})
-    return {"schema": PLAN_SCHEMA, "identity": {"subject": inputs.subject, "protocol": "legacy-density", "cases": list(cases)}, "analysis_root": str(root), "r5_source": R5_SOURCE, "provenance": {"prepared_root": str(prepared), "r0_native_maps_root": str(r0_native), "r4_native_mask_root": str(native_masks), "l100_proposed_checkpoint": str(checkpoint), "l100_fit_first_baseline_root": str(baseline), "fixed_worktree": str(fixed), "direct_native_worktree": str(direct)}, "steps": steps}
+    return {"schema": PLAN_SCHEMA, "identity": {"subject": inputs.subject, "protocol": "legacy-density", "cases": list(cases)}, "analysis_root": str(root), "r5_source": source, "provenance": {"prepared_root": str(prepared), "r0_native_maps_root": str(r0_native), "r4_native_mask_root": str(native_masks), "l100_proposed_checkpoint": str(checkpoint), "l100_fit_first_baseline_root": str(baseline), "fixed_worktree": str(fixed), "direct_native_worktree": str(direct)}, "steps": steps}
 
 
 def execute_r5_plan(plan_path: str | Path, commands_log: str | Path) -> None:
@@ -248,9 +252,10 @@ def _parse_inputs(argv: Iterable[str]) -> R5Inputs:
     parser.add_argument("--r4-native-mask-root", type=Path)
     parser.add_argument("--l100-proposed-checkpoint", type=Path)
     parser.add_argument("--l100-fit-first-baseline-root", type=Path)
+    parser.add_argument("--output-source", default=R5_SOURCE)
     parser.add_argument("--case", action="append")
     args = parser.parse_args(list(argv))
-    return R5Inputs(subject=args.subject, analysis_root=args.analysis_root, historical_worktree=args.historical_worktree, direct_native_worktree=args.direct_native_worktree, python_executable=args.python_executable, device=args.device, prepared_root=args.prepared_root, r0_native_maps_root=args.r0_native_maps_root, r4_native_mask_root=args.r4_native_mask_root, l100_proposed_checkpoint=args.l100_proposed_checkpoint, l100_fit_first_baseline_root=args.l100_fit_first_baseline_root, cases=tuple(args.case or CASES))
+    return R5Inputs(subject=args.subject, analysis_root=args.analysis_root, historical_worktree=args.historical_worktree, direct_native_worktree=args.direct_native_worktree, python_executable=args.python_executable, device=args.device, prepared_root=args.prepared_root, r0_native_maps_root=args.r0_native_maps_root, r4_native_mask_root=args.r4_native_mask_root, l100_proposed_checkpoint=args.l100_proposed_checkpoint, l100_fit_first_baseline_root=args.l100_fit_first_baseline_root, output_source=args.output_source, cases=tuple(args.case or CASES))
 
 
 def main(argv: Iterable[str] | None = None) -> None:
