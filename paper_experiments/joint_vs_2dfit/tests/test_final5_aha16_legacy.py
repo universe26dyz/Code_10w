@@ -50,6 +50,27 @@ def test_segment_statistics_use_one_shared_support_and_historical_sample_sd() ->
     assert values[2]["prediction_sd"] == 0.0
 
 
+def test_segment_statistics_include_full_metric_contract(monkeypatch) -> None:
+    from paper_experiments.joint_vs_2dfit.aha.legacy_aha16 import segment_statistics
+    from paper_experiments.joint_vs_2dfit.phase2_clean import evaluation
+
+    monkeypatch.setattr(evaluation, "masked_ssim", lambda *args, **kwargs: (0.75, "complete"))
+    labels = np.array([[1, 1, 2, 2]], dtype=np.int16)
+    reference = np.array([[10.0, 14.0, 20.0, 24.0]])
+    prediction = np.array([[11.0, 13.0, 19.0, 27.0]])
+    support = np.ones_like(labels, dtype=bool)
+
+    values = segment_statistics(reference, prediction, labels, support, segments=(1, 2), parameter="t1")
+
+    assert values[1]["rmse"] == 1.0
+    assert values[1]["nrmse"] == values[1]["relative_nrmse"]
+    assert values[1]["cc"] == values[1]["pearson_r"]
+    assert values[1]["ncc"] is not None
+    assert values[1]["psnr_data_range_ms"] == 2500.0
+    assert values[1]["ssim"] == 0.75
+    assert values[1]["mae"] == 1.0
+
+
 def test_single_bullseye_writes_individual_png_and_pdf_without_montage(tmp_path) -> None:
     from paper_experiments.joint_vs_2dfit.aha.legacy_aha16 import render_single_bullseye
 

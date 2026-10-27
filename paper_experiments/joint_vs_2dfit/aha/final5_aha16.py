@@ -25,7 +25,8 @@ def require_new_aha_output(output: str | Path) -> Path:
 
 def build_paired_aha16_plane(*, level: str, reference: np.ndarray, proposed: np.ndarray, fit_first: np.ndarray,
                              proposed_valid: np.ndarray, fit_first_valid: np.ndarray, myocardium_core: np.ndarray,
-                             anterior_xy: tuple[float, float], inferior_xy: tuple[float, float]) -> dict[str, Any]:
+                             anterior_xy: tuple[float, float], inferior_xy: tuple[float, float],
+                             parameter: str | None = None) -> dict[str, Any]:
     """Apply one AHA partition and one paired-valid support to both methods."""
     if level not in LEVELS:
         raise ValueError(f"unknown AHA16 level: {level}")
@@ -42,8 +43,8 @@ def build_paired_aha16_plane(*, level: str, reference: np.ndarray, proposed: np.
         # Named twice to make the invariant conspicuous in serialized/tested
         # method records: neither method receives a private support.
         "proposed_support": support, "fit_first_support": support,
-        "proposed_statistics": segment_statistics(reference, proposed, labels, support, segments=segments),
-        "fit_first_statistics": segment_statistics(reference, fit_first, labels, support, segments=segments),
+        "proposed_statistics": segment_statistics(reference, proposed, labels, support, segments=segments, parameter=parameter),
+        "fit_first_statistics": segment_statistics(reference, fit_first, labels, support, segments=segments, parameter=parameter),
         "paired_support_equation": "manual_myocardium_core AND finite(reference) AND proposed_reprojection_valid AND fit_first_reprojection_valid AND finite(proposed, fit_first)",
     }
 
@@ -170,7 +171,8 @@ def build_final5_aha16(*, final_root: str | Path, subject: str, case: str, roi_r
                 result = build_paired_aha16_plane(level=entry["level"], reference=reference,
                                                   proposed=proposed, fit_first=fit_first,
                                                   proposed_valid=proposed_valid, fit_first_valid=fit_first_valid,
-                                                  myocardium_core=masks["myocardium_core"], anterior_xy=anterior, inferior_xy=inferior)
+                                                  myocardium_core=masks["myocardium_core"], anterior_xy=anterior, inferior_xy=inferior,
+                                                  parameter=parameter)
                 plane_report["parameters"][parameter] = {key: value for key, value in result.items() if key not in ("labels", "paired_support", "proposed_support", "fit_first_support")}
                 for method in ("proposed", "fit_first"):
                     stats = result[f"{method}_statistics"]
@@ -191,6 +193,8 @@ def build_final5_aha16(*, final_root: str | Path, subject: str, case: str, roi_r
             "native_sampling": "SAX is observed in every Final5 sparse profile; Proposed and Fit-first use their final learned-pose native bundles, never endpoint-to-R0 reprojection",
             "proposed_native_bundle": _record(direct_root / "manifest.json"), "fit_first_native_bundle": _record(fit_root / "manifest.json"),
             "support_equation": "manual_myocardium_core AND finite(reference) AND proposed_final_pose_valid AND fit_first_final_pose_valid AND finite(proposed, fit_first)",
+            "metric_contract": "RMSE, NRMSE, bias, MAE, Pearson CC, NCC, fixed-range PSNR, and mean masked 2-D SSIM per AHA segment",
+            "psnr_data_ranges_ms": {"t1": 2500.0, "t2": 200.0},
             "algorithm": "historical AHA16 basal6/mid6/apical4; no segment17; historical anterior/inferior orientation and sample SD", "downstream_only": True,
         })
         staging.rename(output)

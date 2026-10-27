@@ -25,7 +25,8 @@ SUPPORT_EQUATION = "manual anatomical ROI AND finite(reference) AND proposed-val
 
 def build_paired_aha16_plane(*, level: str, reference: np.ndarray, proposed: np.ndarray, fit_first: np.ndarray,
                              proposed_valid: np.ndarray, fit_first_valid: np.ndarray, myocardium_core: np.ndarray,
-                             anterior_xy: tuple[float, float], inferior_xy: tuple[float, float]) -> dict[str, Any]:
+                             anterior_xy: tuple[float, float], inferior_xy: tuple[float, float],
+                             parameter: str | None = None) -> dict[str, Any]:
     if level not in LEVELS:
         raise ValueError("AHA level must be basal, mid, or apical")
     reference, proposed, fit_first = (np.asarray(value, float) for value in (reference, proposed, fit_first))
@@ -37,8 +38,8 @@ def build_paired_aha16_plane(*, level: str, reference: np.ndarray, proposed: np.
     support = myocardium_core & np.isfinite(reference) & proposed_valid & fit_first_valid & np.isfinite(proposed) & np.isfinite(fit_first)
     segments = range(LEVELS[level][1], LEVELS[level][1] + LEVELS[level][0])
     return {"labels": labels, "proposed_support": support, "fit_first_support": support,
-            "proposed_statistics": segment_statistics(reference, proposed, labels, support, segments=segments),
-            "fit_first_statistics": segment_statistics(reference, fit_first, labels, support, segments=segments),
+            "proposed_statistics": segment_statistics(reference, proposed, labels, support, segments=segments, parameter=parameter),
+            "fit_first_statistics": segment_statistics(reference, fit_first, labels, support, segments=segments, parameter=parameter),
             "support_equation": SUPPORT_EQUATION}
 
 
@@ -126,7 +127,7 @@ def build_cyj11_aha16(*, analysis_root: str | Path, subject: str, case: str,
                          if final_pose is not None else
                          native_sax_plane(native=native, group=group, endpoint_images=endpoint_images, parameter=parameter))
                 result = build_paired_aha16_plane(level=entry["level"], myocardium_core=anatomical["myocardium_core"],
-                                                  anterior_xy=anterior, inferior_xy=inferior, **plane)
+                                                  anterior_xy=anterior, inferior_xy=inferior, parameter=parameter, **plane)
                 report["parameters"][parameter] = {key: value for key, value in result.items()
                                                     if key not in ("labels", "proposed_support", "fit_first_support")}
                 for method in ("proposed", "fit_first"):
@@ -165,6 +166,8 @@ def build_cyj11_aha16(*, analysis_root: str | Path, subject: str, case: str,
                 "policy": "current reconstruction final learned pose (Proposed) and parameter-specific final NeSVoR output-slice poses (Fit-first)",
             },
             "planes": reports, "support_equation": SUPPORT_EQUATION, "aha16_validation": validation,
+            "metric_contract": "RMSE, NRMSE, bias, MAE, Pearson CC, NCC, fixed-range PSNR, and mean masked 2-D SSIM per AHA segment",
+            "psnr_data_ranges_ms": {"t1": 2500.0, "t2": 200.0},
             "algorithm": "historical AHA16 basal6/mid6/apical4; no segment17; historical orientation and sample SD",
             "downstream_only": True, "no_reconstruction": True, "no_formal_metric": True, "immutable_output": True,
         })

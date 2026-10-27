@@ -8,7 +8,7 @@ predictions, statistics, or output discovery.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Iterable, Mapping
+from typing import Any, Iterable, Mapping
 
 import numpy as np
 
@@ -83,22 +83,51 @@ def _distribution(values: np.ndarray) -> dict[str, float]:
 
 
 def segment_statistics(reference: np.ndarray, prediction: np.ndarray, labels: np.ndarray, support: np.ndarray, *,
-                       segments: Iterable[int]) -> dict[int, dict[str, float | int]]:
-    """Historical per-segment means/SDs on an explicit common support."""
+                       segments: Iterable[int], parameter: str | None = None) -> dict[int, dict[str, Any]]:
+    """Return historical segment summaries plus the shared metric contract.
+
+    The anatomical labels, shared support, means/SDs, and signed differences
+    remain unchanged.  ``parameter`` enables fixed-range PSNR and masked 2-D
+    SSIM; callers that omit it retain the historical summary-only behavior.
+    """
     reference, prediction = np.asarray(reference, float), np.asarray(prediction, float)
     labels, support = np.asarray(labels, int), np.asarray(support, bool)
     if not (reference.shape == prediction.shape == labels.shape == support.shape) or reference.ndim != 2:
         raise ValueError("AHA reference, prediction, labels, and support require one same-shape plane")
-    result: dict[int, dict[str, float | int]] = {}
+    result: dict[int, dict[str, Any]] = {}
     for segment in segments:
         mask = (labels == int(segment)) & support & np.isfinite(reference) & np.isfinite(prediction)
         ref, pred = _distribution(reference[mask]), _distribution(prediction[mask])
-        result[int(segment)] = {
+        record: dict[str, Any] = {
             "n": int(mask.sum()), "reference_mean": ref["mean"], "reference_sd": ref["sd"],
             "prediction_mean": pred["mean"], "prediction_sd": pred["sd"],
             "signed_difference": float(pred["mean"] - ref["mean"]),
             "absolute_difference": float(abs(pred["mean"] - ref["mean"])),
         }
+        if not mask.any():
+            record.update({
+                "bias": None, "mae": None, "rmse": None, "nrmse": None,
+                "relative_nrmse": None, "pearson_r": None, "cc": None,
+                "ncc": None, "psnr": None, "psnr_data_range_ms": None,
+                "psnr_status": "empty_common_support", "ssim": None,
+                "ssim_status": "empty_common_support",
+            })
+        elif parameter is None:
+            from ..phase2_clean.evaluation import _metrics
+            record.update(_metrics(reference, prediction, mask,
+                                  ssim_status="not_available_parameter_unspecified"))
+        else:
+            from ..phase2_clean.evaluation import PSNR_DATA_RANGES_MS, _metrics, masked_ssim
+            key = str(parameter).lower()
+            if key not in PSNR_DATA_RANGES_MS:
+                raise ValueError("AHA segment parameter must be t1 or t2")
+            data_range = float(PSNR_DATA_RANGES_MS[key])
+            ssim_value, ssim_status = masked_ssim(reference, prediction, mask, data_range=data_range)
+            record.update(_metrics(reference, prediction, mask,
+                                  psnr_data_range=data_range,
+                                  ssim_value=ssim_value,
+                                  ssim_status=ssim_status))
+        result[int(segment)] = record
     return result
 
 

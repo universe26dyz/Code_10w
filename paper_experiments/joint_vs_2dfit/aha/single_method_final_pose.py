@@ -230,7 +230,7 @@ def build_single_method_final_pose(*, subject: str, case: str, method: str,
                                                  group=group, parameter=parameter)
                 stats = single_method_statistics(reference=plane["reference"], prediction=plane["prediction"],
                                                  valid=plane["valid"], roi=anatomical["myocardium_core"], parameter=parameter)
-                segments_stats = segment_statistics(plane["reference"], plane["prediction"], labels, stats["support"], segments=segments)
+                segments_stats = segment_statistics(plane["reference"], plane["prediction"], labels, stats["support"], segments=segments, parameter=parameter)
                 report["parameters"][parameter] = {"support_voxels": stats["support_voxels"],
                                                      "statistics": {key: value for key, value in stats.items() if key != "support"},
                                                      "segments": segments_stats}
