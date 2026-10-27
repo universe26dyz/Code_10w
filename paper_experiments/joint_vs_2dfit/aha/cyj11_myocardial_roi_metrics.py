@@ -11,7 +11,9 @@ import numpy as np
 
 from ..phase2_clean.contracts import sha256, write_immutable_json
 from .cyj11_adapter import cyj11_native_stack_root, require_cyj11_mapping
-from .cyj11_runner import load_cyj11_run_inputs, native_sax_plane
+from .cyj11_runner import (final_pose_sax_plane, load_cyj11_final_pose_bundles,
+                           load_cyj11_native_inputs, load_cyj11_run_inputs,
+                           native_sax_plane)
 
 from .final5_myocardial_roi_metrics import paired_roi_statistics
 
@@ -58,7 +60,10 @@ def _load_scmr_masks(root: Path, *, expected_groups: np.ndarray, expected_shape:
 
 
 def build_cyj11_myocardial_roi_metrics(*, analysis_root: str | Path, subject: str, case: str,
-                                        mapping_path: str | Path, roi_bundle: str | Path, output: str | Path) -> Path:
+                                        mapping_path: str | Path, roi_bundle: str | Path, output: str | Path,
+                                        sampling: str = "native_endpoint",
+                                        proposed_native_bundle: str | Path | None = None,
+                                        fit_first_native_bundle: str | Path | None = None) -> Path:
     """Write SCMR-style all-SAX per-plane and pooled paired ROI statistics."""
     output, mapping_path, roi_bundle = Path(output), Path(mapping_path), Path(roi_bundle)
     if output.exists(): raise FileExistsError(f"refusing overwrite: {output}")
@@ -66,7 +71,18 @@ def build_cyj11_myocardial_roi_metrics(*, analysis_root: str | Path, subject: st
     mapping = require_cyj11_mapping(mapping_path, subject=subject, case=case,
                                     prepared_sax_path=root / "prepared" / subject / "sax" / "observations.npz",
                                     roi_bundle_path=roi_bundle / "roi_derivation_manifest.json")
-    native, endpoint_images = load_cyj11_run_inputs(root, subject, case)
+    if sampling not in ("native_endpoint", "final_pose"):
+        raise ValueError("CYJ1.1 myocardial sampling must be native_endpoint or final_pose")
+    if sampling == "final_pose":
+        if proposed_native_bundle is None or fit_first_native_bundle is None:
+            raise ValueError("FINAL_POSE_AHA_PENDING: both current final-pose bundle roots are required")
+        native = load_cyj11_native_inputs(root, subject)
+        final_pose = load_cyj11_final_pose_bundles(proposed_native_bundle, fit_first_native_bundle,
+                                                    subject=subject, case=case)
+        endpoint_images = None
+    else:
+        native, endpoint_images = load_cyj11_run_inputs(root, subject, case)
+        final_pose = None
     indices = {int(group): index for index, group in enumerate(native["group_idx"])}
     masks = _load_scmr_masks(roi_bundle, expected_groups=np.asarray(native["group_idx"], int),
                              expected_shape=tuple(map(int, native["t1_ms"].shape[1:])))
@@ -85,7 +101,9 @@ def build_cyj11_myocardial_roi_metrics(*, analysis_root: str | Path, subject: st
             report: dict[str, Any] = {"native_group_idx": group, "aha_level": aha_levels.get(group)}
             report["roi_voxels"] = {name: int(mask.sum()) for name, mask in rois.items()}; report["parameters"] = {}
             for parameter in ("t1", "t2"):
-                plane = native_sax_plane(native=native, group=group, endpoint_images=endpoint_images, parameter=parameter)
+                plane = (final_pose_sax_plane(native=native, group=group, parameter=parameter, **final_pose)
+                         if final_pose is not None else
+                         native_sax_plane(native=native, group=group, endpoint_images=endpoint_images, parameter=parameter))
                 parameter_report: dict[str, Any] = {}
                 for name, roi in rois.items():
                     stats = paired_roi_statistics(roi=roi, **plane)
@@ -99,16 +117,22 @@ def build_cyj11_myocardial_roi_metrics(*, analysis_root: str | Path, subject: st
             reports.append(report)
         pooled_report = {parameter: {name: _pooled(values) for name, values in items.items()}
                          for parameter, items in pooled.items()}
-        write_immutable_json(staging / "per_plane_statistics.json", {"schema": "cyj11_local_myocardial_roi_metrics/v1", "subject": subject, "case": case, "support_equation": SUPPORT_EQUATION, "planes": reports})
-        write_immutable_json(staging / "pooled_sax_statistics.json", {"schema": "cyj11_local_myocardial_roi_metrics/v1", "subject": subject, "case": case, "support_equation": SUPPORT_EQUATION, "pooled_sax": pooled_report})
+        write_immutable_json(staging / "per_plane_statistics.json", {"schema": "cyj11_local_myocardial_roi_metrics/v2", "subject": subject, "case": case, "sampling": sampling, "support_equation": SUPPORT_EQUATION, "planes": reports})
+        write_immutable_json(staging / "pooled_sax_statistics.json", {"schema": "cyj11_local_myocardial_roi_metrics/v2", "subject": subject, "case": case, "sampling": sampling, "support_equation": SUPPORT_EQUATION, "pooled_sax": pooled_report})
         write_immutable_json(staging / "manifest.json", {
-            "schema": "cyj11_local_myocardial_roi_metrics/v1", "subject": subject, "case": case,
+            "schema": "cyj11_local_myocardial_roi_metrics/v2", "subject": subject, "case": case,
             "mapping": _record(mapping_path), "roi_bundle": _record(roi_bundle / "roi_derivation_manifest.json"),
             "scmr_myocardium_bundle": {"manifest": _record(roi_bundle / "manifest.json"),
                                          "archive": _record(roi_bundle / "sax_myocardium_masks.npz")},
             "prepared_sax": _record(root / "prepared" / subject / "sax" / "observations.npz"),
             "native_sax": {name: _record(cyj11_native_stack_root(root, subject) / name) for name in ("native_maps.npz", "geometry.npz", "manifest.json")},
-            "endpoint_files": {parameter: {method: _record(image.get_filename()) for method, image in images.items()} for parameter, images in endpoint_images.items()},
+            "sampling": sampling,
+            "endpoint_files": None if endpoint_images is None else {parameter: {method: _record(image.get_filename()) for method, image in images.items()} for parameter, images in endpoint_images.items()},
+            "current_final_pose_bundles": None if final_pose is None else {
+                "proposed_manifest": _record(final_pose["direct_root"] / "manifest.json"),
+                "fit_first_manifest": _record(final_pose["fit_root"] / "manifest.json"),
+                "policy": "current reconstruction final learned pose (Proposed) and parameter-specific final NeSVoR output-slice poses (Fit-first)",
+            },
             "roi_names": list(ROI_NAMES), "support_equation": SUPPORT_EQUATION,
             "roi_policy": {"myocardium_full": "SCMR bundle outer AND NOT inner", "myocardium_core_legacy": "SCMR bundle EDT(...) > 1.0 mm", "myocardium_core_1px": "SCMR bundle one in-plane 3x3 erosion", "transform": "derived native lattice; no interpolation"},
             "downstream_only": True, "no_reconstruction": True, "no_formal_metric": True, "immutable_output": True,

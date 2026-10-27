@@ -13,7 +13,9 @@ import numpy as np
 from ..phase2_clean.contracts import sha256, write_immutable_json
 from .cyj11_adapter import cyj11_native_stack_root, require_cyj11_mapping
 from .cyj11_legacy_roi import load_cyj11_roi_plane
-from .cyj11_runner import load_cyj11_run_inputs, native_sax_plane
+from .cyj11_runner import (final_pose_sax_plane, load_cyj11_final_pose_bundles,
+                           load_cyj11_native_inputs, load_cyj11_run_inputs,
+                           native_sax_plane)
 from .legacy_aha16 import (LEVELS, aha16_labels, build_filled_masks, render_scmr_figure3,
                            render_single_bullseye, segment_statistics, validate_aha16_statistics)
 
@@ -73,7 +75,10 @@ def _write_csv(rows: list[dict[str, Any]], path: Path) -> None:
 
 
 def build_cyj11_aha16(*, analysis_root: str | Path, subject: str, case: str,
-                      mapping_path: str | Path, roi_bundle: str | Path, output: str | Path) -> Path:
+                      mapping_path: str | Path, roi_bundle: str | Path, output: str | Path,
+                      sampling: str = "native_endpoint",
+                      proposed_native_bundle: str | Path | None = None,
+                      fit_first_native_bundle: str | Path | None = None) -> Path:
     """Write a fresh downstream AHA16 bundle without changing central endpoints."""
     output, mapping_path, roi_bundle = Path(output), Path(mapping_path), Path(roi_bundle)
     if output.exists():
@@ -84,7 +89,18 @@ def build_cyj11_aha16(*, analysis_root: str | Path, subject: str, case: str,
     entries = mapping["planes"]
     if {entry["level"] for entry in entries} != set(LEVELS) or len(entries) != 3:
         raise ValueError("CYJ1.1 AHA16 requires exactly one explicit basal, mid, and apical mapping plane")
-    native, endpoint_images = load_cyj11_run_inputs(analysis_root, subject, case)
+    if sampling not in ("native_endpoint", "final_pose"):
+        raise ValueError("CYJ1.1 AHA sampling must be native_endpoint or final_pose")
+    if sampling == "final_pose":
+        if proposed_native_bundle is None or fit_first_native_bundle is None:
+            raise ValueError("FINAL_POSE_AHA_PENDING: both current final-pose bundle roots are required")
+        native = load_cyj11_native_inputs(analysis_root, subject)
+        final_pose = load_cyj11_final_pose_bundles(proposed_native_bundle, fit_first_native_bundle,
+                                                    subject=subject, case=case)
+        endpoint_images = None
+    else:
+        native, endpoint_images = load_cyj11_run_inputs(analysis_root, subject, case)
+        final_pose = None
     indices = {int(group): index for index, group in enumerate(native["group_idx"])}
     output.parent.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(prefix=f".{output.name}.staging-", dir=output.parent))
@@ -106,7 +122,9 @@ def build_cyj11_aha16(*, analysis_root: str | Path, subject: str, case: str,
             report: dict[str, Any] = {key: entry[key] for key in ("level", "native_group_idx", "roi_slice_index", "roi_transform")}
             report["parameters"] = {}
             for parameter in ("t1", "t2"):
-                plane = native_sax_plane(native=native, group=group, endpoint_images=endpoint_images, parameter=parameter)
+                plane = (final_pose_sax_plane(native=native, group=group, parameter=parameter, **final_pose)
+                         if final_pose is not None else
+                         native_sax_plane(native=native, group=group, endpoint_images=endpoint_images, parameter=parameter))
                 result = build_paired_aha16_plane(level=entry["level"], myocardium_core=anatomical["myocardium_core"],
                                                   anterior_xy=anterior, inferior_xy=inferior, **plane)
                 report["parameters"][parameter] = {key: value for key, value in result.items()
@@ -133,13 +151,19 @@ def build_cyj11_aha16(*, analysis_root: str | Path, subject: str, case: str,
                                     case=case, method=method)
         root = Path(analysis_root)
         write_immutable_json(staging / "manifest.json", {
-            "schema": "cyj11_aha16_downstream/v1", "subject": subject, "case": case,
+            "schema": "cyj11_aha16_downstream/v2", "subject": subject, "case": case,
             "mapping": _record(mapping_path), "roi_bundle": _record(roi_bundle / "roi_derivation_manifest.json"),
             "prepared_sax": _record(root / "prepared" / subject / "sax" / "observations.npz"),
             "native_sax": {name: _record(cyj11_native_stack_root(root, subject) / name)
                            for name in ("native_maps.npz", "geometry.npz", "manifest.json")},
-            "endpoint_files": {parameter: {method: _record(image.get_filename()) for method, image in images.items()}
-                               for parameter, images in endpoint_images.items()},
+            "sampling": sampling,
+            "endpoint_files": None if endpoint_images is None else {parameter: {method: _record(image.get_filename()) for method, image in images.items()}
+                                                                      for parameter, images in endpoint_images.items()},
+            "current_final_pose_bundles": None if final_pose is None else {
+                "proposed_manifest": _record(final_pose["direct_root"] / "manifest.json"),
+                "fit_first_manifest": _record(final_pose["fit_root"] / "manifest.json"),
+                "policy": "current reconstruction final learned pose (Proposed) and parameter-specific final NeSVoR output-slice poses (Fit-first)",
+            },
             "planes": reports, "support_equation": SUPPORT_EQUATION, "aha16_validation": validation,
             "algorithm": "historical AHA16 basal6/mid6/apical4; no segment17; historical orientation and sample SD",
             "downstream_only": True, "no_reconstruction": True, "no_formal_metric": True, "immutable_output": True,

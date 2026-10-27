@@ -139,6 +139,48 @@ def test_cyj11_aha_and_roi_use_one_common_support() -> None:
     assert aha["proposed_support"].sum() == roi["common_support_voxels"] == 79
 
 
+def test_cyj11_final_pose_plane_reads_current_native_bundles(tmp_path) -> None:
+    """Final-pose AHA reads current bundle pixels, never endpoint reprojections."""
+    from paper_experiments.joint_vs_2dfit.aha.cyj11_runner import (
+        final_pose_sax_plane,
+        load_cyj11_final_pose_bundles,
+    )
+
+    from paper_experiments.joint_vs_2dfit.phase2_clean.contracts import sha256
+
+    direct, fit = tmp_path / "direct", tmp_path / "fit"
+    (direct / "planes" / "sax").mkdir(parents=True)
+    (fit / "planes" / "t1" / "sax").mkdir(parents=True)
+    (fit / "planes" / "t2" / "sax").mkdir(parents=True)
+    np.savez_compressed(direct / "planes" / "sax" / "group005.npz",
+                        t1_ms=np.full((2, 3), 1100.0), t2_ms=np.full((2, 3), 55.0))
+    for parameter, value in (("t1", 1000.0), ("t2", 50.0)):
+        np.savez_compressed(fit / "planes" / parameter / "sax" / "group005.npz",
+                            prediction_ms=np.full((2, 3), value),
+                            volume_geometry_valid=np.ones((2, 3), bool),
+                            query_effective_mask=np.ones((2, 3), bool))
+    (direct / "manifest.json").write_text(json.dumps({
+        "schema": "direct_sparse_native_prediction_bundle/v1", "subject": "CYJ", "case_id": "L50_fold0",
+        "endpoint": "central", "planes": [{"stack": "sax", "original_group_idx": 5, "path": "planes/sax/group005.npz"}],
+    }))
+    endpoint = tmp_path / "fit_endpoint_manifest.json"
+    endpoint.write_text(json.dumps({"subject": "CYJ", "condition": "L50_fold0", "endpoint": "central"}))
+    (fit / "manifest.json").write_text(json.dumps({
+        "schema": "fit_first_native_prediction_bundle/v6", "endpoint": "central",
+        "endpoint_source_manifest": {"path": str(endpoint), "sha256": sha256(endpoint)},
+    }))
+
+    bundles = load_cyj11_final_pose_bundles(direct, fit, subject="CYJ", case="L50_fold0")
+    native = {"group_idx": np.array([5]), "t1_ms": np.full((1, 2, 3), 1200.0),
+              "t2_ms": np.full((1, 2, 3), 60.0)}
+    plane = final_pose_sax_plane(native=native, group=5, parameter="t1", **bundles)
+
+    assert np.all(plane["reference"] == 1200.0)
+    assert np.all(plane["proposed"] == 1100.0)
+    assert np.all(plane["fit_first"] == 1000.0)
+    assert plane["proposed_valid"].all() and plane["fit_first_valid"].all()
+
+
 def test_historical_scmr_aha_validation_requires_all_supported_segments() -> None:
     from paper_experiments.joint_vs_2dfit.aha.legacy_aha16 import validate_aha16_statistics
 
