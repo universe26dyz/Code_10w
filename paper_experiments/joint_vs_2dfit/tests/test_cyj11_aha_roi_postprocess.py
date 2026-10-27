@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import numpy as np
 import pytest
 
 
@@ -49,3 +50,24 @@ def test_aha_sd_writer_outputs_reference_and_method_bullseyes(tmp_path) -> None:
     assert (output / "CYJ/L50_fold0/reference/t1_aha16_sd.png").is_file()
     assert (output / "CYJ/L50_fold0/proposed/t1_aha16_sd.png").is_file()
     assert (output / "CYJ/L50_fold0/fit_first/t1_aha16_sd.pdf").is_file()
+
+
+def test_native_roi_qc_writer_outputs_one_t1_t2_overlay_per_sax_group(tmp_path) -> None:
+    from paper_experiments.joint_vs_2dfit.aha.cyj11_roi_qc import write_native_roi_qc
+
+    native = {
+        "group_idx": np.array([3]),
+        "t1_ms": np.arange(30, dtype=float).reshape(1, 5, 6),
+        "t2_ms": np.arange(30, dtype=float).reshape(1, 5, 6) + 40,
+    }
+    outer = np.zeros((1, 5, 6), bool); outer[:, 1:4, 1:5] = True
+    inner = np.zeros((1, 5, 6), bool); inner[:, 2:3, 2:4] = True
+    points = np.zeros((1, 5, 6), int); points[0, 1, 2] = 1; points[0, 3, 3] = 2
+    output = write_native_roi_qc(native=native, masks={
+        "outer_filled": outer, "inner_filled": inner, "myocardium_full": outer & ~inner,
+        "landmark_labels": points,
+    }, subject="CYJ", output=tmp_path / "roi_qc")
+
+    assert (output / "CYJ/group003_t1_roi_qc.png").is_file()
+    assert (output / "CYJ/group003_t2_roi_qc.pdf").is_file()
+    assert (output / "manifest.json").is_file()
