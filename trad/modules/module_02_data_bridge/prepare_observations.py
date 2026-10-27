@@ -35,6 +35,7 @@ def prepare_observations(
     stack: str,
     output_dir: str | Path,
     max_groups: int | None = None,
+    protocol_path: str | Path | None = None,
 ) -> dict[str, Any]:
     """Write prepared observations without copying raw DICOMs into the code tree."""
 
@@ -45,7 +46,7 @@ def prepare_observations(
     else:
         output_dir.mkdir(parents=True)
     preprocessed = load_preprocessed_v73(preprocessed_mat)
-    manifest = build_manifest(preprocessed, dicom_dir, stack, max_groups)
+    manifest = build_manifest(preprocessed, dicom_dir, stack, max_groups, protocol_path)
     observations = manifest["observations"]
     n_groups = len(manifest["groups"])
     if len(observations) != n_groups * 10:
@@ -83,6 +84,7 @@ def prepare_observations(
         "coordinate_system": manifest["coordinate_system"],
         "stack_name": manifest["stack_name"],
         "stack_idx": manifest["stack_idx"],
+        "timing_contract": manifest["timing_contract"],
         "groups": manifest["groups"],
         "observations": [
             {key: value for key, value in item.items() if key not in {"timing9_ms", "affine_lps_rc", "pixel_spacing_rc_mm"}}
@@ -98,8 +100,9 @@ def prepare_observations(
         "image_shape": list(images.shape),
         "timing_shape": list(np.load(output_dir / "timing.npy").shape),
         "geometry_shape": list(np.stack([group["affine_lps_rc"] for group in manifest["groups"]]).shape),
-        "tr_ms": float(preprocessed["tr_ms"]),
-        "vps": int(preprocessed["vps"]),
+        "tr_ms": float(manifest["timing_contract"]["tr_ms"]),
+        "vps": int(manifest["timing_contract"]["vps"]),
+        "timing_contract": manifest["timing_contract"],
         "coordinate_system": manifest["coordinate_system"],
     }
     with (output_dir / "qc_summary.json").open("w", encoding="utf-8") as handle:
@@ -114,6 +117,7 @@ def main() -> None:
     parser.add_argument("--stack", required=True, choices=("sax", "2ch", "4ch"))
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--max-groups", type=int)
+    parser.add_argument("--protocol", dest="protocol_path", type=Path)
     args = parser.parse_args()
     result = prepare_observations(**vars(args))
     subject = Path(args.dicom_dir).resolve().parent.name

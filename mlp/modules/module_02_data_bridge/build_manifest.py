@@ -8,6 +8,7 @@ from typing import Any
 
 import numpy as np
 import pydicom
+import yaml
 
 from .geometry import crop_affine_lps_rc, dicom_lps_affine_rc
 from .timing import compute_duration_before_acq
@@ -108,7 +109,8 @@ def _verify_group_geometry(records: list[DicomRecord], group_idx: int) -> float:
 
 
 def build_manifest(
-    preprocessed: dict[str, Any], dicom_dir: str | Path, stack_name: str, max_groups: int | None
+    preprocessed: dict[str, Any], dicom_dir: str | Path, stack_name: str,
+    max_groups: int | None, protocol_path: str | Path | None = None,
 ) -> dict[str, Any]:
     """Resolve stored UIDs to current DICOM paths and build group-shared geometry.
 
@@ -128,6 +130,33 @@ def build_manifest(
             raise ValueError(f"--max-groups must be within [1, {n_groups}], got {max_groups}.")
         selected_groups = int(max_groups)
     current_by_sop = scan_dicom_by_sop(dicom_dir)
+    tr_ms = float(preprocessed["tr_ms"])
+    vps = int(preprocessed["vps"])
+    ti_ms = np.asarray(preprocessed["ti_ms"], dtype=np.float64)
+    t2prep_ms = np.asarray(preprocessed["t2prep_ms"], dtype=np.float64)
+    protocol_record: dict[str, Any] | None = None
+    if protocol_path is not None:
+        protocol_file = Path(protocol_path)
+        with protocol_file.open(encoding="utf-8") as handle:
+            protocol_record = yaml.safe_load(handle)
+        if not isinstance(protocol_record, dict):
+            raise ValueError(f"Protocol YAML must be a mapping: {protocol_file}")
+        if "inversion_times_ms" not in protocol_record or "t2prep_ms" not in protocol_record:
+            raise ValueError(f"Protocol YAML lacks inversion_times_ms or t2prep_ms: {protocol_file}")
+        ti_ms = np.asarray(protocol_record["inversion_times_ms"], dtype=np.float64).reshape(-1)
+        t2prep_ms = np.asarray(protocol_record["t2prep_ms"], dtype=np.float64).reshape(-1)
+        if "tr_ms" in protocol_record:
+            tr_ms = float(protocol_record["tr_ms"])
+        if "vps" in protocol_record:
+            vps = int(protocol_record["vps"])
+        if ti_ms.shape != (2,) or t2prep_ms.shape != (3,):
+            raise ValueError("Protocol timing contract requires TI[2] and T2prep[3].")
+        if not np.all(np.isfinite(ti_ms)) or not np.all(np.isfinite(t2prep_ms)):
+            raise ValueError("Protocol timing values must be finite.")
+        if not np.isclose(tr_ms, float(preprocessed["tr_ms"]), rtol=0, atol=1e-9):
+            raise ValueError("Protocol TR differs from preprocessed MAT TR; refusing a mixed sequence contract.")
+        if vps != int(preprocessed["vps"]):
+            raise ValueError("Protocol VPS differs from preprocessed MAT VPS; refusing a mixed sequence contract.")
     observations: list[dict[str, Any]] = []
     groups: list[dict[str, Any]] = []
     for group_idx in range(selected_groups):
@@ -162,10 +191,10 @@ def build_manifest(
             )
         timing10 = compute_duration_before_acq(
             preprocessed["acq_time_ms"][:, group_idx],
-            preprocessed["tr_ms"],
-            preprocessed["vps"],
-            preprocessed["ti_ms"],
-            preprocessed["t2prep_ms"],
+            tr_ms,
+            vps,
+            ti_ms,
+            t2prep_ms,
         )
         timing9 = timing10[1:]
         pixel_spacing_rc = np.asarray(hb1.dataset.PixelSpacing, dtype=np.float64)
@@ -181,8 +210,8 @@ def build_manifest(
             "slice_thickness_mm": thickness,
             "timing10_ms": timing10,
             "timing9_ms": timing9,
-            "tr_ms": float(preprocessed["tr_ms"]),
-            "vps": int(preprocessed["vps"]),
+            "tr_ms": tr_ms,
+            "vps": vps,
         }
         groups.append(group)
         for weight_idx, record in enumerate(records):
@@ -199,14 +228,21 @@ def build_manifest(
                     "affine_lps_rc": cropped_affine,
                     "pixel_spacing_rc_mm": pixel_spacing_rc,
                     "slice_thickness_mm": thickness,
-                    "tr_ms": float(preprocessed["tr_ms"]),
-                    "vps": int(preprocessed["vps"]),
+                    "tr_ms": tr_ms,
+                    "vps": vps,
                 }
             )
     return {
         "coordinate_system": "DICOM_LPS_mm; affine_lps_rc maps [row,col,slice,1]",
         "stack_name": stack_key,
         "stack_idx": STACK_INDEX[stack_key],
+        "timing_contract": {
+            "source": str(Path(protocol_path).resolve()) if protocol_path is not None else "preprocessed.mat",
+            "tr_ms": tr_ms,
+            "vps": vps,
+            "ti_ms": ti_ms.tolist(),
+            "t2prep_ms": t2prep_ms.tolist(),
+        },
         "groups": groups,
         "observations": observations,
     }

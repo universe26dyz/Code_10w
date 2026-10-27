@@ -19,7 +19,7 @@ from scripts.deployment_manifest import load_deployment_manifest
 from trad.modules.module_02_data_bridge.prepare_observations import prepare_observations
 
 
-def prepare_all_observations(manifest_path: str | Path, preprocessed_root: str | Path, prepared_root: str | Path) -> dict[str, object]:
+def prepare_all_observations(manifest_path: str | Path, preprocessed_root: str | Path, prepared_root: str | Path, protocol_path: str | Path | None = None) -> dict[str, object]:
     root, destination = Path(preprocessed_root), Path(prepared_root)
     if not root.is_dir():
         raise FileNotFoundError(f"Preprocessed root does not exist: {root}")
@@ -34,7 +34,8 @@ def prepare_all_observations(manifest_path: str | Path, preprocessed_root: str |
         if not mat.is_file():
             raise FileNotFoundError(f"Required transferred preprocessed MAT is missing: {mat}")
         output = destination / subject_id / stack
-        result = prepare_observations(mat, entry["server_dicom_dir"], stack, output)
+        prepare_kwargs = {} if protocol_path is None else {"protocol_path": protocol_path}
+        result = prepare_observations(mat, entry["server_dicom_dir"], stack, output, **prepare_kwargs)
         required = ("observations.npz", "manifest.json", "timing.npy", "qc_summary.json")
         missing = [name for name in required if not (output / name).is_file()]
         if missing:
@@ -51,8 +52,9 @@ def main() -> None:
     parser.add_argument("--manifest", required=True)
     parser.add_argument("--preprocessed-root", required=True)
     parser.add_argument("--prepared-root", required=True)
+    parser.add_argument("--protocol", dest="protocol_path", type=Path)
     args = parser.parse_args()
-    print(json.dumps(prepare_all_observations(args.manifest, args.preprocessed_root, args.prepared_root), ensure_ascii=False, indent=2))
+    print(json.dumps(prepare_all_observations(args.manifest, args.preprocessed_root, args.prepared_root, args.protocol_path), ensure_ascii=False, indent=2))
 
 
 if __name__ == "__main__":
