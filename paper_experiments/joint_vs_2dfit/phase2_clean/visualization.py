@@ -206,11 +206,16 @@ def sample_same_world_through_plane(
     fit_first_affine: np.ndarray,
     *,
     cut_column: int | None = None,
+    common_support: np.ndarray | None = None,
 ) -> dict[str, Any]:
     """Sample a regular 1-mm native-world plane shared by all three volumes."""
     native = np.asarray(native, float)
     if native.ndim != 3:
         raise ValueError("Figure-1 native stack must be a 3-D [row,col,group] array")
+    if common_support is not None:
+        common_support = np.asarray(common_support, bool)
+        if common_support.shape != native.shape:
+            raise ValueError("through-plane common support must use the native [row,col,group] lattice")
     column = native.shape[1] // 2 if cut_column is None else int(cut_column)
     if not 0 <= column < native.shape[1]:
         raise ValueError("cut column is outside the native plane")
@@ -241,12 +246,20 @@ def sample_same_world_through_plane(
     world = np.empty((4, *row_grid.shape), dtype=float)
     world[:3] = (origin[:, None, None] + row_basis[:, None, None] * row_grid + slice_basis[:, None, None] * slice_grid)
     world[3] = 1.0
-    native_values, _ = _world_sample(native, affine, world, order=0)
-    proposed_values, _ = _world_sample(proposed, proposed_affine, world, order=1)
-    fit_values, _ = _world_sample(fit_first, fit_first_affine, world, order=1)
+    native_values, native_geometry = _world_sample(native, affine, world, order=0)
+    proposed_values, proposed_geometry = _world_sample(proposed, proposed_affine, world, order=1)
+    fit_values, fit_geometry = _world_sample(fit_first, fit_first_affine, world, order=1)
+    sampled_support = None
+    if common_support is not None:
+        support_values, support_geometry = _world_sample(common_support.astype(np.uint8), affine, world, order=0)
+        sampled_support = (np.asarray(support_geometry, bool) & (np.asarray(support_values) > .5)
+                           & np.asarray(native_geometry, bool) & np.asarray(proposed_geometry, bool)
+                           & np.asarray(fit_geometry, bool) & np.isfinite(native_values)
+                           & np.isfinite(proposed_values) & np.isfinite(fit_values))
     return {
         "world": world, "proposed_world": world, "fit_first_world": world,
         "native": native_values, "proposed": proposed_values, "fit_first": fit_values,
+        "common_support": sampled_support,
         "cut_column": column,
         "interpolation": {"native": "nearest", "reconstructions": "linear"},
         "world_plane_origin_mm": origin.tolist(),
@@ -318,6 +331,7 @@ def render_through_plane_continuity(
     *,
     reference_group: int,
     metadata: Mapping[str, Any],
+    common_support: np.ndarray | None = None,
 ) -> dict[str, str]:
     """Render the same-world-plane through-plane continuity QC figure."""
     import matplotlib.pyplot as plt
@@ -326,16 +340,21 @@ def render_through_plane_continuity(
     target = Path(output)
     if target.exists() or target.with_suffix(".pdf").exists():
         raise FileExistsError(f"refusing overwrite: {target}")
-    sampled = sample_same_world_through_plane(native, native_affine, proposed, proposed_affine, fit_first, fit_first_affine)
+    sampled = sample_same_world_through_plane(native, native_affine, proposed, proposed_affine, fit_first, fit_first_affine,
+                                               common_support=common_support)
     bars = colorbars()
     figure, axes = plt.subplots(1, 5, figsize=(12, 3), gridspec_kw={"width_ratios": [1, 1, 1, 1, .07]})
     limit = DISPLAY_RANGES_MS[parameter]
     reference = np.asarray(native, float)[:, :, int(reference_group)]
+    if common_support is not None:
+        reference = np.ma.masked_where(~np.asarray(common_support, bool)[:, :, int(reference_group)], reference)
     h0 = axes[0].imshow(reference, cmap=bars.mapping[parameter], vmin=limit[0], vmax=limit[1], origin="lower", interpolation="nearest", aspect="equal")
     axes[0].axvline(sampled["cut_column"], color="white", linewidth=.75)
     axes[0].set_title("Native SAX + cut line", fontsize=8)
     extent = [*sampled["physical_extent_mm"]["slice"], *sampled["physical_extent_mm"]["row"]]
     for axis, value, label in zip(axes[1:4], (sampled["native"], sampled["proposed"], sampled["fit_first"]), ("Native through-plane", "Proposed 3-D through-plane", "Fit-first 3-D through-plane")):
+        if sampled["common_support"] is not None:
+            value = np.ma.masked_where(~np.asarray(sampled["common_support"], bool), value)
         axis.imshow(value, cmap=bars.mapping[parameter], vmin=limit[0], vmax=limit[1], origin="lower", interpolation="nearest", aspect="equal", extent=extent)
         axis.set_title(label, fontsize=8)
     for axis in axes[:4]:
@@ -347,7 +366,8 @@ def render_through_plane_continuity(
     geometry = {key: sampled[key] for key in ("cut_column", "interpolation", "world_plane_origin_mm", "world_plane_basis_vectors", "grid_spacing_mm", "physical_extent_mm", "grid_shape")}
     metadata_record = dict(metadata)
     metadata_record.update(geometry)
-    metadata_record.update({"reference_group": int(reference_group), "outputs": written})
+    metadata_record.update({"reference_group": int(reference_group), "outputs": written,
+                            "common_support_policy": "one supplied native-lattice common mask sampled nearest-neighbour and intersected with all three world-sample geometry domains" if common_support is not None else None})
     (target.parent / "through_plane_metadata.json").write_text(json.dumps(metadata_record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return written
 

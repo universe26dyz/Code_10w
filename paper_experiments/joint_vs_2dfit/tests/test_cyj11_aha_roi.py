@@ -181,6 +181,52 @@ def test_cyj11_final_pose_plane_reads_current_native_bundles(tmp_path) -> None:
     assert plane["proposed_valid"].all() and plane["fit_first_valid"].all()
 
 
+def test_cyj11_final_pose_accepts_raw_current_fit_first_bundle(tmp_path) -> None:
+    """HHZ raw NeSVoR volumes use their own final slices without a fabricated endpoint mask."""
+    from paper_experiments.joint_vs_2dfit.aha.cyj11_runner import (
+        final_pose_sax_plane,
+        load_cyj11_final_pose_bundles,
+    )
+
+    direct, fit = tmp_path / "direct", tmp_path / "fit"
+    (direct / "planes" / "sax").mkdir(parents=True)
+    (fit / "planes" / "t1" / "sax").mkdir(parents=True)
+    np.savez_compressed(direct / "planes" / "sax" / "group005.npz",
+                        t1_ms=np.full((2, 3), 1100.0), t2_ms=np.full((2, 3), 55.0))
+    np.savez_compressed(fit / "planes" / "t1" / "sax" / "group005.npz",
+                        prediction_ms=np.full((2, 3), 1000.0),
+                        volume_geometry_valid=np.asarray([[True, True, False], [True, True, True]]),
+                        query_effective_mask=np.ones((2, 3), bool),
+                        valid=np.asarray([[True, True, False], [True, True, True]]))
+    (direct / "manifest.json").write_text(json.dumps({
+        "schema": "direct_sparse_native_prediction_bundle/v1", "subject": "HHZ", "case_id": "L50_fold0",
+        "endpoint": "central", "planes": [{"stack": "sax", "original_group_idx": 5, "path": "planes/sax/group005.npz"}],
+    }))
+    (fit / "manifest.json").write_text(json.dumps({
+        "schema": "fit_first_raw_final_pose_native_bundle/v1", "subject": "HHZ", "case": "L50_fold0",
+        "endpoint": "central", "support_policy": "volume_geometry_and_finite_prediction_only",
+    }))
+
+    bundles = load_cyj11_final_pose_bundles(direct, fit, subject="HHZ", case="L50_fold0")
+    native = {"group_idx": np.array([5]), "t1_ms": np.full((1, 2, 3), 1200.0),
+              "t2_ms": np.full((1, 2, 3), 60.0)}
+    plane = final_pose_sax_plane(native=native, group=5, parameter="t1", **bundles)
+
+    assert plane["fit_first_valid"].sum() == 5
+
+
+def test_current_fit_first_final_pose_requires_current_case_manifest(tmp_path) -> None:
+    from paper_experiments.joint_vs_2dfit.aha.current_fit_first_final_pose_bundle import _input_manifest
+
+    (tmp_path / "input_manifest.json").write_text(json.dumps({
+        "method": "fit_first", "subject_id": "HHZ", "case_id": "L25_fold0",
+    }))
+
+    assert _input_manifest(tmp_path, subject="HHZ", case="L25_fold0") == tmp_path / "input_manifest.json"
+    with pytest.raises(ValueError, match="case mismatch"):
+        _input_manifest(tmp_path, subject="HHZ", case="L50_fold0")
+
+
 def test_cyj11_r3_final_slices_follow_current_manifest_group_order(tmp_path) -> None:
     from paper_experiments.joint_vs_2dfit.aha.cyj11_r3_fit_first_final_pose_bundle import r3_group_records
 
@@ -257,6 +303,55 @@ def test_cyj11_r3_direct_contract_accepts_migrated_profile_by_digest(tmp_path) -
 
     assert [path.parent.name for path in paths] == ["sax", "2ch", "4ch"]
     assert mappings["sax"] == [(0, 4), (1, 2)]
+
+
+def test_cyj11_r3_direct_contract_accepts_legacy_l50_by_declared_mapping(tmp_path) -> None:
+    """Legacy L50 observations are renumbered; the manifest is the identity authority."""
+    from paper_experiments.joint_vs_2dfit.aha.cyj11_r3_direct_final_pose_bundle import r3_sparse_prepared_contract
+    from paper_experiments.joint_vs_2dfit.phase2_clean.contracts import sha256
+
+    prepared = tmp_path / "legacy"
+    stacks = {}
+    for stack, original_groups in (("sax", [11, 10]), ("2ch", [15, 13]), ("4ch", [9, 7])):
+        path = prepared / stack / "observations.npz"; path.parent.mkdir(parents=True)
+        np.savez_compressed(path, group_idx=np.repeat(np.arange(len(original_groups)), 2),
+                            images=np.zeros((2 * len(original_groups), 3, 4)),
+                            pixel_spacing_rc_mm=np.ones((2 * len(original_groups), 2)))
+        stacks[stack] = {
+            "source_observation": {"path": f"/old/{stack}/observations.npz", "sha256": "source"},
+            "derived_observation": {"path": f"/old/{stack}/derived.npz", "sha256": sha256(path)},
+            "retained_original_group_ids": original_groups,
+            "derived_to_original_group_idx": [
+                {"derived_group_idx": index, "original_group_idx": group}
+                for index, group in enumerate(original_groups)
+            ],
+        }
+    manifest = tmp_path / "sparse_manifest.json"
+    manifest.write_text(json.dumps({"schema_version": "phase4r_sparse_v1", "status": "ELIGIBLE",
+                                    "subject": "HHZ", "condition": "L50", "phase": 0,
+                                    "stacks": stacks}))
+
+    _payload, paths, mappings = r3_sparse_prepared_contract(
+        prepared_root=prepared, sparse_manifest=manifest, subject="HHZ", case="L50_fold0")
+
+    assert [path.parent.name for path in paths] == ["sax", "2ch", "4ch"]
+    assert mappings["sax"] == [(0, 11), (1, 10)]
+    assert mappings["2ch"] == [(0, 15), (1, 13)]
+
+
+def test_through_plane_sampling_applies_one_shared_native_mask() -> None:
+    from paper_experiments.joint_vs_2dfit.phase2_clean.visualization import sample_same_world_through_plane
+
+    native = np.arange(27, dtype=float).reshape(3, 3, 3)
+    support = np.zeros((3, 3, 3), bool)
+    support[:, 1, :] = True
+    result = sample_same_world_through_plane(
+        native, np.eye(4), native + 100, np.eye(4), native + 200, np.eye(4),
+        cut_column=1, common_support=support,
+    )
+
+    assert result["common_support"].shape == result["native"].shape
+    assert result["common_support"].all()
 
 
 def test_historical_scmr_aha_validation_requires_all_supported_segments() -> None:

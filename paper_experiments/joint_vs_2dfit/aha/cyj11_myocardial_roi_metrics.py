@@ -10,7 +10,7 @@ from typing import Any
 import numpy as np
 
 from ..phase2_clean.contracts import sha256, write_immutable_json
-from .cyj11_adapter import cyj11_native_stack_root, require_cyj11_mapping
+from .cyj11_adapter import cyj11_native_stack_root, load_cyj11_native_sax, require_cyj11_mapping
 from .cyj11_runner import (final_pose_sax_plane, load_cyj11_final_pose_bundles,
                            load_cyj11_native_inputs, load_cyj11_run_inputs,
                            native_sax_plane)
@@ -69,24 +69,30 @@ def build_cyj11_myocardial_roi_metrics(*, analysis_root: str | Path, subject: st
                                         mapping_path: str | Path, roi_bundle: str | Path, output: str | Path,
                                         sampling: str = "native_endpoint",
                                         proposed_native_bundle: str | Path | None = None,
-                                        fit_first_native_bundle: str | Path | None = None) -> Path:
+                                        fit_first_native_bundle: str | Path | None = None,
+                                        native_sax_root: str | Path | None = None,
+                                        prepared_sax: str | Path | None = None) -> Path:
     """Write SCMR-style all-SAX per-plane and pooled paired ROI statistics."""
     output, mapping_path, roi_bundle = Path(output), Path(mapping_path), Path(roi_bundle)
     if output.exists(): raise FileExistsError(f"refusing overwrite: {output}")
     root = Path(analysis_root)
+    prepared_path = Path(prepared_sax) if prepared_sax is not None else root / "prepared" / subject / "sax" / "observations.npz"
+    native_root = Path(native_sax_root) if native_sax_root is not None else cyj11_native_stack_root(root, subject)
     mapping = require_cyj11_mapping(mapping_path, subject=subject, case=case,
-                                    prepared_sax_path=root / "prepared" / subject / "sax" / "observations.npz",
+                                    prepared_sax_path=prepared_path,
                                     roi_bundle_path=roi_bundle / "roi_derivation_manifest.json")
     if sampling not in ("native_endpoint", "final_pose"):
         raise ValueError("CYJ1.1 myocardial sampling must be native_endpoint or final_pose")
     if sampling == "final_pose":
         if proposed_native_bundle is None or fit_first_native_bundle is None:
             raise ValueError("FINAL_POSE_AHA_PENDING: both current final-pose bundle roots are required")
-        native = load_cyj11_native_inputs(root, subject)
+        native = load_cyj11_native_sax(native_root, prepared_path)
         final_pose = load_cyj11_final_pose_bundles(proposed_native_bundle, fit_first_native_bundle,
                                                     subject=subject, case=case)
         endpoint_images = None
     else:
+        if native_sax_root is not None or prepared_sax is not None:
+            raise ValueError("explicit native SAX paths are supported only for final_pose sampling")
         native, endpoint_images = load_cyj11_run_inputs(root, subject, case)
         final_pose = None
     indices = {int(group): index for index, group in enumerate(native["group_idx"])}
@@ -136,8 +142,8 @@ def build_cyj11_myocardial_roi_metrics(*, analysis_root: str | Path, subject: st
             "mapping": _record(mapping_path), "roi_bundle": _record(roi_bundle / "roi_derivation_manifest.json"),
             "scmr_myocardium_bundle": {"manifest": _record(roi_bundle / "manifest.json"),
                                          "archive": _record(roi_bundle / "sax_myocardium_masks.npz")},
-            "prepared_sax": _record(root / "prepared" / subject / "sax" / "observations.npz"),
-            "native_sax": {name: _record(cyj11_native_stack_root(root, subject) / name) for name in ("native_maps.npz", "geometry.npz", "manifest.json")},
+            "prepared_sax": _record(prepared_path),
+            "native_sax": {name: _record(native_root / name) for name in ("native_maps.npz", "geometry.npz", "manifest.json")},
             "sampling": sampling,
             "endpoint_files": None if endpoint_images is None else {parameter: {method: _record(image.get_filename()) for method, image in images.items()} for parameter, images in endpoint_images.items()},
             "current_final_pose_bundles": None if final_pose is None else {

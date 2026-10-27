@@ -18,7 +18,12 @@ FINAL_POSE_DIRECT_SCHEMAS = (
     "direct_sparse_native_prediction_bundle/v1",
     "cyj11_r3_direct_final_pose_native_bundle/v1",
 )
-FINAL_POSE_FIT_SCHEMAS = ("fit_first_native_prediction_bundle/v6", "cyj11_r3_fit_first_final_pose_native_bundle/v1")
+FINAL_POSE_FIT_SCHEMAS = (
+    "fit_first_native_prediction_bundle/v6",
+    "cyj11_r3_fit_first_final_pose_native_bundle/v1",
+    "fit_first_raw_final_pose_native_bundle/v1",
+)
+RAW_FIT_FIRST_FINAL_POSE_SCHEMA = "fit_first_raw_final_pose_native_bundle/v1"
 
 
 def load_cyj11_endpoint_images(analysis_root: str | Path, subject: str, case: str) -> dict[str, dict[str, Any]]:
@@ -72,13 +77,19 @@ def load_cyj11_final_pose_bundles(proposed_bundle_root: str | Path, fit_first_bu
         raise ValueError("current Proposed final-pose native bundle subject/case mismatch")
     if fit.get("schema") not in FINAL_POSE_FIT_SCHEMAS or fit.get("endpoint") != "central":
         raise ValueError("current Fit-first final-pose native bundle schema/endpoint mismatch")
-    endpoint_record = fit.get("endpoint_source_manifest")
-    endpoint_path = Path(str(endpoint_record.get("path", ""))) if isinstance(endpoint_record, dict) else None
-    if endpoint_path is None or not endpoint_path.is_file() or endpoint_record.get("sha256") != sha256(endpoint_path):
-        raise ValueError("current Fit-first final-pose bundle endpoint provenance mismatch")
-    endpoint = json.loads(endpoint_path.read_text(encoding="utf-8"))
-    if (endpoint.get("subject"), endpoint.get("condition"), endpoint.get("endpoint")) != (subject, case, "central"):
-        raise ValueError("current Fit-first final-pose endpoint subject/case mismatch")
+    if fit.get("schema") == RAW_FIT_FIRST_FINAL_POSE_SCHEMA:
+        if (fit.get("subject"), fit.get("case"), fit.get("support_policy")) != (
+            subject, case, "volume_geometry_and_finite_prediction_only",
+        ):
+            raise ValueError("current raw Fit-first final-pose bundle subject/case/support mismatch")
+    else:
+        endpoint_record = fit.get("endpoint_source_manifest")
+        endpoint_path = Path(str(endpoint_record.get("path", ""))) if isinstance(endpoint_record, dict) else None
+        if endpoint_path is None or not endpoint_path.is_file() or endpoint_record.get("sha256") != sha256(endpoint_path):
+            raise ValueError("current Fit-first final-pose bundle endpoint provenance mismatch")
+        endpoint = json.loads(endpoint_path.read_text(encoding="utf-8"))
+        if (endpoint.get("subject"), endpoint.get("condition"), endpoint.get("endpoint")) != (subject, case, "central"):
+            raise ValueError("current Fit-first final-pose endpoint subject/case mismatch")
     if not isinstance(direct.get("planes"), list):
         raise ValueError("current Proposed final-pose native bundle lacks plane records")
     return {"direct_root": direct_root, "direct_manifest": direct, "fit_root": fit_root, "fit_manifest": fit}
@@ -104,13 +115,21 @@ def final_pose_sax_plane(*, native: dict[str, np.ndarray], group: int, parameter
         raise ValueError(f"FINAL_POSE_AHA_PENDING: paired final-pose SAX group {group}/{parameter} is unavailable")
     index = groups.index(group)
     reference = np.asarray(native[f"{parameter}_ms"][index], float)
+    raw_fit = fit_manifest.get("schema") == RAW_FIT_FIRST_FINAL_POSE_SCHEMA
     with np.load(direct_path, allow_pickle=False) as direct, np.load(fit_path, allow_pickle=False) as fit:
-        if f"{parameter}_ms" not in direct or not {"prediction_ms", "volume_geometry_valid", "query_effective_mask"}.issubset(fit.files):
+        required = {"prediction_ms", "volume_geometry_valid", "valid"} if raw_fit else {"prediction_ms", "volume_geometry_valid", "query_effective_mask"}
+        if f"{parameter}_ms" not in direct or not required.issubset(fit.files):
             raise ValueError("current final-pose native bundle plane arrays are incomplete")
         proposed = np.asarray(direct[f"{parameter}_ms"], float)
         fit_first = np.asarray(fit["prediction_ms"], float)
-        fit_valid = (np.asarray(fit["volume_geometry_valid"], bool)
-                     & np.asarray(fit["query_effective_mask"], bool) & np.isfinite(fit_first))
+        if raw_fit:
+            derived = np.asarray(fit["volume_geometry_valid"], bool) & np.isfinite(fit_first)
+            fit_valid = np.asarray(fit["valid"], bool)
+            if not np.array_equal(fit_valid, derived):
+                raise ValueError("raw Fit-first final-pose valid mask violates bundle contract")
+        else:
+            fit_valid = (np.asarray(fit["volume_geometry_valid"], bool)
+                         & np.asarray(fit["query_effective_mask"], bool) & np.isfinite(fit_first))
     if not (reference.shape == proposed.shape == fit_first.shape == fit_valid.shape):
         raise ValueError("current final-pose SAX bundle/native geometry mismatch")
     return {"reference": reference, "proposed": proposed, "fit_first": fit_first,

@@ -75,18 +75,28 @@ def r3_sparse_prepared_contract(*, prepared_root: str | Path, sparse_manifest: s
             paths.append(path)
             mappings[stack] = _profile_mapping(item, stack)
     elif schema == "phase4r_sparse_v1":
-        # L100 was already full-stack; migration keeps its original group IDs.
-        if case != "L100_fold0" or payload.get("condition") != "L100":
-            raise ValueError("r3 sparse v1 is accepted only for L100_fold0")
+        condition, phase = payload.get("condition"), payload.get("phase")
+        if not isinstance(condition, str) or not isinstance(phase, int) or case != f"{condition}_fold{phase}":
+            raise ValueError("r3 legacy sparse case/condition/phase mismatch")
         for stack in STACKS:
             item, path = stacks[stack], root / stack / "observations.npz"
-            record = item.get("source_observation") if isinstance(item, Mapping) else None
+            if not isinstance(item, Mapping):
+                raise ValueError(f"{stack}: malformed legacy sparse stack record")
+            # L100 uses the source observation unchanged; L50/L25 use the
+            # sparse NPZ whose group IDs were deliberately renumbered.  The
+            # manifest mapping, not physical integer order, is authoritative.
+            record = item.get("derived_observation", item.get("source_observation"))
             if not isinstance(record, Mapping) or not isinstance(record.get("sha256"), str) or not path.is_file() or sha256(path) != record["sha256"]:
-                raise ValueError(f"{stack}: migrated L100 sparse observation SHA256 mismatch")
+                raise ValueError(f"{stack}: migrated legacy sparse observation SHA256 mismatch")
             with np.load(path, allow_pickle=False) as observations:
                 groups = sorted(int(value) for value in np.unique(observations["group_idx"]))
             paths.append(path)
-            mappings[stack] = list(enumerate(groups))
+            if "derived_observation" in item:
+                mappings[stack] = _profile_mapping(item, stack)
+                if groups != [derived for derived, _original in mappings[stack]]:
+                    raise ValueError(f"{stack}: legacy sparse observation group IDs disagree with manifest mapping")
+            else:
+                mappings[stack] = list(enumerate(groups))
     else:
         raise ValueError("unsupported r3 sparse manifest schema")
     return payload, paths, mappings
