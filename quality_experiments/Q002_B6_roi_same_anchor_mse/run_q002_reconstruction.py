@@ -38,6 +38,7 @@ def sparse_profile_provenance(manifest: dict[str, object], inputs: list[Path]) -
     return {
         "profile_id": manifest["profile_id"],
         "case_id": manifest["case_id"],
+        "selection_policy": manifest.get("selection_policy", "physical_ordinal_profile"),
         "sparse_manifest": {
             "path": manifest["_manifest_path"],
             "sha256": manifest["_manifest_sha256"],

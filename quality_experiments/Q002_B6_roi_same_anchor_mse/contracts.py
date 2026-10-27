@@ -7,6 +7,8 @@ import json
 from pathlib import Path
 from typing import Any, Mapping
 
+from paper_experiments.joint_vs_2dfit.phase2_clean.sparse_profile_manifest import LEGACY_SCHEMA_VERSION, SCHEMA_VERSION
+
 
 Q002_EXPERIMENT_ID = "Q002_B6_roi_same_anchor_mse"
 Q002S640_EXPERIMENT_ID = "Q002S640_B6_roi_same_anchor_mse"
@@ -37,8 +39,9 @@ def profiled_observation_paths(root: str | Path, subject_id: str, sparse_manifes
     """Select only manifest-present training stacks; never synthesize an empty one."""
     manifest_path = Path(sparse_manifest)
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    if manifest.get("schema_version") != "phase4r_sparse_profile_v2" or manifest.get("subject") != subject_id:
-        raise ValueError("profiled Q002 inputs require a matching phase4r_sparse_profile_v2 manifest")
+    schema = manifest.get("schema_version")
+    if schema not in (SCHEMA_VERSION, LEGACY_SCHEMA_VERSION) or manifest.get("subject") != subject_id:
+        raise ValueError("profiled Q002 inputs require a matching v2 profile or legacy-v1 sparse manifest")
     declared_root = Path(str(manifest.get("prepared_root", ""))).resolve()
     actual_root = Path(root).resolve()
     if declared_root != actual_root:
@@ -48,7 +51,7 @@ def profiled_observation_paths(root: str | Path, subject_id: str, sparse_manifes
         spec = manifest.get("stacks", {}).get(stack)
         if not isinstance(spec, Mapping):
             raise ValueError(f"profile manifest lacks stack {stack}")
-        present = bool(spec.get("training_stack_present"))
+        present = bool(spec.get("training_stack_present")) if schema == SCHEMA_VERSION else bool(spec.get("retained_original_group_ids"))
         path = actual_root / stack / "observations.npz"
         if present:
             if not path.is_file():

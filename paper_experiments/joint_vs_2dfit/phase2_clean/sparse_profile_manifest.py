@@ -19,6 +19,8 @@ from .sparse import _json_sha256, _resolve_profile, load_sparse_profile
 
 STACKS = ("sax", "2ch", "4ch")
 SCHEMA_VERSION = "phase4r_sparse_profile_v2"
+LEGACY_SCHEMA_VERSION = "phase4r_sparse_v1"
+LEGACY_CONDITIONS = {"L100": 1, "L50": 2, "L33": 3, "L25": 4}
 
 
 def _fail(message: str) -> None:
@@ -206,6 +208,94 @@ def _strict_profile_contract(payload: dict[str, Any], *, expected_generator_git_
     return expected_record
 
 
+def _validate_legacy_v1_manifest(
+    path: Path,
+    payload: dict[str, Any],
+    *,
+    actual_manifest_sha256: str,
+    subject: str | None,
+    strict: bool,
+    expected_generator_git_sha: str | None,
+) -> dict[str, Any]:
+    """Admit immutable legacy modulo-selected sparse inputs without reinterpreting them as profiles."""
+    if payload.get("status") != "ELIGIBLE":
+        _fail("legacy status must be ELIGIBLE")
+    for field in ("subject", "source_prepared_root", "prepared_root", "git_sha", "condition"):
+        if not isinstance(payload.get(field), str) or not payload[field]:
+            _fail(f"legacy {field} must be a non-empty string")
+    if subject is not None and payload["subject"] != subject:
+        _fail(f"subject is {payload['subject']!r}, expected {subject!r}")
+    if payload["condition"] not in LEGACY_CONDITIONS:
+        _fail("legacy condition is unsupported")
+    stride = LEGACY_CONDITIONS[payload["condition"]]
+    if payload.get("stride") != stride:
+        _fail("legacy stride disagrees with condition")
+    phase = payload.get("phase")
+    if isinstance(phase, bool) or not isinstance(phase, int) or not 0 <= phase < stride:
+        _fail("legacy phase is invalid for condition stride")
+    if len(payload["git_sha"]) != 40:
+        _fail("legacy git_sha must identify the sparse generator commit")
+    if strict:
+        if not isinstance(expected_generator_git_sha, str) or len(expected_generator_git_sha) != 40:
+            _fail("strict legacy audit requires an explicit 40-character expected_generator_git_sha")
+        if payload["git_sha"] != expected_generator_git_sha:
+            _fail("legacy generator git_sha does not match explicit expected_generator_git_sha")
+
+    source_root = Path(payload["source_prepared_root"]).resolve()
+    prepared_root = Path(payload["prepared_root"]).resolve()
+    condition = payload["condition"]
+    if condition == "L100":
+        if prepared_root != source_root:
+            _fail("legacy L100 prepared_root must be its full source_prepared_root")
+    elif path != prepared_root / "sparse_manifest.json":
+        _fail("legacy manifest path must be prepared_root/sparse_manifest.json")
+    if set(payload.get("stacks", {})) != set(STACKS):
+        _fail("legacy stack names must be exactly sax/2ch/4ch")
+
+    for stack in STACKS:
+        item = payload["stacks"][stack]
+        if not isinstance(item, dict):
+            _fail(f"legacy {stack} record must be an object")
+        source_path, _ = _stack_observation(item.get("source_observation"), stack=stack, label="source_observation")
+        if source_path != source_root / stack / "observations.npz":
+            _fail(f"legacy {stack}.source_observation path disagrees with source_prepared_root")
+        with np.load(source_path, allow_pickle=False) as source:
+            source_groups = _groups_and_weights(source, source_path)
+            retained = _ids(item.get("retained_original_group_ids"), field="retained_original_group_ids", stack=stack)
+            heldout = _ids(item.get("heldout_original_group_ids"), field="heldout_original_group_ids", stack=stack)
+            expected_retained = source_groups if stack == "sax" else [group for group in source_groups if group % stride == phase]
+            expected_heldout = [] if stack == "sax" else [group for group in source_groups if group not in expected_retained]
+            if retained != expected_retained or heldout != expected_heldout:
+                _fail(f"legacy {stack}: retained/held-out groups disagree with group_idx modulo selection")
+            if condition == "L100":
+                if {"derived_observation", "derived_to_original_group_idx"}.intersection(item):
+                    _fail("legacy L100 must not carry derived observations")
+                continue
+            derived_path, _ = _stack_observation(item.get("derived_observation"), stack=stack, label="derived_observation")
+            if derived_path != prepared_root / stack / "observations.npz":
+                _fail(f"legacy {stack}.derived_observation path disagrees with prepared_root")
+            mapping = _mapping(item.get("derived_to_original_group_idx"), stack=stack, retained=retained)
+            with np.load(derived_path, allow_pickle=False) as derived:
+                derived_groups, derived_positions, _ = _physical_group_order(derived, derived_path)
+                if derived_groups != list(range(len(retained))):
+                    _fail(f"legacy {stack}: derived NPZ groups must be renumbered consecutively from zero")
+                _gap_audit(item.get("stack_gap_qc"), stack=stack, positions=[derived_positions[group] for group in derived_groups])
+                for derived_group, original_group in mapping:
+                    _same_group_content(source, original_group, derived, derived_group, stack=stack)
+
+    result = dict(payload)
+    result.update({
+        "profile_id": f"legacy_group_id_modulo_{condition}",
+        "case_id": f"{condition}_fold{phase}",
+        "fold_id": phase,
+        "fold_count": stride,
+        "selection_policy": "group_idx_modulo",
+        "_manifest_path": str(path),
+        "_manifest_sha256": actual_manifest_sha256,
+    })
+    return result
+
+
 def validate_sparse_profile_manifest(manifest: str | Path, *, subject: str | None = None, strict: bool = False, expected_generator_git_sha: str | None = None, expected_manifest_sha256: str | None = None, permitted_stack_strides: dict[str, int] | None = None, permitted_stack_modes: dict[str, str] | None = None) -> dict[str, Any]:
     """Validate a sparse profile before it is admitted to any reconstruction.
 
@@ -218,6 +308,15 @@ def validate_sparse_profile_manifest(manifest: str | Path, *, subject: str | Non
         if not isinstance(expected_manifest_sha256, str) or len(expected_manifest_sha256) != 64 or actual_manifest_sha256 != expected_manifest_sha256:
             _fail("manifest SHA256 does not match the explicit expected_manifest_sha256")
     payload = _read_json(path)
+    if payload.get("schema_version") == LEGACY_SCHEMA_VERSION:
+        return _validate_legacy_v1_manifest(
+            path,
+            payload,
+            actual_manifest_sha256=actual_manifest_sha256,
+            subject=subject,
+            strict=strict,
+            expected_generator_git_sha=expected_generator_git_sha,
+        )
     if payload.get("schema_version") != SCHEMA_VERSION:
         _fail(f"schema_version must be {SCHEMA_VERSION}")
     if payload.get("status") != "ELIGIBLE":
