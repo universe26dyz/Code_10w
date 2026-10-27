@@ -17,7 +17,7 @@ import numpy as np
 
 from .contracts import sha256, write_immutable_json
 from .current_native_central_component_mask import load_validated_current_native_mask_plane
-from .evaluation import _metrics, reproject_volume_to_native_plane
+from .evaluation import PSNR_DATA_RANGES_MS, _metrics, masked_ssim, reproject_volume_to_native_plane
 from .final_cyj_reporting import _load_all_verified_native_cache_groups
 from .final_sparse_native_metrics import sparse_manifest_case, validate_sparse_endpoint_roots
 
@@ -76,12 +76,18 @@ def classify_stratified_groups(sparse: Mapping[str, Any], source_groups: Mapping
     }, statuses
 
 
-def _aggregate(values: dict[str, list[np.ndarray]], mask_voxels: int) -> dict[str, Any]:
+def _aggregate(values: dict[str, list[np.ndarray]], mask_voxels: int, *, parameter: str) -> dict[str, Any]:
     if not values["reference"]:
         return {"status": "EMPTY_COMMON_SUPPORT", "voxel_count": 0, "coverage_fraction": 0.0}
     reference = np.concatenate(values["reference"])
     support = np.ones(reference.size, bool)
-    result = {name: _metrics(reference, np.concatenate(values[name]), support) for name in ("proposed", "fit_first")}
+    result = {}
+    for name in ("proposed", "fit_first"):
+        result[name] = _metrics(reference, np.concatenate(values[name]), support,
+                                 psnr_data_range=PSNR_DATA_RANGES_MS[parameter])
+        ssim_values = values.get(f"{name}_ssim", [])
+        result[name]["ssim"] = float(sum(ssim_values) / len(ssim_values)) if ssim_values else None
+        result[name]["ssim_status"] = "mean_of_per_plane_common_support_ssim" if ssim_values else "not_available_2d_support"
     result.update({"status": "COMPLETE", "voxel_count": int(reference.size), "coverage_fraction": float(reference.size / mask_voxels) if mask_voxels else 0.0})
     return result
 
@@ -103,7 +109,9 @@ def build_final_stratified_native_metrics(*, proposed_endpoint_root: str | Path,
     images = {parameter: {name: nib.load(str(path)) for name, path in method_paths.items()} for parameter, method_paths in paths.items()}
     cache = {stack: _load_all_verified_native_cache_groups(r0_native_maps_root, sparse_manifest, stack) for stack in STACKS}
     regions, statuses = classify_stratified_groups(sparse, {stack: [int(group) for group in cache[stack]["group_idx"]] for stack in STACKS})
-    accumulators = {parameter: {region: {"reference": [], "proposed": [], "fit_first": [], "mask_voxels": 0} for region in REGIONS} for parameter in PARAMETERS}
+    accumulators = {parameter: {region: {"reference": [], "proposed": [], "fit_first": [],
+                                         "proposed_ssim": [], "fit_first_ssim": [], "mask_voxels": 0}
+                                for region in REGIONS} for parameter in PARAMETERS}
     output.parent.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(prefix=f".{output.name}.staging-", dir=output.parent))
     try:
@@ -120,7 +128,15 @@ def build_final_stratified_native_metrics(*, proposed_endpoint_root: str | Path,
                     proposed, proposed_valid = reproject_volume_to_native_plane(images[parameter]["proposed"].get_fdata(), images[parameter]["proposed"].affine, affine, reference.shape)
                     fit_first, fit_valid = reproject_volume_to_native_plane(images[parameter]["fit_first"].get_fdata(), images[parameter]["fit_first"].affine, affine, reference.shape)
                     support = np.asarray(masks["primary_native_mask"], bool) & np.isfinite(reference) & proposed_valid & fit_valid & np.isfinite(proposed) & np.isfinite(fit_first)
-                    metrics = None if not support.any() else {name: _metrics(reference, values, support) for name, values in (("proposed", proposed), ("fit_first", fit_first))}
+                    metrics = None
+                    if support.any():
+                        metrics = {}
+                        for name, values in (("proposed", proposed), ("fit_first", fit_first)):
+                            ssim_value, ssim_status = masked_ssim(reference, values, support,
+                                                                   data_range=PSNR_DATA_RANGES_MS[parameter])
+                            metrics[name] = _metrics(reference, values, support,
+                                                     psnr_data_range=PSNR_DATA_RANGES_MS[parameter],
+                                                     ssim_value=ssim_value, ssim_status=ssim_status)
                     plane["parameters"][parameter] = {"common_support_voxels": int(support.sum()), "coverage_fraction": float(support.sum() / np.asarray(masks["primary_native_mask"], bool).sum()) if np.asarray(masks["primary_native_mask"], bool).any() else 0.0, "metrics": metrics, "mask_provenance": mask_provenance}
                     for region, members in regions.items():
                         if members is None or group not in members.get(stack, []):
@@ -130,14 +146,18 @@ def build_final_stratified_native_metrics(*, proposed_endpoint_root: str | Path,
                         if support.any():
                             for name, values in (("reference", reference), ("proposed", proposed), ("fit_first", fit_first)):
                                 target[name].append(np.asarray(values)[support])
+                            for name in ("proposed", "fit_first"):
+                                value = metrics[name].get("ssim") if metrics is not None else None
+                                if value is not None:
+                                    target[f"{name}_ssim"].append(float(value))
                 planes.append(plane)
         region_metrics: dict[str, Any] = {}
         for parameter in PARAMETERS:
             region_metrics[parameter] = {}
             for region, values in accumulators[parameter].items():
-                region_metrics[parameter][region] = {"status": "NOT_APPLICABLE_L100", "group_ids": None} if regions[region] is None else {"group_ids": regions[region], **_aggregate(values, int(values["mask_voxels"]))}
-        write_immutable_json(staging / "aggregate_metrics.json", {"schema": "final_stratified_native_common_support_metrics/v1", "primary_mask": "primary_native_mask", "primary_support_equation": SUPPORT_EQUATION, "regions": region_metrics, "per_plane_records": planes, "original_native_geometry_for_all_strata": True})
-        manifest = {"schema": "final_stratified_native_bundle_metrics/v1", "subject": subject, "condition": condition, "endpoint": endpoint_provenance["endpoint"], "endpoint_provenance": endpoint_provenance, "sparse_manifest": _record(sparse_manifest), "native_mask_manifest": _record(native_mask_root / "manifest.json"), "aggregate_metrics": _record(staging / "aggregate_metrics.json"), "region_definitions": regions, "no_final_pose_voxels": True, "no_training": True, "no_reconstruction": True}
+                region_metrics[parameter][region] = {"status": "NOT_APPLICABLE_L100", "group_ids": None} if regions[region] is None else {"group_ids": regions[region], **_aggregate(values, int(values["mask_voxels"]), parameter=parameter)}
+        write_immutable_json(staging / "aggregate_metrics.json", {"schema": "final_stratified_native_common_support_metrics/v2", "primary_mask": "primary_native_mask", "primary_support_equation": SUPPORT_EQUATION, "metric_contract": "RMSE, NRMSE, bias, MAE, Pearson CC, NCC, fixed-range PSNR, and mean masked 2-D SSIM", "psnr_data_ranges_ms": PSNR_DATA_RANGES_MS, "regions": region_metrics, "per_plane_records": planes, "original_native_geometry_for_all_strata": True})
+        manifest = {"schema": "final_stratified_native_bundle_metrics/v2", "subject": subject, "condition": condition, "endpoint": endpoint_provenance["endpoint"], "endpoint_provenance": endpoint_provenance, "sparse_manifest": _record(sparse_manifest), "native_mask_manifest": _record(native_mask_root / "manifest.json"), "aggregate_metrics": _record(staging / "aggregate_metrics.json"), "metric_contract": "RMSE, NRMSE, bias, MAE, Pearson CC, NCC, fixed-range PSNR, and mean masked 2-D SSIM", "region_definitions": regions, "no_final_pose_voxels": True, "no_training": True, "no_reconstruction": True}
         if custom:
             for field in ("profile_id", "case_id", "fold_id", "fold_count"):
                 manifest[field] = sparse[field]

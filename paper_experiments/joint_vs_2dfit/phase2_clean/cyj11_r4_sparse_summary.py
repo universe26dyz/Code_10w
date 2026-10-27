@@ -26,6 +26,10 @@ SUMMARY_SCHEMA = "cyj11_r4_sparse_case_summary/v1"
 METRICS = {
     "rmse": "rmse",
     "nrmse": "relative_nrmse",
+    "bias": "bias",
+    "psnr": "psnr",
+    "ssim": "ssim",
+    "cc": "cc",
     "ncc": "ncc",
     "mae": "mae",
 }
@@ -66,7 +70,7 @@ def _case_metric_rows(
 ) -> list[dict[str, Any]]:
     _require_metric_file(path)
     payload = json.loads(path.read_text(encoding="utf-8"))
-    if payload.get("schema") != "final_stratified_native_common_support_metrics/v1":
+    if payload.get("schema") not in {"final_stratified_native_common_support_metrics/v1", "final_stratified_native_common_support_metrics/v2"}:
         raise ValueError(f"r4 aggregate metrics has unsupported schema: {path}")
     regions = payload.get("regions")
     if not isinstance(regions, Mapping):
@@ -145,6 +149,8 @@ def _summary_rows(subject_rows: Sequence[Mapping[str, Any]]) -> list[dict[str, A
         if metric in ERROR_METRICS:
             denominator, direction = fit_first_mean, "lower_is_better"
             improvement = None if denominator == 0.0 else (fit_first_mean - proposed_mean) / denominator * 100.0
+        elif metric == "bias":
+            denominator, direction, improvement = None, "signed_bias_not_monotonic", None
         else:
             denominator, direction = abs(fit_first_mean), "higher_is_better"
             improvement = None if denominator == 0.0 else (proposed_mean - fit_first_mean) / denominator * 100.0

@@ -14,6 +14,7 @@ from typing import Any, Mapping
 import numpy as np
 
 from ..phase2_clean.contracts import sha256, write_immutable_json
+from ..phase2_clean.evaluation import PSNR_DATA_RANGES_MS, _metrics, masked_ssim
 from ..phase2_clean.final5_partitioned_native_metrics import _bundle_plane, _validate_bundles
 from ..phase2_clean.final_sparse_native_metrics import validate_sparse_endpoint_roots
 from .final5_adapter import (assess_final5_aha_readiness, final5_endpoint_paths,
@@ -23,7 +24,7 @@ from .final5_aha16 import _native_sax, _roi_slice
 from .legacy_aha16 import build_filled_masks
 
 
-SCHEMA = "final5_local_myocardial_roi_metrics/v1"
+SCHEMA = "final5_local_myocardial_roi_metrics/v2"
 ROI_NAMES = ("myocardium_full", "myocardium_core_legacy", "myocardium_core_1px")
 SUPPORT_EQUATION = "roi AND finite(reference) AND proposed_final_pose_valid AND fit_first_final_pose_valid AND finite(proposed, fit_first)"
 
@@ -75,7 +76,7 @@ def _distribution(values: np.ndarray) -> dict[str, Any]:
 
 def paired_roi_statistics(*, reference: np.ndarray, proposed: np.ndarray, fit_first: np.ndarray,
                           proposed_valid: np.ndarray, fit_first_valid: np.ndarray,
-                          roi: np.ndarray) -> dict[str, Any]:
+                          roi: np.ndarray, parameter: str | None = None) -> dict[str, Any]:
     """Summarize all three maps on one common native-pixel support."""
     reference, proposed, fit_first = (np.asarray(value, float) for value in (reference, proposed, fit_first))
     proposed_valid, fit_first_valid, roi = (np.asarray(value, bool) for value in (proposed_valid, fit_first_valid, roi))
@@ -84,13 +85,22 @@ def paired_roi_statistics(*, reference: np.ndarray, proposed: np.ndarray, fit_fi
     support = roi & np.isfinite(reference) & proposed_valid & fit_first_valid & np.isfinite(proposed) & np.isfinite(fit_first)
     values = {"reference": reference[support], "proposed": proposed[support], "fit_first": fit_first[support]}
     result = {name: _distribution(value) for name, value in values.items()}
+    data_range = PSNR_DATA_RANGES_MS.get(str(parameter).lower()) if parameter is not None else None
     for method in ("proposed", "fit_first"):
-        difference = values[method] - values["reference"]
-        result[method].update({
-            "bias": None if not difference.size else float(difference.mean()),
-            "mae": None if not difference.size else float(np.abs(difference).mean()),
-            "rmse": None if not difference.size else float(np.sqrt(np.mean(difference ** 2))),
-        })
+        if not values[method].size:
+            result[method].update({"bias": None, "mae": None, "rmse": None, "nrmse": None,
+                                   "relative_nrmse": None, "pearson_r": None, "cc": None,
+                                   "ncc": None, "psnr": None, "ssim": None,
+                                   "ssim_status": "empty_common_support"})
+            continue
+        ssim_value, ssim_status = masked_ssim(reference, np.asarray({"proposed": proposed, "fit_first": fit_first}[method]), support,
+                                               data_range=float(data_range or 1.0))
+        metric = _metrics(reference, {"proposed": proposed, "fit_first": fit_first}[method], support,
+                          psnr_data_range=data_range, ssim_value=ssim_value, ssim_status=ssim_status)
+        result[method].update({key: metric[key] for key in (
+            "bias", "mae", "rmse", "nrmse", "relative_nrmse", "pearson_r", "cc", "ncc",
+            "psnr", "psnr_data_range_ms", "psnr_status", "ssim", "ssim_status",
+        )})
     return {"common_support": support, "common_support_voxels": int(support.sum()), **result}
 
 
@@ -122,13 +132,21 @@ def assess_final5_myocardial_roi_readiness(final_root: str | Path, subject: str,
     return {**readiness, "mapping": json.loads(Path(mapping_path).read_text(encoding="utf-8"))}
 
 
-def _pooled_statistics(values: dict[str, list[np.ndarray]]) -> dict[str, Any]:
+def _pooled_statistics(values: dict[str, list[np.ndarray]], *, parameter: str | None = None,
+                       ssim_values: dict[str, list[float]] | None = None) -> dict[str, Any]:
     reference = np.concatenate(values["reference"]) if values["reference"] else np.asarray([], float)
     proposed = np.concatenate(values["proposed"]) if values["proposed"] else np.asarray([], float)
     fit_first = np.concatenate(values["fit_first"]) if values["fit_first"] else np.asarray([], float)
-    return paired_roi_statistics(reference=reference, proposed=proposed, fit_first=fit_first,
-                                 proposed_valid=np.ones(reference.shape, bool), fit_first_valid=np.ones(reference.shape, bool),
-                                 roi=np.ones(reference.shape, bool))
+    result = paired_roi_statistics(reference=reference, proposed=proposed, fit_first=fit_first,
+                                   proposed_valid=np.ones(reference.shape, bool), fit_first_valid=np.ones(reference.shape, bool),
+                                   roi=np.ones(reference.shape, bool), parameter=parameter)
+    result.pop("common_support", None)
+    if ssim_values is not None:
+        for method in ("proposed", "fit_first"):
+            values_for_method = ssim_values.get(method, [])
+            result[method]["ssim"] = float(np.mean(values_for_method)) if values_for_method else None
+            result[method]["ssim_status"] = "mean_of_per_plane_common_support_ssim" if values_for_method else "not_available_2d_support"
+    return result
 
 
 def build_final5_myocardial_roi_metrics(*, final_root: str | Path, subject: str, case: str,
@@ -186,6 +204,8 @@ def build_final5_myocardial_roi_metrics(*, final_root: str | Path, subject: str,
         per_plane: list[dict[str, Any]] = []
         pooled = {parameter: {roi_name: {method: [] for method in ("reference", "proposed", "fit_first")}
                               for roi_name in ROI_NAMES} for parameter in ("t1", "t2")}
+        pooled_ssim = {parameter: {roi_name: {method: [] for method in ("proposed", "fit_first")}
+                                   for roi_name in ROI_NAMES} for parameter in ("t1", "t2")}
         for entry in mapping["planes"]:
             group = int(entry["native_group_idx"])
             if group not in by_group:
@@ -207,7 +227,8 @@ def build_final5_myocardial_roi_metrics(*, final_root: str | Path, subject: str,
                 parameter_report: dict[str, Any] = {}
                 for roi_name, roi_mask in plane["rois"].items():
                     statistics = paired_roi_statistics(reference=reference, proposed=proposed, fit_first=fit_first,
-                                                       proposed_valid=proposed_valid, fit_first_valid=fit_first_valid, roi=roi_mask)
+                                                       proposed_valid=proposed_valid, fit_first_valid=fit_first_valid, roi=roi_mask,
+                                                       parameter=parameter)
                     count = int(roi_mask.sum())
                     parameter_report[roi_name] = {
                         "roi_voxels": count, "common_support_voxels": statistics["common_support_voxels"],
@@ -218,22 +239,33 @@ def build_final5_myocardial_roi_metrics(*, final_root: str | Path, subject: str,
                     for method, array in (("reference", reference), ("proposed", proposed), ("fit_first", fit_first)):
                         if support.any():
                             pooled[parameter][roi_name][method].append(array[support])
+                    for method in ("proposed", "fit_first"):
+                        value = statistics[method].get("ssim")
+                        if value is not None:
+                            pooled_ssim[parameter][roi_name][method].append(float(value))
                 plane_report["parameters"][parameter] = parameter_report
             per_plane.append(plane_report)
-        pooled_report = {parameter: {roi_name: _pooled_statistics(values)
+        pooled_report = {parameter: {roi_name: _pooled_statistics(values, parameter=parameter,
+                                                                  ssim_values=pooled_ssim[parameter][roi_name])
                                      for roi_name, values in by_roi.items()}
                          for parameter, by_roi in pooled.items()}
         write_immutable_json(staging / "per_plane_statistics.json", {
             "schema": SCHEMA, "subject": subject, "case": case, "support_equation": SUPPORT_EQUATION,
+            "metric_contract": "RMSE, NRMSE, bias, MAE, Pearson CC, NCC, fixed-range PSNR, and mean masked 2-D SSIM",
+            "psnr_data_ranges_ms": PSNR_DATA_RANGES_MS,
             "planes": per_plane,
         })
         write_immutable_json(staging / "pooled_sax_statistics.json", {
             "schema": SCHEMA, "subject": subject, "case": case, "support_equation": SUPPORT_EQUATION,
+            "metric_contract": "RMSE, NRMSE, bias, MAE, Pearson CC, NCC, fixed-range PSNR, and mean masked 2-D SSIM",
+            "psnr_data_ranges_ms": PSNR_DATA_RANGES_MS,
             "pooled_sax": pooled_report,
         })
         write_immutable_json(staging / "manifest.json", {
             "schema": SCHEMA, "subject": subject, "case": case,
             "roi_names": list(ROI_NAMES), "support_equation": SUPPORT_EQUATION,
+            "metric_contract": "RMSE, NRMSE, bias, MAE, Pearson CC, NCC, fixed-range PSNR, and mean masked 2-D SSIM",
+            "psnr_data_ranges_ms": PSNR_DATA_RANGES_MS,
             "input_provenance": input_provenance,
             "native_sampling": "only explicit mapped SAX planes; Proposed and Fit-first use final-pose native bundles",
             "roi_policy": {

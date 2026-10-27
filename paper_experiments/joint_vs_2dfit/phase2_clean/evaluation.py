@@ -2,6 +2,52 @@
 from __future__ import annotations
 import numpy as np
 
+
+# Physical map ranges used for comparable PSNR values.  These are the same
+# fixed display/measurement domains used by the CYJ1.1 reports, not a
+# per-method min/max range.
+PSNR_DATA_RANGES_MS = {"t1": 2500.0, "t2": 200.0}
+
+
+def masked_ssim(reference: np.ndarray, prediction: np.ndarray, mask: np.ndarray,
+                *, data_range: float) -> tuple[float | None, str]:
+    """Return spatial SSIM on one 2-D common-support plane.
+
+    SSIM is intentionally not synthesized from pooled 1-D pixels.  The
+    returned value is the mean of the full SSIM map on the finite common
+    support; the caller records the status when a plane is too small or has no
+    valid support.
+    """
+    reference, prediction = np.asarray(reference, float), np.asarray(prediction, float)
+    support = np.asarray(mask, bool) & np.isfinite(reference) & np.isfinite(prediction)
+    if reference.ndim != 2 or prediction.ndim != 2 or support.ndim != 2:
+        return None, "not_applicable_non_2d_plane"
+    if not support.any():
+        return None, "empty_common_support"
+    rows, cols = np.where(support)
+    r0, r1 = int(rows.min()), int(rows.max()) + 1
+    c0, c1 = int(cols.min()), int(cols.max()) + 1
+    ref, pred, local = reference[r0:r1, c0:c1], prediction[r0:r1, c0:c1], support[r0:r1, c0:c1]
+    # The common support is the only reported domain.  Make the excluded
+    # pixels identical and finite before SSIM's local windows are evaluated;
+    # otherwise NaNs outside a mask would contaminate neighbouring windows.
+    finite_local = local & np.isfinite(ref) & np.isfinite(pred)
+    ref = np.where(finite_local, ref, 0.0)
+    pred = np.where(finite_local, pred, 0.0)
+    smallest = min(ref.shape)
+    if smallest < 3:
+        return None, "not_applicable_plane_smaller_than_3x3"
+    win_size = min(7, int(smallest))
+    if win_size % 2 == 0:
+        win_size -= 1
+    from skimage.metrics import structural_similarity
+    _score, full = structural_similarity(ref, pred, data_range=float(data_range),
+                                          win_size=win_size, full=True)
+    values = np.asarray(full)[local]
+    if not values.size:
+        return None, "empty_common_support"
+    return float(np.mean(values)), "complete"
+
 def _world_sample(volume: np.ndarray, volume_affine: np.ndarray, world: np.ndarray, order: int = 1) -> tuple[np.ndarray, np.ndarray]:
     from scipy.ndimage import map_coordinates
     vox = np.linalg.inv(np.asarray(volume_affine, float)) @ world.reshape(4, -1)
@@ -32,18 +78,44 @@ def reproject_binary_mask_to_native_plane(mask: np.ndarray, mask_affine: np.ndar
     values, inside = _world_sample(mask, mask_affine, world.reshape(4, *plane_shape), order=0)
     return np.asarray(inside, bool) & np.isfinite(values) & (np.asarray(values) > .5)
 
-def _metrics(reference: np.ndarray, prediction: np.ndarray, mask: np.ndarray, constant_normalization: float | None = None) -> dict:
+def _metrics(reference: np.ndarray, prediction: np.ndarray, mask: np.ndarray,
+             constant_normalization: float | None = None,
+             psnr_data_range: float | None = None,
+             ssim_value: float | None = None,
+             ssim_status: str | None = None) -> dict:
     r,p=np.asarray(reference,float)[mask],np.asarray(prediction,float)[mask]
     if not len(r): raise ValueError("empty evaluation support")
     diff=p-r; rmse=float(np.sqrt(np.mean(diff**2))); rng=float(np.max(r)-np.min(r))
     pearson=float(np.corrcoef(r,p)[0,1]) if len(r)>1 and np.std(r)>0 and np.std(p)>0 else float("nan")
     ncc=float(np.dot(r-r.mean(),p-p.mean())/(np.linalg.norm(r-r.mean())*np.linalg.norm(p-p.mean()))) if np.std(r)>0 and np.std(p)>0 else float("nan")
     constant = np.std(r) == 0
-    return {"bias":float(diff.mean()),"mae":float(np.abs(diff).mean()),"rmse":rmse,"relative_nrmse":rmse/(float(constant_normalization) if constant_normalization is not None else (rng if rng else float('nan'))),"valid_mape":float(np.mean(np.abs(diff[r!=0]/r[r!=0]))*100) if np.any(r!=0) else float("nan"),"pearson_r":None if constant else pearson,"ncc":None if constant else ncc,"correlation_status":"not_applicable_constant_reference" if constant else "applicable","ssim":None,"ssim_status":"not_implemented","support_voxels":int(len(r)),"sum_squared_error":float(np.sum(diff**2)),"sum_absolute_error":float(np.sum(np.abs(diff))),"sum_signed_error":float(np.sum(diff)),"reference_mean_ms":float(r.mean()),"prediction_mean_ms":float(p.mean()),"mean_difference_ms":float(diff.mean())}
+    nrmse_denominator = float(constant_normalization) if constant_normalization is not None else (rng if rng else float("nan"))
+    relative_nrmse = rmse / nrmse_denominator
+    used_psnr_range = float(psnr_data_range) if psnr_data_range is not None else (rng if rng else float("nan"))
+    if not np.isfinite(used_psnr_range) or used_psnr_range <= 0:
+        psnr, psnr_status = None, "not_available_nonpositive_data_range"
+    elif rmse == 0.0:
+        psnr, psnr_status = None, "perfect_match_infinite"
+    else:
+        psnr, psnr_status = float(20.0 * np.log10(used_psnr_range / rmse)), "complete"
+    return {
+        "bias": float(diff.mean()), "mae": float(np.abs(diff).mean()), "rmse": rmse,
+        "relative_nrmse": relative_nrmse, "nrmse": relative_nrmse,
+        "valid_mape": float(np.mean(np.abs(diff[r != 0] / r[r != 0])) * 100) if np.any(r != 0) else float("nan"),
+        "pearson_r": None if constant else pearson, "cc": None if constant else pearson,
+        "ncc": None if constant else ncc,
+        "correlation_status": "not_applicable_constant_reference" if constant else "applicable",
+        "psnr": psnr, "psnr_data_range_ms": used_psnr_range, "psnr_status": psnr_status,
+        "ssim": ssim_value, "ssim_status": ssim_status or "not_available_2d_support",
+        "support_voxels": int(len(r)), "sum_squared_error": float(np.sum(diff ** 2)),
+        "sum_absolute_error": float(np.sum(np.abs(diff))), "sum_signed_error": float(np.sum(diff)),
+        "reference_mean_ms": float(r.mean()), "prediction_mean_ms": float(p.mean()),
+        "mean_difference_ms": float(diff.mean()),
+    }
 
 def synthetic_metrics(reference: np.ndarray, prediction: np.ndarray, myocardium_full: np.ndarray, valid: np.ndarray, normalization: float | None = None) -> dict:
     support=np.asarray(myocardium_full,bool)&np.asarray(valid,bool)&np.isfinite(reference)&np.isfinite(prediction)
-    report=_metrics(reference,prediction,support,normalization); report.update({"primary_region":"full_mesh_myocardium","coverage_fraction":float(support.sum()/np.asarray(myocardium_full,bool).sum()),"out_of_grid_voxels":int((np.asarray(myocardium_full,bool)&~np.asarray(valid,bool)).sum()),"world_alignment":"raw known world geometry primary; common SE(3) diagnostic only"}); return report
+    report=_metrics(reference,prediction,support,normalization,psnr_data_range=normalization); report.update({"primary_region":"full_mesh_myocardium","coverage_fraction":float(support.sum()/np.asarray(myocardium_full,bool).sum()),"out_of_grid_voxels":int((np.asarray(myocardium_full,bool)&~np.asarray(valid,bool)).sum()),"world_alignment":"raw known world geometry primary; common SE(3) diagnostic only"}); return report
 
 def real_native_agreement(reference: np.ndarray, prediction: np.ndarray, myocardium_mask: np.ndarray) -> dict:
     report=_metrics(reference,prediction,np.asarray(myocardium_mask,bool)&np.isfinite(reference)&np.isfinite(prediction)); report["endpoint"]="native-reference agreement/consistency, not accuracy versus ground truth"; return report

@@ -28,13 +28,19 @@ def _record(path: str | Path) -> dict[str, str]:
     return {"path": str(path.resolve()), "sha256": sha256(path)}
 
 
-def _pooled(values: dict[str, list[np.ndarray]]) -> dict[str, Any]:
+def _pooled(values: dict[str, list[np.ndarray]], *, parameter: str,
+            ssim_values: dict[str, list[float]] | None = None) -> dict[str, Any]:
     reference = np.concatenate(values["reference"]) if values["reference"] else np.asarray([], float)
     proposed = np.concatenate(values["proposed"]) if values["proposed"] else np.asarray([], float)
     fit_first = np.concatenate(values["fit_first"]) if values["fit_first"] else np.asarray([], float)
     result = paired_roi_statistics(reference=reference, proposed=proposed, fit_first=fit_first,
                                    proposed_valid=np.ones(reference.shape, bool), fit_first_valid=np.ones(reference.shape, bool),
-                                   roi=np.ones(reference.shape, bool))
+                                   roi=np.ones(reference.shape, bool), parameter=parameter)
+    if ssim_values is not None:
+        for method in ("proposed", "fit_first"):
+            method_values = ssim_values.get(method, [])
+            result[method]["ssim"] = float(np.mean(method_values)) if method_values else None
+            result[method]["ssim_status"] = "mean_of_per_plane_common_support_ssim" if method_values else "not_available_2d_support"
     return {key: value for key, value in result.items() if key != "common_support"}
 
 
@@ -93,6 +99,8 @@ def build_cyj11_myocardial_roi_metrics(*, analysis_root: str | Path, subject: st
         reports: list[dict[str, Any]] = []
         pooled = {parameter: {name: {method: [] for method in ("reference", "proposed", "fit_first")}
                               for name in ROI_NAMES} for parameter in ("t1", "t2")}
+        pooled_ssim = {parameter: {name: {method: [] for method in ("proposed", "fit_first")}
+                                   for name in ROI_NAMES} for parameter in ("t1", "t2")}
         for group in map(int, native["group_idx"]):
             index = indices[group]; shape = tuple(map(int, native["t1_ms"][index].shape))
             if shape != tuple(map(int, masks["myocardium_full"][index].shape)):
@@ -106,21 +114,25 @@ def build_cyj11_myocardial_roi_metrics(*, analysis_root: str | Path, subject: st
                          native_sax_plane(native=native, group=group, endpoint_images=endpoint_images, parameter=parameter))
                 parameter_report: dict[str, Any] = {}
                 for name, roi in rois.items():
-                    stats = paired_roi_statistics(roi=roi, **plane)
+                    stats = paired_roi_statistics(roi=roi, parameter=parameter, **plane)
                     parameter_report[name] = {"roi_voxels": int(roi.sum()), "common_support_voxels": stats["common_support_voxels"],
                                               "coverage": None if not roi.any() else stats["common_support_voxels"] / int(roi.sum()),
                                               "statistics": {key: value for key, value in stats.items() if key != "common_support"}}
                     support = stats["common_support"]
                     for method in ("reference", "proposed", "fit_first"):
                         if support.any(): pooled[parameter][name][method].append(plane[method][support])
+                    for method in ("proposed", "fit_first"):
+                        value = stats[method].get("ssim")
+                        if value is not None:
+                            pooled_ssim[parameter][name][method].append(float(value))
                 report["parameters"][parameter] = parameter_report
             reports.append(report)
-        pooled_report = {parameter: {name: _pooled(values) for name, values in items.items()}
+        pooled_report = {parameter: {name: _pooled(values, parameter=parameter, ssim_values=pooled_ssim[parameter][name]) for name, values in items.items()}
                          for parameter, items in pooled.items()}
-        write_immutable_json(staging / "per_plane_statistics.json", {"schema": "cyj11_local_myocardial_roi_metrics/v2", "subject": subject, "case": case, "sampling": sampling, "support_equation": SUPPORT_EQUATION, "planes": reports})
-        write_immutable_json(staging / "pooled_sax_statistics.json", {"schema": "cyj11_local_myocardial_roi_metrics/v2", "subject": subject, "case": case, "sampling": sampling, "support_equation": SUPPORT_EQUATION, "pooled_sax": pooled_report})
+        write_immutable_json(staging / "per_plane_statistics.json", {"schema": "cyj11_local_myocardial_roi_metrics/v3", "subject": subject, "case": case, "sampling": sampling, "support_equation": SUPPORT_EQUATION, "metric_contract": "RMSE, NRMSE, bias, MAE, Pearson CC, NCC, fixed-range PSNR, and mean masked 2-D SSIM", "psnr_data_ranges_ms": {"t1": 2500.0, "t2": 200.0}, "planes": reports})
+        write_immutable_json(staging / "pooled_sax_statistics.json", {"schema": "cyj11_local_myocardial_roi_metrics/v3", "subject": subject, "case": case, "sampling": sampling, "support_equation": SUPPORT_EQUATION, "metric_contract": "RMSE, NRMSE, bias, MAE, Pearson CC, NCC, fixed-range PSNR, and mean masked 2-D SSIM", "psnr_data_ranges_ms": {"t1": 2500.0, "t2": 200.0}, "pooled_sax": pooled_report})
         write_immutable_json(staging / "manifest.json", {
-            "schema": "cyj11_local_myocardial_roi_metrics/v2", "subject": subject, "case": case,
+            "schema": "cyj11_local_myocardial_roi_metrics/v3", "subject": subject, "case": case,
             "mapping": _record(mapping_path), "roi_bundle": _record(roi_bundle / "roi_derivation_manifest.json"),
             "scmr_myocardium_bundle": {"manifest": _record(roi_bundle / "manifest.json"),
                                          "archive": _record(roi_bundle / "sax_myocardium_masks.npz")},
