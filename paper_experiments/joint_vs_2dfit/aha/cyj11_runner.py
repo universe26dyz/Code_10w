@@ -13,7 +13,11 @@ from .cyj11_adapter import cyj11_endpoint_paths, cyj11_native_stack_root, load_c
 from ..phase2_clean.contracts import sha256
 
 
-FINAL_POSE_DIRECT_SCHEMAS = ("direct_native_prediction_bundle/v1", "direct_sparse_native_prediction_bundle/v1")
+FINAL_POSE_DIRECT_SCHEMAS = (
+    "direct_native_prediction_bundle/v1",
+    "direct_sparse_native_prediction_bundle/v1",
+    "cyj11_r3_direct_final_pose_native_bundle/v1",
+)
 FINAL_POSE_FIT_SCHEMAS = ("fit_first_native_prediction_bundle/v6", "cyj11_r3_fit_first_final_pose_native_bundle/v1")
 
 
@@ -64,7 +68,7 @@ def load_cyj11_final_pose_bundles(proposed_bundle_root: str | Path, fit_first_bu
     direct, fit = json.loads(direct_path.read_text(encoding="utf-8")), json.loads(fit_path.read_text(encoding="utf-8"))
     if direct.get("schema") not in FINAL_POSE_DIRECT_SCHEMAS or direct.get("endpoint") != "central":
         raise ValueError("current Proposed final-pose native bundle schema/endpoint mismatch")
-    if direct.get("schema") == "direct_sparse_native_prediction_bundle/v1" and (direct.get("subject"), direct.get("case_id")) != (subject, case):
+    if direct.get("schema") in {"direct_sparse_native_prediction_bundle/v1", "cyj11_r3_direct_final_pose_native_bundle/v1"} and (direct.get("subject"), direct.get("case_id")) != (subject, case):
         raise ValueError("current Proposed final-pose native bundle subject/case mismatch")
     if fit.get("schema") not in FINAL_POSE_FIT_SCHEMAS or fit.get("endpoint") != "central":
         raise ValueError("current Fit-first final-pose native bundle schema/endpoint mismatch")

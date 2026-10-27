@@ -204,6 +204,61 @@ def test_cyj11_r3_final_slices_follow_current_manifest_group_order(tmp_path) -> 
             for item in records] == [("sax", 3, 0), ("sax", 2, 1), ("2ch", 4, 2), ("4ch", 5, 3), ("4ch", 1, 4)]
 
 
+def test_cyj11_r3_endpoint_accepts_migrated_v1_local_copy(tmp_path) -> None:
+    """The r3 v1 manifest retains old paths, so the local copy is hash-bound."""
+    from paper_experiments.joint_vs_2dfit.aha.cyj11_r3_fit_first_final_pose_bundle import (
+        r3_effective_query_mask,
+        r3_endpoint_volume,
+    )
+    from paper_experiments.joint_vs_2dfit.phase2_clean.contracts import sha256
+
+    root = tmp_path / "endpoint"
+    records: dict[str, dict[str, dict[str, str]]] = {}
+    for parameter in ("t1", "t2"):
+        folder = root / parameter; folder.mkdir(parents=True)
+        volume, mask = folder / "volume_ms.nii.gz", folder / "query_effective_mask.nii.gz"
+        volume.write_bytes((parameter + "-volume").encode())
+        mask.write_bytes((parameter + "-mask").encode())
+        records[parameter] = {
+            "output_volume_ms": {"path": f"/old/{parameter}/volume_ms.nii.gz", "sha256": sha256(volume)},
+            "effective_query_mask": {"path": f"/old/{parameter}/query_effective_mask.nii.gz", "sha256": sha256(mask)},
+        }
+    (root / "manifest.json").write_text(json.dumps({
+        "schema": "phase4r_fixed_l100_fit_first_export_bundle/v1", "parameters": records,
+    }))
+
+    assert r3_endpoint_volume(root, "t1")[0] == root / "t1" / "volume_ms.nii.gz"
+    assert r3_effective_query_mask(root, "t2")[0] == root / "t2" / "query_effective_mask.nii.gz"
+
+
+def test_cyj11_r3_direct_contract_accepts_migrated_profile_by_digest(tmp_path) -> None:
+    from paper_experiments.joint_vs_2dfit.aha.cyj11_r3_direct_final_pose_bundle import r3_sparse_prepared_contract
+    from paper_experiments.joint_vs_2dfit.phase2_clean.contracts import sha256
+
+    prepared = tmp_path / "migrated"
+    stacks = {}
+    for stack, original_groups in (("sax", [4, 2]), ("2ch", [3]), ("4ch", [8])):
+        path = prepared / stack / "observations.npz"; path.parent.mkdir(parents=True)
+        np.savez_compressed(path, group_idx=np.repeat(np.arange(len(original_groups)), 2), images=np.zeros((2 * len(original_groups), 3, 4)), pixel_spacing_rc_mm=np.ones((2 * len(original_groups), 2)))
+        stacks[stack] = {
+            "training_stack_present": True,
+            "derived_observation": {"path": f"/old/{stack}/observations.npz", "sha256": sha256(path)},
+            "derived_to_original_group_idx": [
+                {"derived_group_idx": index, "original_group_idx": group}
+                for index, group in enumerate(original_groups)
+            ],
+        }
+    manifest = tmp_path / "sparse_manifest.json"
+    manifest.write_text(json.dumps({"schema_version": "phase4r_sparse_profile_v2", "status": "ELIGIBLE",
+                                    "subject": "CYJ", "case_id": "case", "stacks": stacks}))
+
+    _payload, paths, mappings = r3_sparse_prepared_contract(
+        prepared_root=prepared, sparse_manifest=manifest, subject="CYJ", case="case")
+
+    assert [path.parent.name for path in paths] == ["sax", "2ch", "4ch"]
+    assert mappings["sax"] == [(0, 4), (1, 2)]
+
+
 def test_historical_scmr_aha_validation_requires_all_supported_segments() -> None:
     from paper_experiments.joint_vs_2dfit.aha.legacy_aha16 import validate_aha16_statistics
 

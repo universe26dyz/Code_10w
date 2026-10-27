@@ -17,7 +17,6 @@ import numpy as np
 
 from ..phase2_clean.contracts import sha256, write_immutable_json
 from ..phase2_clean.evaluation import _world_sample
-from ..phase2_clean.matched_output import verified_fit_first_effective_query_mask
 
 
 SCHEMA = "cyj11_r3_fit_first_final_pose_native_bundle/v1"
@@ -29,6 +28,42 @@ def _record(path: Path) -> dict[str, str]:
     if not path.is_file():
         raise FileNotFoundError(path)
     return {"path": str(path.resolve()), "sha256": sha256(path)}
+
+
+def r3_effective_query_mask(endpoint_root: str | Path, parameter: str) -> tuple[Path, dict[str, str]]:
+    """Resolve a migrated r3 endpoint mask without applying Final5's v2 contract.
+
+    r3 central endpoints were copied from their immutable source export.  Their
+    v1 manifest deliberately retains source paths, so the local copy is bound
+    by its recorded digest rather than by string-equality of the old path.
+    """
+    root = Path(endpoint_root)
+    manifest_path = root / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if manifest.get("schema") != "phase4r_fixed_l100_fit_first_export_bundle/v1":
+        raise ValueError("r3 Fit-first endpoint schema mismatch")
+    item = manifest.get("parameters", {}).get(parameter)
+    record = item.get("effective_query_mask") if isinstance(item, dict) else None
+    expected = root / parameter / "query_effective_mask.nii.gz"
+    if not isinstance(record, dict) or not isinstance(record.get("sha256"), str):
+        raise ValueError(f"{parameter}: r3 endpoint lacks effective query-mask provenance")
+    if not expected.is_file() or record["sha256"] != sha256(expected):
+        raise ValueError(f"{parameter}: r3 endpoint effective query-mask SHA256 mismatch")
+    return expected, _record(expected)
+
+
+def r3_endpoint_volume(endpoint_root: str | Path, parameter: str) -> tuple[Path, dict[str, str]]:
+    """Resolve the local copy of an r3 endpoint volume against its source digest."""
+    root = Path(endpoint_root)
+    manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+    item = manifest.get("parameters", {}).get(parameter)
+    record = item.get("output_volume_ms") if isinstance(item, dict) else None
+    expected = root / parameter / "volume_ms.nii.gz"
+    if not isinstance(record, dict) or not isinstance(record.get("sha256"), str):
+        raise ValueError(f"{parameter}: r3 endpoint lacks volume provenance")
+    if not expected.is_file() or record["sha256"] != sha256(expected):
+        raise ValueError(f"{parameter}: r3 endpoint volume_ms SHA256 mismatch")
+    return expected, _record(expected)
 
 
 def _cache_stack_root(native_root: Path, stack: str) -> Path:
@@ -112,12 +147,10 @@ def build_cyj11_r3_fit_first_final_pose_bundle(*, baseline_root: str | Path, nat
     try:
         planes: list[dict[str, Any]] = []
         for parameter in PARAMETERS:
-            volume_path = endpoint_root / parameter / "volume_ms.nii.gz"
-            if not volume_path.is_file():
-                raise FileNotFoundError(volume_path)
+            volume_path, volume_record = r3_endpoint_volume(endpoint_root, parameter)
             volume_image = nib.load(str(volume_path))
             volume = np.asarray(volume_image.get_fdata(), float)
-            mask_path, mask_record = verified_fit_first_effective_query_mask(endpoint_root, parameter)
+            mask_path, mask_record = r3_effective_query_mask(endpoint_root, parameter)
             mask_image = nib.load(str(mask_path)); mask = np.asarray(mask_image.get_fdata(), float)
             if mask.shape != volume.shape or not np.allclose(mask_image.affine, volume_image.affine, atol=1e-6, rtol=0):
                 raise ValueError(f"{parameter}: endpoint effective query-mask geometry mismatch")
@@ -143,7 +176,7 @@ def build_cyj11_r3_fit_first_final_pose_bundle(*, baseline_root: str | Path, nat
                                "final_output_slice": group_record["final_output_slice"],
                                "input_stack": _record(input_stack), "reindex_flip": flip,
                                "path": str(target.relative_to(staging)), "sha256": sha256(target),
-                               "volume_ms": _record(volume_path), "effective_query_mask": mask_record})
+                               "volume_ms": volume_record, "effective_query_mask": mask_record})
         write_immutable_json(staging / "manifest.json", {
             "schema": SCHEMA, "subject": subject, "case": case, "endpoint": "central",
             "baseline_root": str(baseline.resolve()), "endpoint_source_manifest": _record(endpoint_manifest_path),
