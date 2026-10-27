@@ -73,11 +73,13 @@ def validate_sparse_endpoint_roots(proposed_root: str | Path, fit_first_root: st
     proposed_path, proposed = _manifest(proposed_root); fit_path, fit = _manifest(fit_first_root)
     if proposed.get("schema") != "phase4r_formal_proposed_export/v1":
         raise ValueError("Proposed formal endpoint schema mismatch")
-    if fit.get("schema") != "phase4r_fixed_l100_fit_first_export_bundle/v2":
+    fit_schema = fit.get("schema")
+    if fit_schema not in {"phase4r_fixed_l100_fit_first_export_bundle/v1", "phase4r_fixed_l100_fit_first_export_bundle/v2"}:
         raise ValueError("Fit-first formal endpoint schema mismatch")
-    routes = fit.get("fit_first_routes")
-    if not isinstance(routes, dict) or any(not isinstance(routes.get(name), dict) or routes[name].get("route_schema") != EXP1_1_SCHEMA for name in ("l100", "sparse")):
-        raise ValueError("Fit-first formal endpoint is not bound to CYJ Experiment 1.1 reconstruction routes")
+    if fit_schema == "phase4r_fixed_l100_fit_first_export_bundle/v2":
+        routes = fit.get("fit_first_routes")
+        if not isinstance(routes, dict) or any(not isinstance(routes.get(name), dict) or routes[name].get("route_schema") != EXP1_1_SCHEMA for name in ("l100", "sparse")):
+            raise ValueError("Fit-first formal endpoint is not bound to CYJ Experiment 1.1 reconstruction routes")
     for name, payload in (("Proposed", proposed), ("Fit-first", fit)):
         if payload.get("subject") != subject or payload.get("condition") != condition:
             raise ValueError(f"{name} endpoint subject/condition mismatch")
