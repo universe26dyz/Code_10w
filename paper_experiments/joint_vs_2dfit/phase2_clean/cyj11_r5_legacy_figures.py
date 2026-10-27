@@ -42,6 +42,7 @@ class R5Inputs:
     r0_native_maps_root: Path | None = None
     r4_native_mask_root: Path | None = None
     l100_proposed_checkpoint: Path | None = None
+    l100_fit_first_baseline_root: Path | None = None
     cases: tuple[str, ...] = CASES
 
 
@@ -146,7 +147,7 @@ def build_r5_plan(inputs: R5Inputs, *, git_head: Callable[[Path], str] = _git_he
         _require_file(prepared / stack / "observations.npz", f"r5 prepared {stack} observation")
         for name in ("native_maps.npz", "geometry.npz", "manifest.json"):
             _require_file(r0_native / stack / name, f"r5 R0 native cache {stack}/{name}")
-    baseline = root / "reconstruction" / "fit_first" / inputs.subject / "L100_fold0"
+    baseline = (inputs.l100_fit_first_baseline_root or root / "reconstruction" / "fit_first" / inputs.subject / "L100_fold0").resolve()
     _require_directory(baseline, "r5 L100 Fit-first baseline root")
     destinations: list[Path] = []
     support = root / "metrics" / R5_SOURCE / "native_bundles" / inputs.subject / "legacy-density" / "L100_fold0"
@@ -246,9 +247,10 @@ def _parse_inputs(argv: Iterable[str]) -> R5Inputs:
     parser.add_argument("--r0-native-maps-root", type=Path)
     parser.add_argument("--r4-native-mask-root", type=Path)
     parser.add_argument("--l100-proposed-checkpoint", type=Path)
+    parser.add_argument("--l100-fit-first-baseline-root", type=Path)
     parser.add_argument("--case", action="append")
     args = parser.parse_args(list(argv))
-    return R5Inputs(subject=args.subject, analysis_root=args.analysis_root, historical_worktree=args.historical_worktree, direct_native_worktree=args.direct_native_worktree, python_executable=args.python_executable, device=args.device, prepared_root=args.prepared_root, r0_native_maps_root=args.r0_native_maps_root, r4_native_mask_root=args.r4_native_mask_root, l100_proposed_checkpoint=args.l100_proposed_checkpoint, cases=tuple(args.case or CASES))
+    return R5Inputs(subject=args.subject, analysis_root=args.analysis_root, historical_worktree=args.historical_worktree, direct_native_worktree=args.direct_native_worktree, python_executable=args.python_executable, device=args.device, prepared_root=args.prepared_root, r0_native_maps_root=args.r0_native_maps_root, r4_native_mask_root=args.r4_native_mask_root, l100_proposed_checkpoint=args.l100_proposed_checkpoint, l100_fit_first_baseline_root=args.l100_fit_first_baseline_root, cases=tuple(args.case or CASES))
 
 
 def main(argv: Iterable[str] | None = None) -> None:
