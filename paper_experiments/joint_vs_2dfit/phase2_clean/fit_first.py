@@ -9,6 +9,7 @@ from .sparse_profile_manifest import SCHEMA_VERSION, validate_sparse_profile_man
 
 STACKS = ('sax', '2ch', '4ch')
 NATIVE_FIT_METHOD = 'current-protocol HHZ/TRAD dictionary matching; normalized 10D inner product; no interpolation/refinement'
+SCMR_V5_NATIVE_FIT_METHOD = 'SCMR-v5 MATLAB dictionary matching; TI=[10,100] ms; normalized absolute 10D inner product; QC score threshold 0.90; no interpolation/refinement'
 
 
 def _dictionary_contract() -> dict[str, object]:
@@ -18,6 +19,25 @@ def _dictionary_contract() -> dict[str, object]:
         'interpolation_or_refinement': False,
         'protocol': {'tr_ms': 2.61, 'vps': 87},
     }
+
+
+SCMR_V5_DICTIONARY_CONTRACT: dict[str, object] = {
+    'grid': {name: list(values) if isinstance(values, tuple) else values for name, values in FROZEN_GRID.items()},
+    'matching': 'normalized absolute 10D inner-product matching',
+    'interpolation_or_refinement': False,
+    'protocol': {
+        'tr_ms': 2.61, 'vps': 87, 'flip_angle_degrees': [45, 45, 45],
+        'inversion_times_ms': [10, 100], 't2prep_ms': [35, 45, 55], 'ramp_up_pulses': 10,
+        'duration_formula': 'delta_AcquisitionTime-TR*(EchoTrainLength+10)-preparation_delay',
+    },
+    'quality_control': {'score_threshold': 0.90, 'invalid_pixel_policy': 'NaN'},
+}
+
+
+def _supported_native_cache_contract(manifest: dict[str, object]) -> bool:
+    """Admit only one internally consistent native map contract per cache."""
+    return ((manifest.get('method') == NATIVE_FIT_METHOD and manifest.get('dictionary_contract') == _dictionary_contract()) or
+            (manifest.get('method') == SCMR_V5_NATIVE_FIT_METHOD and manifest.get('dictionary_contract') == SCMR_V5_DICTIONARY_CONTRACT))
 
 
 def _native_group_audit(data: np.lib.npyio.NpzFile, groups: np.ndarray) -> list[dict[str, object]]:
@@ -91,8 +111,8 @@ def select_verified_native_cache_groups(full_native_maps_root: str | Path, spars
     if not all(path.is_file() for path in (maps_path, geometry_path, cached_manifest_path)):
         raise FileNotFoundError(f'{stack}: full-data native-map artifact is incomplete')
     cached = json.loads(cached_manifest_path.read_text())
-    if cached.get('method') != NATIVE_FIT_METHOD or cached.get('dictionary_contract') != _dictionary_contract():
-        raise ValueError(f'{stack}: cached native maps do not satisfy the frozen dictionary contract')
+    if not _supported_native_cache_contract(cached):
+        raise ValueError(f'{stack}: cached native maps do not satisfy a supported immutable dictionary contract')
     if cached.get('native_maps_sha256') != sha256(maps_path) or cached.get('geometry_sha256') != sha256(geometry_path):
         raise ValueError(f'{stack}: cached native-map artifact SHA256 mismatch')
     cached_observation = cached.get('source_observations', {})
@@ -191,8 +211,8 @@ def _reuse_native_maps_into(source_root: Path, manifest_path: Path, target: Path
         if not all(path.is_file() for path in (maps_path, geometry_path, cached_manifest_path)):
             raise FileNotFoundError(f'{stack}: full-data native-map artifact is incomplete')
         cached = json.loads(cached_manifest_path.read_text())
-        if cached.get('method') != NATIVE_FIT_METHOD or cached.get('dictionary_contract') != _dictionary_contract():
-            raise ValueError(f'{stack}: cached native maps do not satisfy the frozen dictionary contract')
+        if not _supported_native_cache_contract(cached):
+            raise ValueError(f'{stack}: cached native maps do not satisfy a supported immutable dictionary contract')
         if cached.get('native_maps_sha256') != sha256(maps_path) or cached.get('geometry_sha256') != sha256(geometry_path):
             raise ValueError(f'{stack}: cached native-map artifact SHA256 mismatch')
         source_observation = cached.get('source_observations', {})

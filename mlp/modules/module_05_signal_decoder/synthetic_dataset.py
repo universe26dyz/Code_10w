@@ -67,17 +67,32 @@ def _teacher_signal(teacher: TradSignalSimulator, t1: torch.Tensor, t2: torch.Te
         return teacher(t1, t2, b1, timing, protocol, normalize=True).detach()
 
 
-def _fixed_rr_protocol() -> TradProtocol:
-    protocol = TradProtocol(2.61, 87, (45.0, 45.0, 45.0), (50.0, 150.0), (35.0, 45.0, 55.0), 10)
+def protocol_from_yaml(protocol_path: str | Path, *, tr_ms: float = 2.61, vps: int = 87) -> TradProtocol:
+    """Load the fixed FA/TI/T2prep contract used by the RR teacher."""
+    with Path(protocol_path).open(encoding="utf-8") as handle:
+        cfg = yaml.safe_load(handle)
+    required = ("flip_angle_degrees", "inversion_times_ms", "t2prep_ms", "ramp_up_pulses")
+    if not isinstance(cfg, Mapping) or any(key not in cfg for key in required):
+        raise ValueError("Protocol YAML lacks fixed FA/TI/T2prep/ramp_up fields.")
+    protocol = TradProtocol(
+        float(tr_ms), int(vps), tuple(float(x) for x in cfg["flip_angle_degrees"]),
+        tuple(float(x) for x in cfg["inversion_times_ms"]), tuple(float(x) for x in cfg["t2prep_ms"]),
+        int(cfg["ramp_up_pulses"]),
+    )
     protocol.validate()
     return protocol
 
 
-def _generate_rr_split(path: Path, rhythm_ids: np.ndarray, rhythms: Mapping[str, np.ndarray], *, tissue_samples_per_rhythm: int, seed: int, chunk_size: int, device: torch.device, store_jacobian: bool) -> int:
+def _fixed_rr_protocol() -> TradProtocol:
+    """Backward-compatible default for existing v1 tests and runs."""
+    return protocol_from_yaml(Path(__file__).resolve().parents[3] / "configs" / "protocol_hhz_v1.yaml")
+
+
+def _generate_rr_split(path: Path, rhythm_ids: np.ndarray, rhythms: Mapping[str, np.ndarray], *, tissue_samples_per_rhythm: int, seed: int, chunk_size: int, device: torch.device, store_jacobian: bool, protocol: TradProtocol) -> int:
     if tissue_samples_per_rhythm < 1 or chunk_size < 1:
         raise ValueError("tissue_samples_per_rhythm and teacher_chunk_size must be positive.")
     n_samples = int(rhythm_ids.size) * tissue_samples_per_rhythm
-    rng, teacher, protocol = np.random.default_rng(seed), TradSignalSimulator(), _fixed_rr_protocol()
+    rng, teacher = np.random.default_rng(seed), TradSignalSimulator()
     with h5py.File(path, "w") as handle:
         input_set = handle.create_dataset("input12", shape=(n_samples, 12), dtype="f4")
         target_set = handle.create_dataset("target_signal10", shape=(n_samples, 10), dtype="f4")
@@ -107,14 +122,14 @@ def _generate_rr_split(path: Path, rhythm_ids: np.ndarray, rhythms: Mapping[str,
     return n_samples
 
 
-def generate_rr_synthetic_dataset(output_dir: str | Path, settings: Mapping[str, Any]) -> dict[str, Any]:
+def generate_rr_synthetic_dataset(output_dir: str | Path, settings: Mapping[str, Any], protocol_path: str | Path | None = None) -> dict[str, Any]:
     """Generate a non-overwriting, rhythm-disjoint broad-RR surrogate dataset."""
 
     required = {"n_rhythms", "tissue_samples_per_rhythm", "split_rhythms", "seed", "store_jacobian", "teacher_chunk_size", "teacher_device"}
     missing = required.difference(settings)
     if missing:
         raise ValueError(f"RR synthetic settings lack: {sorted(missing)}")
-    protocol = _fixed_rr_protocol()
+    protocol = _fixed_rr_protocol() if protocol_path is None else protocol_from_yaml(protocol_path)
     split_counts = settings["split_rhythms"]
     if not isinstance(split_counts, Mapping):
         raise ValueError("split_rhythms must be a train/valid/test mapping.")
@@ -133,7 +148,7 @@ def generate_rr_synthetic_dataset(output_dir: str | Path, settings: Mapping[str,
         name: _generate_rr_split(
             output / f"{name}.h5", ids, rhythms, tissue_samples_per_rhythm=int(settings["tissue_samples_per_rhythm"]),
             seed=config.seed + offset, chunk_size=int(settings["teacher_chunk_size"]), device=device,
-            store_jacobian=bool(settings["store_jacobian"]),
+            store_jacobian=bool(settings["store_jacobian"]), protocol=protocol,
         )
         for offset, (name, ids) in enumerate(splits.items())
     }

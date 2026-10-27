@@ -31,7 +31,9 @@ class RRDomainConfig:
 
 def _timing_from_rr(rr_ms: np.ndarray, config: RRDomainConfig) -> np.ndarray:
     acquisition = np.concatenate(([0.0], np.cumsum(np.asarray(rr_ms, dtype=np.float64))))
-    duration = compute_duration_before_acq(acquisition, config.tr_ms, config.vps, np.asarray(config.ti_ms), np.asarray(config.t2prep_ms))
+    # SCMR-v5 production code models VPS readouts plus ten ramp-up pulses.
+    # The legacy shared helper's ``n_ex`` argument is therefore VPS+10 here.
+    duration = compute_duration_before_acq(acquisition, config.tr_ms, config.vps + 10, np.asarray(config.ti_ms), np.asarray(config.t2prep_ms))
     timing9 = duration[1:]
     if not np.all(np.isfinite(timing9)) or np.any(timing9 <= 0):
         raise ValueError("RR history produces non-positive or non-finite duration_before_acq.")

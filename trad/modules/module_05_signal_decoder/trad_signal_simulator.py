@@ -15,7 +15,7 @@ from torch import nn
 
 @dataclass(frozen=True)
 class TradProtocol:
-    """HHZ v1 sequence values, with TR/VPS supplied from DICOM metadata."""
+    """10-HB sequence values, with TR/VPS supplied from DICOM metadata."""
 
     tr_ms: float
     vps: int
@@ -31,8 +31,8 @@ class TradProtocol:
             raise ValueError("HHZ protocol requires FA[3], TI[2], and T2prep[3].")
         if tuple(float(x) for x in self.fa_deg) != (45.0, 45.0, 45.0):
             raise ValueError("v1 HHZ protocol requires FA=[45,45,45] degrees.")
-        if tuple(float(x) for x in self.ti_ms) != (50.0, 150.0):
-            raise ValueError("v1 uses HHZ TI=[50,150] ms; DYZ TI=[10,100] is not permitted.")
+        if any(float(x) <= 0 for x in self.ti_ms):
+            raise ValueError("inversion times must be positive.")
         if tuple(float(x) for x in self.t2prep_ms) != (35.0, 45.0, 55.0):
             raise ValueError("v1 HHZ protocol requires T2prep=[35,45,55] ms.")
 
