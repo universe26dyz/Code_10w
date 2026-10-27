@@ -181,6 +181,29 @@ def test_cyj11_final_pose_plane_reads_current_native_bundles(tmp_path) -> None:
     assert plane["proposed_valid"].all() and plane["fit_first_valid"].all()
 
 
+def test_cyj11_r3_final_slices_follow_current_manifest_group_order(tmp_path) -> None:
+    from paper_experiments.joint_vs_2dfit.aha.cyj11_r3_fit_first_final_pose_bundle import r3_group_records
+
+    root, source = tmp_path / "fit", tmp_path / "source_slices"
+    for stack, groups in (("sax", [3, 2]), ("2ch", [4]), ("4ch", [5, 1])):
+        folder = root / "nesvor_inputs" / stack
+        folder.mkdir(parents=True)
+        (folder / "manifest.json").write_text(json.dumps({"group_idx": groups}))
+    source.mkdir()
+    for index in range(5):
+        (source / f"{index}.nii.gz").write_bytes(str(index).encode())
+    result = root / "nesvor" / "t1" / "result.json"
+    result.parent.mkdir(parents=True)
+    result.write_text(json.dumps({"registration": "stack", "no_transformation_optimization": False,
+                                  "no_slice_scale": True, "output_slices": str(source),
+                                  "input_stacks": ["/old/sax/t1/stack.nii.gz", "/old/2ch/t1/stack.nii.gz", "/old/4ch/t1/stack.nii.gz"]}))
+
+    records = r3_group_records(root, "t1")
+
+    assert [(item["stack"], item["original_group_idx"], item["output_slice_index"])
+            for item in records] == [("sax", 3, 0), ("sax", 2, 1), ("2ch", 4, 2), ("4ch", 5, 3), ("4ch", 1, 4)]
+
+
 def test_historical_scmr_aha_validation_requires_all_supported_segments() -> None:
     from paper_experiments.joint_vs_2dfit.aha.legacy_aha16 import validate_aha16_statistics
 

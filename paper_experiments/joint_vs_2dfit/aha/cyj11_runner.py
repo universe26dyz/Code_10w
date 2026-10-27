@@ -14,7 +14,7 @@ from ..phase2_clean.contracts import sha256
 
 
 FINAL_POSE_DIRECT_SCHEMAS = ("direct_native_prediction_bundle/v1", "direct_sparse_native_prediction_bundle/v1")
-FINAL_POSE_FIT_SCHEMA = "fit_first_native_prediction_bundle/v6"
+FINAL_POSE_FIT_SCHEMAS = ("fit_first_native_prediction_bundle/v6", "cyj11_r3_fit_first_final_pose_native_bundle/v1")
 
 
 def load_cyj11_endpoint_images(analysis_root: str | Path, subject: str, case: str) -> dict[str, dict[str, Any]]:
@@ -66,7 +66,7 @@ def load_cyj11_final_pose_bundles(proposed_bundle_root: str | Path, fit_first_bu
         raise ValueError("current Proposed final-pose native bundle schema/endpoint mismatch")
     if direct.get("schema") == "direct_sparse_native_prediction_bundle/v1" and (direct.get("subject"), direct.get("case_id")) != (subject, case):
         raise ValueError("current Proposed final-pose native bundle subject/case mismatch")
-    if fit.get("schema") != FINAL_POSE_FIT_SCHEMA or fit.get("endpoint") != "central":
+    if fit.get("schema") not in FINAL_POSE_FIT_SCHEMAS or fit.get("endpoint") != "central":
         raise ValueError("current Fit-first final-pose native bundle schema/endpoint mismatch")
     endpoint_record = fit.get("endpoint_source_manifest")
     endpoint_path = Path(str(endpoint_record.get("path", ""))) if isinstance(endpoint_record, dict) else None
