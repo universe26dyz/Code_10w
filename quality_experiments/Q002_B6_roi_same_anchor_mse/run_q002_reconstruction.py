@@ -62,6 +62,7 @@ def validate_formal_sparse_reconstruction_dependencies(args: argparse.Namespace)
         "generator": getattr(args, "expected_sparse_generator_git_sha", None),
         "manifest": getattr(args, "expected_sparse_manifest_sha256", None),
         "B6 model": getattr(args, "expected_b6_model_sha256", None),
+        "decoder": getattr(args, "expected_decoder_sha256", None) or APPROVED_DECODER_SHA256,
         "protocol": getattr(args, "expected_protocol_sha256", None),
     }
     missing = [label for label, value in expected.items() if value is None]
@@ -76,8 +77,8 @@ def validate_formal_sparse_reconstruction_dependencies(args: argparse.Namespace)
     protocol = Path(args.protocol)
     if not b6.is_file() or _sha256(b6) != B6_CONFIG_SOURCE_SHA256 or expected["B6 model"] != B6_CONFIG_SOURCE_SHA256:
         raise ValueError("formal sparse execution B6 model SHA256 disagrees with the frozen contract")
-    if not decoder.is_file() or _sha256(decoder) != APPROVED_DECODER_SHA256:
-        raise ValueError("formal sparse execution decoder SHA256 is not the approved FrozenMLP")
+    if not decoder.is_file() or _sha256(decoder) != expected["decoder"]:
+        raise ValueError("formal sparse execution decoder SHA256 disagrees with the explicit decoder contract")
     if not protocol.is_file() or _sha256(protocol) != expected["protocol"]:
         raise ValueError("formal sparse execution protocol SHA256 disagrees with the explicit admission pin")
     profile = validate_sparse_profile_manifest(
@@ -114,8 +115,9 @@ def validate_formal_q002s640_dependencies(args: argparse.Namespace) -> None:
     b6, decoder, protocol = Path(args.b6_model), Path(args.signal_simulator), Path(args.protocol)
     if not b6.is_file() or _sha256(b6) != B6_CONFIG_SOURCE_SHA256 or expected["B6 model"] != B6_CONFIG_SOURCE_SHA256:
         raise ValueError("Q002S640 sparse execution B6 model SHA256 disagrees with the frozen contract")
-    if not decoder.is_file() or _sha256(decoder) != APPROVED_DECODER_SHA256:
-        raise ValueError("Q002S640 sparse execution decoder SHA256 is not the approved FrozenMLP")
+    expected_decoder = getattr(args, "expected_decoder_sha256", None) or APPROVED_DECODER_SHA256
+    if not decoder.is_file() or _sha256(decoder) != expected_decoder:
+        raise ValueError("Q002S640 sparse execution decoder SHA256 disagrees with the explicit decoder contract")
     if not protocol.is_file() or _sha256(protocol) != expected["protocol"]:
         raise ValueError("Q002S640 sparse execution protocol SHA256 disagrees with the explicit admission pin")
 
@@ -139,8 +141,9 @@ def run(args: argparse.Namespace) -> Path:
         raise FileExistsError(f"Refusing non-empty Q002 output root: {output}")
     config = load_b6_resolved_config(args.b6_model)
     source_decoder_path = str(config["decoder"].get("checkpoint"))
-    if _sha256(Path(args.signal_simulator)) != APPROVED_DECODER_SHA256:
-        raise ValueError("runtime decoder SHA256 is not the approved FrozenMLP.")
+    expected_decoder = getattr(args, "expected_decoder_sha256", None) or APPROVED_DECODER_SHA256
+    if _sha256(Path(args.signal_simulator)) != expected_decoder:
+        raise ValueError("runtime decoder SHA256 disagrees with the explicit decoder contract.")
     config = copy.deepcopy(config); config["decoder"] = dict(config["decoder"]); config["decoder"]["checkpoint"] = str(Path(args.signal_simulator))
     route = build_q002_route_config(
         config,
@@ -243,7 +246,7 @@ These are mechanistic interpretations, not population-level claims.
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--cropped-prepared-root", required=True); parser.add_argument("--subject-id", default="CYJ"); parser.add_argument("--sparse-manifest"); parser.add_argument("--expected-sparse-generator-git-sha"); parser.add_argument("--expected-sparse-manifest-sha256"); parser.add_argument("--b6-model", required=True); parser.add_argument("--expected-b6-model-sha256"); parser.add_argument("--signal-simulator", required=True); parser.add_argument("--protocol", default="trad/configs/protocol_hhz_v1.yaml"); parser.add_argument("--expected-protocol-sha256"); parser.add_argument("--output", required=True); parser.add_argument("--device", default="cuda:0")
+    parser.add_argument("--cropped-prepared-root", required=True); parser.add_argument("--subject-id", default="CYJ"); parser.add_argument("--sparse-manifest"); parser.add_argument("--expected-sparse-generator-git-sha"); parser.add_argument("--expected-sparse-manifest-sha256"); parser.add_argument("--b6-model", required=True); parser.add_argument("--expected-b6-model-sha256"); parser.add_argument("--signal-simulator", required=True); parser.add_argument("--expected-decoder-sha256"); parser.add_argument("--protocol", default="trad/configs/protocol_hhz_v1.yaml"); parser.add_argument("--expected-protocol-sha256"); parser.add_argument("--output", required=True); parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--experiment-id", choices=(Q002_EXPERIMENT_ID, Q002S640_EXPERIMENT_ID, Q002S640_K256_EXPERIMENT_ID, Q003S640_EXPERIMENT_ID, Q003S640_10K_EXPERIMENT_ID, Q004S640_K1_EXPERIMENT_ID, Q005S640_K4_EXPERIMENT_ID), default=Q002_EXPERIMENT_ID)
     parser.add_argument("--anchor-batch-size", type=int, default=64)
     parser.add_argument("--endpoint-policy", choices=("legacy", "central_only"), default="legacy")
