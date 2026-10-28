@@ -180,7 +180,11 @@ def render_single_bullseye(output_png: str | Path, values: Mapping[int, float], 
     if not (np.isfinite((vmin, vmax)).all() and vmin < vmax):
         raise ValueError("bullseye display range must be finite and increasing")
     fig, axis = plt.subplots(figsize=(4.2, 4.8), constrained_layout=True)
-    norm, cmap = plt.Normalize(vmin, vmax), plt.get_cmap("viridis")
+    # AHA figures must share the exact native/through-plane mapping LUT, not
+    # merely its numerical range.
+    from trad.evaluation.scmr.quality_control import load_legacy_scmr_colorbars
+    norm = plt.Normalize(vmin, vmax)
+    cmap = load_legacy_scmr_colorbars().mapping[parameter.upper()]
     for inner, outer, segments in ((.66, 1., range(1, 7)), (.34, .66, range(7, 13)), (.08, .34, range(13, 17))):
         segments = list(segments); width = 360 / len(segments)
         for index, segment in enumerate(segments):
@@ -224,7 +228,8 @@ def render_scmr_figure3(output_png: str | Path, *, reference: Mapping[str, Mappi
     figure, axes = plt.subplots(2, 2, figsize=(8, 8))
     for column, parameter in enumerate(("t1", "t2")):
         vmin, vmax = DISPLAY_RANGES[parameter]
-        cmap, norm = plt.get_cmap("viridis"), plt.Normalize(vmin, vmax)
+        from trad.evaluation.scmr.quality_control import load_legacy_scmr_colorbars
+        cmap, norm = load_legacy_scmr_colorbars().mapping[parameter.upper()], plt.Normalize(vmin, vmax)
         for row, (values, label) in enumerate(((reference[parameter], "Native 2D"),
                                                (prediction[parameter], method.replace("_", "-") + " endpoint"))):
             axis = axes[row, column]
