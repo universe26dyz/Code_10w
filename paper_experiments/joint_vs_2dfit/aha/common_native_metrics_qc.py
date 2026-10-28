@@ -61,6 +61,14 @@ def _volume_arrays(images: dict[str, dict[str, Any]], parameter: str) -> tuple[n
             np.asarray(fit_first.get_fdata(), float), np.asarray(fit_first.affine, float))
 
 
+def _sax_roi_plane_sets(outer_filled: np.ndarray, myocardium: dict[str, np.ndarray], *, index: int) -> dict[str, np.ndarray]:
+    """Return the masks for one native SAX plane, rather than entire SAX stacks."""
+    return {
+        "lv_outer_filled": np.asarray(outer_filled[index], bool),
+        **{name: np.asarray(mask[index], bool) for name, mask in myocardium.items()},
+    }
+
+
 def _render_roi_qc(*, staging: Path, subject: str, case: str, parameter: str, group: int,
                    reference: np.ndarray, proposed: np.ndarray, fit_first: np.ndarray,
                    display_support: np.ndarray, metric_support: np.ndarray, roi_name: str) -> dict[str, str] | None:
@@ -138,7 +146,7 @@ def build_common_native_metrics_qc(*, subject: str, case: str, native_maps_root:
                         pair_outputs[parameter].setdefault(stack, {})[str(group)] = {"status": "EMPTY_COMMON_NATIVE_SUPPORT"}
                     if stack != "sax":
                         continue
-                    roi_sets = {"lv_outer_filled": outer_filled[index], **myocardium}
+                    roi_sets = _sax_roi_plane_sets(outer_filled, myocardium, index=index)
                     metric_reports: dict[str, Any] = {}
                     for roi_name, roi in roi_sets.items():
                         stats = paired_roi_statistics(roi=roi, parameter=parameter, **plane)

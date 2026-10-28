@@ -132,6 +132,19 @@ def test_common_native_plane_samples_both_reconstructions_on_one_native_world_gr
     assert plane["proposed_valid"].all() and plane["fit_first_valid"].all()
 
 
+def test_common_native_roi_sets_select_only_the_current_sax_plane() -> None:
+    from paper_experiments.joint_vs_2dfit.aha.common_native_metrics_qc import _sax_roi_plane_sets
+
+    outer = np.ones((2, 3, 4), bool)
+    myocardium = {"myocardium_core_1px": np.zeros((2, 3, 4), bool)}
+    myocardium["myocardium_core_1px"][1] = True
+    rois = _sax_roi_plane_sets(outer, myocardium, index=1)
+    assert {name: value.shape for name, value in rois.items()} == {
+        "lv_outer_filled": (3, 4), "myocardium_core_1px": (3, 4),
+    }
+    assert rois["myocardium_core_1px"].all()
+
+
 def test_through_plane_grid_is_physical_for_anisotropic_geometry() -> None:
     native = np.arange(4 * 5 * 6, dtype=float).reshape(4, 5, 6)
     affine = np.diag([2.0, 3.0, 8.0, 1.0])
