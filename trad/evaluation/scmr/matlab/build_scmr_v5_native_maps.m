@@ -17,8 +17,11 @@ function build_scmr_v5_native_maps(source_mat_path, output_mat_path)
         'Output directory must already exist: %s', output_dir);
 
     script_dir = fileparts(mfilename('fullpath'));
-    code_root = fileparts(fileparts(fileparts(fileparts(script_dir))));
-    method_dir = fullfile(fileparts(code_root), 'MultiMapCode', 'method_repositories', '2D_fit_first');
+    % Keep this production route self-contained.  The previous implementation
+    % inferred a sibling MultiMapCode checkout from the Code_10w path.  On the
+    % server that sibling was absent, so MATLAB either inherited an unrelated
+    % old MultiMap path or failed the matcher preflight before fitting.
+    method_dir = fullfile(script_dir, 'scmr_v5_matcher');
     assert(isfile(fullfile(method_dir, 'function_T1T2_10HB_bssfp_qc.m')), ...
         'build_scmr_v5_native_maps:MatcherMissing', 'SCMR-v5 matcher is missing.');
     simulator_dir = fullfile(method_dir, 'matlab', 'dictionary');
@@ -30,6 +33,9 @@ function build_scmr_v5_native_maps(source_mat_path, output_mat_path)
     addpath(method_dir);
     addpath(simulator_dir);
     addpath(utility_dir);
+    fprintf('SCMR-v5 matcher root: %s\n', method_dir);
+    fprintf('SCMR-v5 matcher: %s\n', which('function_T1T2_10HB_bssfp_qc'));
+    fprintf('SCMR-v5 simulator: %s\n', which('sim_T1T2_10HB_bssfp'));
 
     S = load(source_mat_path, 'Mag_crop', 'Acq_time', 'FA', 'TI', 'T2_prep', ...
         'Info_by_slice', 'final_data_semantics');
