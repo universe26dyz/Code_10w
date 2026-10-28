@@ -13,7 +13,7 @@ import numpy as np
 from ..phase2_clean.contracts import sha256, write_immutable_json
 from ..phase2_clean.final_sparse_native_metrics import validate_sparse_endpoint_roots
 from .final5_adapter import ROI_TRANSFORMS, require_exact_native_roi_mapping, resolve_subject_roi
-from .legacy_aha16 import LEVELS, build_filled_masks, render_single_bullseye, sectorize, segment_statistics
+from .legacy_aha16 import LEVELS, PRIMARY_MYOCARDIUM_ROI, build_filled_masks, render_single_bullseye, sectorize, segment_statistics
 
 
 def require_new_aha_output(output: str | Path) -> Path:
@@ -45,7 +45,7 @@ def build_paired_aha16_plane(*, level: str, reference: np.ndarray, proposed: np.
         "proposed_support": support, "fit_first_support": support,
         "proposed_statistics": segment_statistics(reference, proposed, labels, support, segments=segments, parameter=parameter),
         "fit_first_statistics": segment_statistics(reference, fit_first, labels, support, segments=segments, parameter=parameter),
-        "paired_support_equation": "manual_myocardium_core AND finite(reference) AND proposed_reprojection_valid AND fit_first_reprojection_valid AND finite(proposed, fit_first)",
+        "paired_support_equation": "manual_myocardium_core_1px AND finite(reference) AND proposed_reprojection_valid AND fit_first_reprojection_valid AND finite(proposed, fit_first)",
     }
 
 
@@ -171,7 +171,7 @@ def build_final5_aha16(*, final_root: str | Path, subject: str, case: str, roi_r
                 result = build_paired_aha16_plane(level=entry["level"], reference=reference,
                                                   proposed=proposed, fit_first=fit_first,
                                                   proposed_valid=proposed_valid, fit_first_valid=fit_first_valid,
-                                                  myocardium_core=masks["myocardium_core"], anterior_xy=anterior, inferior_xy=inferior,
+                                                  myocardium_core=masks[PRIMARY_MYOCARDIUM_ROI], anterior_xy=anterior, inferior_xy=inferior,
                                                   parameter=parameter)
                 plane_report["parameters"][parameter] = {key: value for key, value in result.items() if key not in ("labels", "paired_support", "proposed_support", "fit_first_support")}
                 for method in ("proposed", "fit_first"):
@@ -192,7 +192,8 @@ def build_final5_aha16(*, final_root: str | Path, subject: str, case: str, roi_r
             "mapping": _record(Path(mapping_path)), "planes": planes,
             "native_sampling": "SAX is observed in every Final5 sparse profile; Proposed and Fit-first use their final learned-pose native bundles, never endpoint-to-R0 reprojection",
             "proposed_native_bundle": _record(direct_root / "manifest.json"), "fit_first_native_bundle": _record(fit_root / "manifest.json"),
-            "support_equation": "manual_myocardium_core AND finite(reference) AND proposed_final_pose_valid AND fit_first_final_pose_valid AND finite(proposed, fit_first)",
+            "support_equation": "manual_myocardium_core_1px AND finite(reference) AND proposed_final_pose_valid AND fit_first_final_pose_valid AND finite(proposed, fit_first)",
+            "primary_myocardium_roi": PRIMARY_MYOCARDIUM_ROI,
             "metric_contract": "RMSE, NRMSE, bias, MAE, Pearson CC, NCC, fixed-range PSNR, and mean masked 2-D SSIM per AHA segment",
             "psnr_data_ranges_ms": {"t1": 2500.0, "t2": 200.0},
             "algorithm": "historical AHA16 basal6/mid6/apical4; no segment17; historical anterior/inferior orientation and sample SD", "downstream_only": True,

@@ -47,9 +47,16 @@ def native_ras_affine(affine_lps_rc: np.ndarray) -> np.ndarray:
     return np.diag([-1.0, -1.0, 1.0, 1.0]) @ np.asarray(affine_lps_rc, float)
 
 
-def native_grid_regions(source_support: np.ndarray, reference: np.ndarray, l100_mask: np.ndarray, sparse_mask: np.ndarray) -> dict[str, np.ndarray]:
+def native_grid_regions(source_support: np.ndarray, reference: np.ndarray, l100_mask: np.ndarray, sparse_mask: np.ndarray,
+                        manual_outer_region: np.ndarray | None = None) -> dict[str, np.ndarray]:
     """Historical CYJ 1.1 regions, without any morphological operation."""
-    return native_support_regions(source_support, reference, l100_mask, sparse_mask)
+    if manual_outer_region is None:
+        return native_support_regions(source_support, reference, l100_mask, sparse_mask)
+    arrays = (source_support, reference, l100_mask, sparse_mask, manual_outer_region)
+    if len({np.asarray(value).shape for value in arrays}) != 1:
+        raise ValueError("manual outer segment and native metric arrays must share one plane shape")
+    outer = np.asarray(manual_outer_region, bool)
+    return native_support_regions(np.asarray(source_support, bool) & outer, reference, l100_mask, sparse_mask)
 
 
 def l100_region_mask(fit_first_effective_query_mask: np.ndarray) -> np.ndarray:
@@ -182,7 +189,8 @@ def _aggregate(pooled: Mapping[tuple[str, str, str], dict[str, Any]]) -> dict[st
 
 def build_final_native_grid_metrics(*, proposed_endpoint_root: str | Path, fit_first_endpoint_root: str | Path,
                                     r0_native_maps_root: str | Path, sparse_manifest: str | Path,
-                                    output: str | Path, render_qc: bool = True) -> Path:
+                                    output: str | Path, render_qc: bool = True,
+                                    manual_outer_masks_root: str | Path | None = None) -> Path:
     """Evaluate immutable central endpoints only; no reconstruction or mask mutation."""
     import nibabel as nib
 
@@ -245,9 +253,18 @@ def build_final_native_grid_metrics(*, proposed_endpoint_root: str | Path, fit_f
                     fit, fgeometry = reproject_volume_to_native_plane(images[parameter]["fit_first"].get_fdata(), images[parameter]["fit_first"].affine, affine, reference.shape)
                     query = reproject_binary_mask_to_native_plane(effective[parameter].get_fdata(), effective[parameter].affine, affine, reference.shape)
                     l100 = l100_region_mask(query)
-                    regions = native_grid_regions(source, reference, l100, sparse)
-                    item = {"l100_mask_source": "fit_first_query_effective_mask", "l100_native_support": endpoint_provenance["fit_first_effective_query_masks"][parameter], "source_support_equation": SUPPORT_EQUATIONS["native"], "regions": {}, "mask_mapping": "binary masks reprojected with nearest-neighbour order=0", "prediction_mapping": "central endpoint maps reprojected with linear order=1"}
-                    _save_native_masks(staging / "native_masks" / parameter / stack / f"group{group:03d}.npz", affine, source_support=source, l100_native=l100, sparse_native=sparse, proposed_valid=pvalid, fit_first_geometry_valid=fgeometry, fit_first_query_effective_mask=query, **regions)
+                    manual_outer, manual_outer_provenance = None, None
+                    if manual_outer_masks_root is not None and stack == "sax":
+                        from .current_native_central_component_mask import _manual_outer_region
+                        manual_outer, manual_outer_provenance = _manual_outer_region(manual_outer_masks_root, stack, group, reference.shape)
+                    regions = native_grid_regions(source, reference, l100, sparse, manual_outer_region=manual_outer)
+                    item = {"l100_mask_source": "fit_first_query_effective_mask", "l100_native_support": endpoint_provenance["fit_first_effective_query_masks"][parameter], "source_support_equation": SUPPORT_EQUATIONS["native"], "manual_outer_segment": manual_outer_provenance, "slice_region_mask": "manual outer segment AND source_support AND finite(native_reference) AND fit_first_query_effective_mask" if manual_outer is not None else "source_support AND finite(native_reference) AND fit_first_query_effective_mask", "regions": {}, "mask_mapping": "binary masks reprojected with nearest-neighbour order=0", "prediction_mapping": "central endpoint maps reprojected with linear order=1"}
+                    mask_arrays = {"source_support": source, "l100_native": l100, "sparse_native": sparse,
+                                   "proposed_valid": pvalid, "fit_first_geometry_valid": fgeometry,
+                                   "fit_first_query_effective_mask": query, **regions}
+                    if manual_outer is not None:
+                        mask_arrays["manual_outer_region"] = manual_outer
+                    _save_native_masks(staging / "native_masks" / parameter / stack / f"group{group:03d}.npz", affine, **mask_arrays)
                     for region_name in REGIONS:
                         region = regions[region_name]
                         support = exact_paired_support(region, reference, proposed, fit, pvalid, fgeometry)
@@ -268,10 +285,10 @@ def build_final_native_grid_metrics(*, proposed_endpoint_root: str | Path, fit_f
                         render_plane_panels(parameter, reference, proposed, fit, exact_paired_support(regions["l100_full"], reference, proposed, fit, pvalid, fgeometry), sparse, staging / "visualization" / parameter / stack / f"group{group:03d}_l100_full_paired.png", title=f"{subject} {condition} {parameter.upper()} {stack} native group {group}; paired L100 sampling support", comparator_label="Fit-first")
                     plane["parameters"][parameter] = item
                 per_plane.append(plane)
-        aggregate = {"schema": "final5_native_grid_common_support_metrics/v2", "subject": subject, "condition": condition, "endpoint": endpoint_provenance["endpoint"], "regions": _aggregate(pooled), "mask_coverage": {parameter: {stack: pooled_mask_coverage(values) for (name, stack), values in coverage.items() if name == parameter} for parameter in PARAMETERS}, "support_equations": {**SUPPORT_EQUATIONS, "l100_mask": "fit_first_query_effective_mask mapped to the native plane with nearest-neighbour order=0", "paired": COMMON_SUPPORT_EQUATION}, "native_geometry": "original R0 native physical grid; affine_ras = diag([-1,-1,1,1]) @ affine_lps_rc", "l100_full_semantics": "native-plane Fit-first L100 query support, not a myocardium-only anatomical segmentation"}
+        aggregate = {"schema": "final5_native_grid_common_support_metrics/v2", "subject": subject, "condition": condition, "endpoint": endpoint_provenance["endpoint"], "regions": _aggregate(pooled), "mask_coverage": {parameter: {stack: pooled_mask_coverage(values) for (name, stack), values in coverage.items() if name == parameter} for parameter in PARAMETERS}, "support_equations": {**SUPPORT_EQUATIONS, "l100_mask": "fit_first_query_effective_mask mapped to the native plane with nearest-neighbour order=0", "slice_region_mask": "manual outer segment AND source_support AND finite(native_reference) AND fit_first_query_effective_mask when manual outer mask is supplied; otherwise historical native support", "paired": COMMON_SUPPORT_EQUATION}, "native_geometry": "original R0 native physical grid; affine_ras = diag([-1,-1,1,1]) @ affine_lps_rc", "l100_full_semantics": "native-plane Fit-first L100 query support restricted by the manual outer segment when supplied; never the myocardium quantitative ROI"}
         aggregate_staging = staging / "aggregate_metrics.json"; write_immutable_json(aggregate_staging, aggregate)
         write_immutable_json(staging / "per_plane_metrics.json", {"schema": "final5_native_grid_per_plane_metrics/v2", "planes": per_plane, "support_equations": aggregate["support_equations"]})
-        write_immutable_json(staging / "manifest.json", {"schema": "final5_native_grid_metric_bundle/v2", "subject": subject, "condition": condition, "endpoint": endpoint_provenance["endpoint"], "endpoint_provenance": endpoint_provenance, "l100_mask_source": "fit_first_query_effective_mask", "sparse_manifest": _record(sparse_manifest), "aggregate_metrics": _published_record(aggregate_staging, output / "aggregate_metrics.json"), "support_equations": aggregate["support_equations"], "native_grid": aggregate["native_geometry"], "l100_full_semantics": aggregate["l100_full_semantics"], "no_connected_component_filtering": True, "no_training": True, "no_reconstruction": True, "legacy_current_native_mask_used": False})
+        write_immutable_json(staging / "manifest.json", {"schema": "final5_native_grid_metric_bundle/v2", "subject": subject, "condition": condition, "endpoint": endpoint_provenance["endpoint"], "endpoint_provenance": endpoint_provenance, "l100_mask_source": "fit_first_query_effective_mask", "manual_outer_masks_root": None if manual_outer_masks_root is None else str(Path(manual_outer_masks_root).resolve()), "sparse_manifest": _record(sparse_manifest), "aggregate_metrics": _published_record(aggregate_staging, output / "aggregate_metrics.json"), "support_equations": aggregate["support_equations"], "native_grid": aggregate["native_geometry"], "l100_full_semantics": aggregate["l100_full_semantics"], "myocardial_quantitative_roi": "AHA/myocardium_core_1px is separate and is not used for this slice-region metric", "no_connected_component_filtering": True, "no_training": True, "no_reconstruction": True, "legacy_current_native_mask_used": False})
         staging.rename(output)
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True)
@@ -283,6 +300,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("proposed-endpoint-root", "fit-first-endpoint-root", "r0-native-maps-root", "sparse-manifest", "output"):
         parser.add_argument("--" + name, required=True)
+    parser.add_argument("--manual-outer-masks-root")
     parser.add_argument("--no-render-qc", action="store_true")
     args = vars(parser.parse_args()); args["render_qc"] = not args.pop("no_render_qc")
     print(build_final_native_grid_metrics(**args))

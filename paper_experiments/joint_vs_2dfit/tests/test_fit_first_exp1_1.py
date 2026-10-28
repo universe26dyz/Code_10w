@@ -9,6 +9,20 @@ import numpy as np
 import pytest
 
 
+def test_scmr_v5_cache_contract_rejects_generic_mapping() -> None:
+    from paper_experiments.joint_vs_2dfit.phase2_clean.fit_first import (
+        SCMR_V5_DICTIONARY_CONTRACT,
+        SCMR_V5_NATIVE_FIT_METHOD,
+        require_scmr_v5_native_cache_manifest,
+    )
+
+    with pytest.raises(ValueError, match="corrected SCMR-v5"):
+        require_scmr_v5_native_cache_manifest({"method": "current-protocol HHZ/TRAD dictionary matching"}, stack="sax")
+    require_scmr_v5_native_cache_manifest(
+        {"method": SCMR_V5_NATIVE_FIT_METHOD, "dictionary_contract": SCMR_V5_DICTIONARY_CONTRACT}, stack="sax"
+    )
+
+
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 

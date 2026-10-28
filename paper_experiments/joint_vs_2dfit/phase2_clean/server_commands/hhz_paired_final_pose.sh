@@ -24,6 +24,14 @@ fi
 
 cd "$REPO" || exit 2
 
+"$PY" - "$NATIVE_MANIFEST" <<'PY'
+import json, pathlib, sys
+from paper_experiments.joint_vs_2dfit.phase2_clean.fit_first import require_scmr_v5_native_cache_manifest
+path = pathlib.Path(sys.argv[1])
+require_scmr_v5_native_cache_manifest(json.loads(path.read_text()), stack="HHZ SAX")
+print("HHZ native-cache mapping contract: SCMR-v5 MATLAB PASS")
+PY
+
 PREP_SAX=$($PY -c '
 import json,sys
 value=json.load(open(sys.argv[1])).get("source_observations",{}).get("path")

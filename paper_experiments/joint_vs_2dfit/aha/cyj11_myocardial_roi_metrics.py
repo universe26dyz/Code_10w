@@ -17,9 +17,10 @@ from .cyj11_runner import (final_pose_sax_plane, load_cyj11_final_pose_bundles,
 
 from .final5_myocardial_roi_metrics import paired_roi_statistics
 
-SUPPORT_EQUATION = "manual anatomical ROI AND finite(reference) AND proposed-valid AND fit-first-valid AND finite(proposed, fit-first)"
+SUPPORT_EQUATION = "selected_named_myocardial_roi (primary=myocardium_core_1px) AND finite(reference) AND proposed-valid AND fit-first-valid AND finite(proposed, fit-first)"
 
 ROI_NAMES = ("myocardium_full", "myocardium_core_legacy", "myocardium_core_1px")
+PRIMARY_ROI = "myocardium_core_1px"
 
 
 def _record(path: str | Path) -> dict[str, str]:
@@ -135,8 +136,8 @@ def build_cyj11_myocardial_roi_metrics(*, analysis_root: str | Path, subject: st
             reports.append(report)
         pooled_report = {parameter: {name: _pooled(values, parameter=parameter, ssim_values=pooled_ssim[parameter][name]) for name, values in items.items()}
                          for parameter, items in pooled.items()}
-        write_immutable_json(staging / "per_plane_statistics.json", {"schema": "cyj11_local_myocardial_roi_metrics/v3", "subject": subject, "case": case, "sampling": sampling, "support_equation": SUPPORT_EQUATION, "metric_contract": "RMSE, NRMSE, bias, MAE, Pearson CC, NCC, fixed-range PSNR, and mean masked 2-D SSIM", "psnr_data_ranges_ms": {"t1": 2500.0, "t2": 200.0}, "planes": reports})
-        write_immutable_json(staging / "pooled_sax_statistics.json", {"schema": "cyj11_local_myocardial_roi_metrics/v3", "subject": subject, "case": case, "sampling": sampling, "support_equation": SUPPORT_EQUATION, "metric_contract": "RMSE, NRMSE, bias, MAE, Pearson CC, NCC, fixed-range PSNR, and mean masked 2-D SSIM", "psnr_data_ranges_ms": {"t1": 2500.0, "t2": 200.0}, "pooled_sax": pooled_report})
+        write_immutable_json(staging / "per_plane_statistics.json", {"schema": "cyj11_local_myocardial_roi_metrics/v3", "subject": subject, "case": case, "sampling": sampling, "primary_roi": PRIMARY_ROI, "support_equation": SUPPORT_EQUATION, "metric_contract": "RMSE, NRMSE, bias, MAE, Pearson CC, NCC, fixed-range PSNR, and mean masked 2-D SSIM", "psnr_data_ranges_ms": {"t1": 2500.0, "t2": 200.0}, "planes": reports})
+        write_immutable_json(staging / "pooled_sax_statistics.json", {"schema": "cyj11_local_myocardial_roi_metrics/v3", "subject": subject, "case": case, "sampling": sampling, "primary_roi": PRIMARY_ROI, "support_equation": SUPPORT_EQUATION, "metric_contract": "RMSE, NRMSE, bias, MAE, Pearson CC, NCC, fixed-range PSNR, and mean masked 2-D SSIM", "psnr_data_ranges_ms": {"t1": 2500.0, "t2": 200.0}, "pooled_sax": pooled_report, "pooled_sax_primary": {parameter: pooled_report[parameter][PRIMARY_ROI] for parameter in pooled_report}})
         write_immutable_json(staging / "manifest.json", {
             "schema": "cyj11_local_myocardial_roi_metrics/v3", "subject": subject, "case": case,
             "mapping": _record(mapping_path), "roi_bundle": _record(roi_bundle / "roi_derivation_manifest.json"),
@@ -151,7 +152,7 @@ def build_cyj11_myocardial_roi_metrics(*, analysis_root: str | Path, subject: st
                 "fit_first_manifest": _record(final_pose["fit_root"] / "manifest.json"),
                 "policy": "current reconstruction final learned pose (Proposed) and parameter-specific final NeSVoR output-slice poses (Fit-first)",
             },
-            "roi_names": list(ROI_NAMES), "support_equation": SUPPORT_EQUATION,
+            "roi_names": list(ROI_NAMES), "primary_roi": PRIMARY_ROI, "support_equation": SUPPORT_EQUATION,
             "roi_policy": {"myocardium_full": "SCMR bundle outer AND NOT inner", "myocardium_core_legacy": "SCMR bundle EDT(...) > 1.0 mm", "myocardium_core_1px": "SCMR bundle one in-plane 3x3 erosion", "transform": "derived native lattice; no interpolation"},
             "downstream_only": True, "no_reconstruction": True, "no_formal_metric": True, "immutable_output": True,
         })
@@ -161,4 +162,4 @@ def build_cyj11_myocardial_roi_metrics(*, analysis_root: str | Path, subject: st
     return output
 
 
-__all__ = ("SUPPORT_EQUATION", "ROI_NAMES", "build_myocardial_rois", "paired_roi_statistics", "build_cyj11_myocardial_roi_metrics")
+__all__ = ("SUPPORT_EQUATION", "ROI_NAMES", "PRIMARY_ROI", "build_myocardial_rois", "paired_roi_statistics", "build_cyj11_myocardial_roi_metrics")

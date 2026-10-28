@@ -4,12 +4,14 @@ import argparse, json, shutil, subprocess, sys
 import shlex
 from pathlib import Path
 from .contracts import HISTORICAL_NESVOR_EXECUTABLE_DEFAULT, sha256, write_immutable_json
-from .fit_first import fit_native, reuse_native_maps, export_nesvor_native_inputs, build_independent_nesvor_commands, _supported_native_cache_contract
+from .fit_first import (fit_native, reuse_native_maps, export_nesvor_native_inputs,
+                        build_independent_nesvor_commands, _supported_native_cache_contract,
+                        require_scmr_v5_native_cache_manifest)
 from .fit_first_intensity_preserving import _selected_standardized_maps
 from .reuse_standardized_native_dictionary_maps import validate_standardized_native_dictionary_reuse
 from .sparse_profile_manifest import SCHEMA_VERSION, validate_sparse_profile_manifest
 
-def _copy_verified_full_native_maps(source_root: Path, prepared: Path, target: Path) -> dict[str, object]:
+def _copy_verified_full_native_maps(source_root: Path, prepared: Path, target: Path, *, require_scmr_v5: bool = False) -> dict[str, object]:
     if target.exists():
         raise FileExistsError(f'refusing overwrite: {target}')
     records = {}
@@ -24,6 +26,8 @@ def _copy_verified_full_native_maps(source_root: Path, prepared: Path, target: P
             raise ValueError(f'{stack}: prebuilt native cache does not match this prepared input')
         if not _supported_native_cache_contract(manifest):
             raise ValueError(f'{stack}: prebuilt native cache has an unsupported mapping contract')
+        if require_scmr_v5:
+            require_scmr_v5_native_cache_manifest(manifest, stack=stack)
         if manifest.get('native_maps_sha256') != sha256(maps) or manifest.get('geometry_sha256') != sha256(geometry):
             raise ValueError(f'{stack}: prebuilt native cache SHA256 mismatch')
         records[stack] = {'method': manifest['method'], 'manifest': {'path': str(manifest_path.resolve()), 'sha256': sha256(manifest_path)}}
@@ -31,7 +35,7 @@ def _copy_verified_full_native_maps(source_root: Path, prepared: Path, target: P
     return {'mode': 'verified_prebuilt_full_native_cache', 'source_root': str(source_root.resolve()), 'stacks': records}
 
 
-def build_baseline_run(prepared_root: str|Path, subject_id: str, output: str|Path, nesvor_executable: str|Path = HISTORICAL_NESVOR_EXECUTABLE_DEFAULT, *, reuse_native_maps_root: str|Path|None = None, sparse_manifest: str|Path|None = None, prebuilt_native_maps_root: str|Path|None = None, standardized_native_maps_root: str|Path|None = None, standardized_reuse_manifest: str|Path|None = None, expected_generator_git_sha: str|None = None, expected_manifest_sha256: str|None = None, device: str|int = 0) -> tuple[Path, list[str]]:
+def build_baseline_run(prepared_root: str|Path, subject_id: str, output: str|Path, nesvor_executable: str|Path = HISTORICAL_NESVOR_EXECUTABLE_DEFAULT, *, reuse_native_maps_root: str|Path|None = None, sparse_manifest: str|Path|None = None, prebuilt_native_maps_root: str|Path|None = None, require_scmr_v5_native_maps: bool = False, standardized_native_maps_root: str|Path|None = None, standardized_reuse_manifest: str|Path|None = None, expected_generator_git_sha: str|None = None, expected_manifest_sha256: str|None = None, device: str|int = 0) -> tuple[Path, list[str]]:
     base, destination = Path(prepared_root), Path(output)
     sparse_profile = validate_sparse_profile_manifest(sparse_manifest, subject=subject_id, strict=expected_generator_git_sha is not None, expected_generator_git_sha=expected_generator_git_sha, expected_manifest_sha256=expected_manifest_sha256) if sparse_manifest is not None else None
     prepared = base if sparse_profile is not None or all((base/stack/'observations.npz').is_file() for stack in ('sax','2ch','4ch')) else base/subject_id
@@ -70,7 +74,7 @@ def build_baseline_run(prepared_root: str|Path, subject_id: str, output: str|Pat
                 fit_native(prepared/stack/'observations.npz', native_maps/stack)
             native_reuse = None
         else:
-            native_reuse = _copy_verified_full_native_maps(Path(prebuilt_native_maps_root).resolve(), prepared, native_maps)
+            native_reuse = _copy_verified_full_native_maps(Path(prebuilt_native_maps_root).resolve(), prepared, native_maps, require_scmr_v5=require_scmr_v5_native_maps)
     else:
         reuse_native_maps(reuse_native_maps_root, sparse_manifest, native_maps)
         native_reuse = {'full_native_maps_root': str(Path(reuse_native_maps_root).resolve()), 'sparse_manifest': {'path': str(Path(sparse_manifest).resolve()), 'sha256': sha256(sparse_manifest)}, 'reuse_manifest': {'path': str((native_maps/'reuse_manifest.json').resolve()), 'sha256': sha256(native_maps/'reuse_manifest.json')}}
@@ -160,6 +164,8 @@ def build_baseline_command(args: argparse.Namespace) -> str:
         values.extend(("--reuse-native-maps-root", args.reuse_native_maps_root))
     if args.prebuilt_native_maps_root:
         values.extend(("--prebuilt-native-maps-root", args.prebuilt_native_maps_root))
+    if getattr(args, "require_scmr_v5_native_maps", False):
+        values.append("--require-scmr-v5-native-maps")
     if args.sparse_manifest:
         values.extend(("--sparse-manifest", args.sparse_manifest, "--expected-generator-git-sha", args.expected_generator_git_sha, "--expected-manifest-sha256", args.expected_manifest_sha256))
     if args.standardized_native_maps_root:
@@ -169,16 +175,18 @@ def build_baseline_command(args: argparse.Namespace) -> str:
     return " ".join(shlex.quote(str(value)) for value in values)
 
 def main() -> None:
-    parser=argparse.ArgumentParser(description=__doc__); parser.add_argument('--prepared-root',required=True); parser.add_argument('--subject-id',required=True); parser.add_argument('--output',required=True); parser.add_argument('--nesvor-executable',default=HISTORICAL_NESVOR_EXECUTABLE_DEFAULT); parser.add_argument('--reuse-native-maps-root'); parser.add_argument('--sparse-manifest'); parser.add_argument('--prebuilt-native-maps-root'); parser.add_argument('--standardized-native-maps-root'); parser.add_argument('--standardized-reuse-manifest'); parser.add_argument('--expected-generator-git-sha'); parser.add_argument('--expected-manifest-sha256'); parser.add_argument('--device', default='0'); parser.add_argument('--execute',action='store_true'); args=parser.parse_args()
+    parser=argparse.ArgumentParser(description=__doc__); parser.add_argument('--prepared-root',required=True); parser.add_argument('--subject-id',required=True); parser.add_argument('--output',required=True); parser.add_argument('--nesvor-executable',default=HISTORICAL_NESVOR_EXECUTABLE_DEFAULT); parser.add_argument('--reuse-native-maps-root'); parser.add_argument('--sparse-manifest'); parser.add_argument('--prebuilt-native-maps-root'); parser.add_argument('--require-scmr-v5-native-maps', action='store_true'); parser.add_argument('--standardized-native-maps-root'); parser.add_argument('--standardized-reuse-manifest'); parser.add_argument('--expected-generator-git-sha'); parser.add_argument('--expected-manifest-sha256'); parser.add_argument('--device', default='0'); parser.add_argument('--execute',action='store_true'); args=parser.parse_args()
     if bool(args.expected_generator_git_sha) != bool(args.expected_manifest_sha256):
         parser.error("sparse Fit-first requires both generator and manifest SHA256 pins")
+    if args.require_scmr_v5_native_maps and not args.prebuilt_native_maps_root:
+        parser.error("--require-scmr-v5-native-maps requires --prebuilt-native-maps-root")
     if args.sparse_manifest and not (args.expected_generator_git_sha and args.expected_manifest_sha256):
         parser.error("sparse Fit-first requires --expected-generator-git-sha and --expected-manifest-sha256")
     if not args.execute:
         if args.sparse_manifest:
             validate_sparse_profile_manifest(args.sparse_manifest, subject=args.subject_id, strict=True, expected_generator_git_sha=args.expected_generator_git_sha, expected_manifest_sha256=args.expected_manifest_sha256)
         print(build_baseline_command(args)); return
-    reuse = {'reuse_native_maps_root': args.reuse_native_maps_root, 'sparse_manifest': args.sparse_manifest, 'prebuilt_native_maps_root': args.prebuilt_native_maps_root, 'standardized_native_maps_root': args.standardized_native_maps_root, 'standardized_reuse_manifest': args.standardized_reuse_manifest} if args.reuse_native_maps_root or args.sparse_manifest or args.prebuilt_native_maps_root or args.standardized_native_maps_root or args.standardized_reuse_manifest else {}
+    reuse = {'reuse_native_maps_root': args.reuse_native_maps_root, 'sparse_manifest': args.sparse_manifest, 'prebuilt_native_maps_root': args.prebuilt_native_maps_root, 'require_scmr_v5_native_maps': args.require_scmr_v5_native_maps, 'standardized_native_maps_root': args.standardized_native_maps_root, 'standardized_reuse_manifest': args.standardized_reuse_manifest} if args.reuse_native_maps_root or args.sparse_manifest or args.prebuilt_native_maps_root or args.standardized_native_maps_root or args.standardized_reuse_manifest else {}
     pins = {"expected_generator_git_sha": args.expected_generator_git_sha, "expected_manifest_sha256": args.expected_manifest_sha256} if args.expected_generator_git_sha else {}
     root, commands=build_baseline_run(args.prepared_root,args.subject_id,args.output,args.nesvor_executable,device=args.device,**pins,**reuse)
     for parameter in ('t1','t2'): (root/'nesvor'/parameter).mkdir(parents=True, exist_ok=False)

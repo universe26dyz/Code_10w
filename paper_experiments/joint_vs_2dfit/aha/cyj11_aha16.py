@@ -16,11 +16,11 @@ from .cyj11_legacy_roi import load_cyj11_roi_plane
 from .cyj11_runner import (final_pose_sax_plane, load_cyj11_final_pose_bundles,
                            load_cyj11_native_inputs, load_cyj11_run_inputs,
                            native_sax_plane)
-from .legacy_aha16 import (LEVELS, aha16_labels, build_filled_masks, render_scmr_figure3,
+from .legacy_aha16 import (LEVELS, PRIMARY_MYOCARDIUM_ROI, aha16_labels, build_filled_masks, render_scmr_figure3,
                            render_single_bullseye, segment_statistics, validate_aha16_statistics)
 
 
-SUPPORT_EQUATION = "manual anatomical ROI AND finite(reference) AND proposed-valid AND fit-first-valid AND finite(proposed, fit-first)"
+SUPPORT_EQUATION = "manual_myocardium_core_1px AND finite(reference) AND proposed-valid AND fit-first-valid AND finite(proposed, fit-first)"
 
 
 def build_paired_aha16_plane(*, level: str, reference: np.ndarray, proposed: np.ndarray, fit_first: np.ndarray,
@@ -133,7 +133,7 @@ def build_cyj11_aha16(*, analysis_root: str | Path, subject: str, case: str,
                 plane = (final_pose_sax_plane(native=native, group=group, parameter=parameter, **final_pose)
                          if final_pose is not None else
                          native_sax_plane(native=native, group=group, endpoint_images=endpoint_images, parameter=parameter))
-                result = build_paired_aha16_plane(level=entry["level"], myocardium_core=anatomical["myocardium_core"],
+                result = build_paired_aha16_plane(level=entry["level"], myocardium_core=anatomical[PRIMARY_MYOCARDIUM_ROI],
                                                   anterior_xy=anterior, inferior_xy=inferior, parameter=parameter, **plane)
                 report["parameters"][parameter] = {key: value for key, value in result.items()
                                                     if key not in ("labels", "proposed_support", "fit_first_support")}
@@ -171,7 +171,7 @@ def build_cyj11_aha16(*, analysis_root: str | Path, subject: str, case: str,
                 "fit_first_manifest": _record(final_pose["fit_root"] / "manifest.json"),
                 "policy": "current reconstruction final learned pose (Proposed) and parameter-specific final NeSVoR output-slice poses (Fit-first)",
             },
-            "planes": reports, "support_equation": SUPPORT_EQUATION, "aha16_validation": validation,
+            "planes": reports, "support_equation": SUPPORT_EQUATION, "primary_myocardium_roi": PRIMARY_MYOCARDIUM_ROI, "aha16_validation": validation,
             "metric_contract": "RMSE, NRMSE, bias, MAE, Pearson CC, NCC, fixed-range PSNR, and mean masked 2-D SSIM per AHA segment",
             "psnr_data_ranges_ms": {"t1": 2500.0, "t2": 200.0},
             "algorithm": "historical AHA16 basal6/mid6/apical4; no segment17; historical orientation and sample SD",

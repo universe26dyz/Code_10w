@@ -26,7 +26,8 @@ from .legacy_aha16 import build_filled_masks
 
 SCHEMA = "final5_local_myocardial_roi_metrics/v2"
 ROI_NAMES = ("myocardium_full", "myocardium_core_legacy", "myocardium_core_1px")
-SUPPORT_EQUATION = "roi AND finite(reference) AND proposed_final_pose_valid AND fit_first_final_pose_valid AND finite(proposed, fit_first)"
+PRIMARY_ROI = "myocardium_core_1px"
+SUPPORT_EQUATION = "selected_named_myocardial_roi (primary=myocardium_core_1px) AND finite(reference) AND proposed_final_pose_valid AND fit_first_final_pose_valid AND finite(proposed, fit_first)"
 
 
 def _record(path: Path) -> dict[str, str]:
@@ -250,20 +251,21 @@ def build_final5_myocardial_roi_metrics(*, final_root: str | Path, subject: str,
                                      for roi_name, values in by_roi.items()}
                          for parameter, by_roi in pooled.items()}
         write_immutable_json(staging / "per_plane_statistics.json", {
-            "schema": SCHEMA, "subject": subject, "case": case, "support_equation": SUPPORT_EQUATION,
+            "schema": SCHEMA, "subject": subject, "case": case, "primary_roi": PRIMARY_ROI, "support_equation": SUPPORT_EQUATION,
             "metric_contract": "RMSE, NRMSE, bias, MAE, Pearson CC, NCC, fixed-range PSNR, and mean masked 2-D SSIM",
             "psnr_data_ranges_ms": PSNR_DATA_RANGES_MS,
             "planes": per_plane,
         })
         write_immutable_json(staging / "pooled_sax_statistics.json", {
-            "schema": SCHEMA, "subject": subject, "case": case, "support_equation": SUPPORT_EQUATION,
+            "schema": SCHEMA, "subject": subject, "case": case, "primary_roi": PRIMARY_ROI, "support_equation": SUPPORT_EQUATION,
             "metric_contract": "RMSE, NRMSE, bias, MAE, Pearson CC, NCC, fixed-range PSNR, and mean masked 2-D SSIM",
             "psnr_data_ranges_ms": PSNR_DATA_RANGES_MS,
             "pooled_sax": pooled_report,
+            "pooled_sax_primary": {parameter: pooled_report[parameter][PRIMARY_ROI] for parameter in pooled_report},
         })
         write_immutable_json(staging / "manifest.json", {
             "schema": SCHEMA, "subject": subject, "case": case,
-            "roi_names": list(ROI_NAMES), "support_equation": SUPPORT_EQUATION,
+            "roi_names": list(ROI_NAMES), "primary_roi": PRIMARY_ROI, "support_equation": SUPPORT_EQUATION,
             "metric_contract": "RMSE, NRMSE, bias, MAE, Pearson CC, NCC, fixed-range PSNR, and mean masked 2-D SSIM",
             "psnr_data_ranges_ms": PSNR_DATA_RANGES_MS,
             "input_provenance": input_provenance,

@@ -44,6 +44,17 @@ def test_primary_mask_is_current_source_and_frozen_l100_only() -> None:
     assert record["connectivity"] == 8 and record["minimum_ratio"] == pytest.approx(.25)
 
 
+def test_manual_outer_segment_replaces_central_component_for_slice_metrics() -> None:
+    source = np.ones((5, 5), bool)
+    l100 = np.ones((5, 5), bool)
+    outer = np.zeros((5, 5), bool)
+    outer[1:4, 1:4] = True
+    values, record = masks.build_current_native_masks(source, l100, manual_outer_region=outer)
+    assert np.array_equal(values["primary_native_mask"], outer)
+    assert np.array_equal(values["manual_outer_region"], outer)
+    assert record["selection"] == "manual_outer_segment"
+
+
 def test_selection_uses_center_when_large_enough_else_largest_and_handles_empty() -> None:
     center = np.array([[True, False, False, False, False], [True, False, False, False, False], [True, False, True, True, False], [True, False, False, False, False], [True, False, False, False, False]])
     selected, record = masks.select_current_native_central_component(center)

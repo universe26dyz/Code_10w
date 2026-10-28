@@ -23,6 +23,7 @@ from .formal_l100_sparse_manifest import validate_formal_l100_sparse_manifest
 STACKS = ("sax", "2ch", "4ch")
 PARAMETERS = ("t1", "t2")
 REQUIRED_ARRAYS = ("source_support", "phase4r_l100", "base_native_support", "primary_native_mask", "reference")
+OPTIONAL_ARRAYS = ("manual_outer_region",)
 
 
 def _load_all_verified_native_cache_groups(*args: Any, **kwargs: Any) -> dict[str, Any]:
@@ -62,13 +63,53 @@ def select_current_native_central_component(support: np.ndarray, *, minimum_rati
     return labels == selected_label, {"component_count": int(count), "selected_label": int(selected_label), "selection": selection, "center_rc": list(center_rc), "largest_area": int(areas[largest_label - 1]), "selected_area": int(areas[selected_label - 1]), "minimum_ratio": float(minimum_ratio), "connectivity": 8}
 
 
-def build_current_native_masks(source_support: np.ndarray, phase4r_l100: np.ndarray, *, minimum_ratio: float = .25) -> tuple[dict[str, np.ndarray], dict[str, Any]]:
+def build_current_native_masks(source_support: np.ndarray, phase4r_l100: np.ndarray, *, minimum_ratio: float = .25,
+                              manual_outer_region: np.ndarray | None = None) -> tuple[dict[str, np.ndarray], dict[str, Any]]:
     source_support, phase4r_l100 = np.asarray(source_support, bool), np.asarray(phase4r_l100, bool)
     if source_support.shape != phase4r_l100.shape:
         raise ValueError("source_support and frozen L100 support must share one current native lattice")
     base = source_support & phase4r_l100
-    primary, selection = select_current_native_central_component(base, minimum_ratio=minimum_ratio)
-    return {"source_support": source_support, "phase4r_l100": phase4r_l100, "base_native_support": base, "primary_native_mask": primary}, selection
+    values: dict[str, np.ndarray] = {"source_support": source_support, "phase4r_l100": phase4r_l100, "base_native_support": base}
+    if manual_outer_region is None:
+        primary, selection = select_current_native_central_component(base, minimum_ratio=minimum_ratio)
+    else:
+        outer = np.asarray(manual_outer_region, bool)
+        if outer.shape != base.shape:
+            raise ValueError("manual outer segment and current native lattice must share one shape")
+        primary = base & outer
+        selection = {"component_count": None, "selected_label": None, "selection": "manual_outer_segment",
+                     "outer_voxels": int(outer.sum()), "selected_area": int(primary.sum()),
+                     "minimum_ratio": float(minimum_ratio), "connectivity": None}
+        values["manual_outer_region"] = outer
+    values["primary_native_mask"] = primary
+    return values, selection
+
+
+def _manual_outer_region(manual_outer_masks_root: str | Path | None, stack: str, group: int,
+                         shape: tuple[int, int]) -> tuple[np.ndarray | None, dict[str, Any] | None]:
+    """Load one manual outer-segment mask without resampling or transposing."""
+    if manual_outer_masks_root is None:
+        return None, None
+    root = Path(manual_outer_masks_root)
+    path = root if root.is_file() else root / f"{stack}_myocardium_masks.npz"
+    if not path.is_file():
+        return None, {"status": "not_available", "path": str(path.resolve())}
+    with np.load(path, allow_pickle=False) as payload:
+        required = {"group_idx", "outer_filled"}
+        missing = required.difference(payload.files)
+        if missing:
+            raise ValueError(f"{path}: manual outer-segment mask lacks {sorted(missing)}")
+        groups = np.asarray(payload["group_idx"], int).reshape(-1)
+        masks = np.asarray(payload["outer_filled"], bool)
+    if masks.ndim != 3 or masks.shape[0] != groups.size or len(set(map(int, groups))) != groups.size:
+        raise ValueError(f"{path}: manual outer-segment groups and masks are inconsistent")
+    positions = np.flatnonzero(groups == int(group))
+    if positions.size != 1:
+        raise ValueError(f"{path}: manual outer-segment mask lacks exactly one {stack} group {group}")
+    region = masks[int(positions[0])]
+    if region.shape != shape:
+        raise ValueError(f"{path}: manual outer-segment mask shape {region.shape} differs from native plane {shape}")
+    return region, {"path": str(path.resolve()), "sha256": sha256(path), "field": "outer_filled", "group_idx": int(group), "orientation": "native [row,col], no transpose"}
 
 
 def load_validated_current_native_mask_plane(mask_root: str | Path, *, parameter: str, stack: str, original_group_idx: int, shape_rc: tuple[int, int], source_support: np.ndarray) -> tuple[dict[str, np.ndarray], dict[str, Any]]:
@@ -87,6 +128,7 @@ def load_validated_current_native_mask_plane(mask_root: str | Path, *, parameter
         if missing:
             raise ValueError(f"{target}: missing current-native mask arrays {missing}")
         values = {name: np.asarray(payload[name]) for name in REQUIRED_ARRAYS}
+        values.update({name: np.asarray(payload[name]) for name in OPTIONAL_ARRAYS if name in payload.files})
     if any(value.shape != tuple(shape_rc) for value in values.values()):
         raise ValueError(f"{target}: current-native mask shape does not match reference")
     artifact_source = np.asarray(values["source_support"], bool); l100 = np.asarray(values["phase4r_l100"], bool)
@@ -99,7 +141,7 @@ def load_validated_current_native_mask_plane(mask_root: str | Path, *, parameter
     return loaded, {"mask_manifest": _record(manifest_path), "mask_plane": _record(target), "primary_mask": "primary_native_mask", "selection_rule": manifest.get("selection_rule")}
 
 
-def build_current_native_central_component_mask(*, r0_native_maps_root: str | Path, sparse_manifest: str | Path, l100_native_support_root: str | Path, output: str | Path, minimum_ratio: float = .25) -> Path:
+def build_current_native_central_component_mask(*, r0_native_maps_root: str | Path, sparse_manifest: str | Path, l100_native_support_root: str | Path, output: str | Path, minimum_ratio: float = .25, manual_outer_masks_root: str | Path | None = None) -> Path:
     output = Path(output)
     if output.exists():
         raise FileExistsError(f"refusing overwrite: {output}")
@@ -129,14 +171,15 @@ def build_current_native_central_component_mask(*, r0_native_maps_root: str | Pa
                         frozen = np.asarray(archive[support_record["field"]], bool)
                     if frozen.shape != source.shape:
                         raise ValueError(f"{support_path}: frozen L100 support is not on the current native lattice")
-                    values, selection = build_current_native_masks(source, frozen, minimum_ratio=minimum_ratio)
+                    outer, outer_provenance = _manual_outer_region(manual_outer_masks_root, stack, group, source.shape)
+                    values, selection = build_current_native_masks(source, frozen, minimum_ratio=minimum_ratio, manual_outer_region=outer)
                     target = staging / "planes" / parameter / stack / f"group{group:03d}.npz"; target.parent.mkdir(parents=True, exist_ok=True)
                     np.savez_compressed(target, **values, reference=reference)
-                    planes.append({"parameter": parameter, "stack": stack, "original_group_idx": group, "shape_rc": list(source.shape), "current_r0_source": current[stack]["provenance"], "l100_source": {"path": str(support_path.resolve()), "sha256": sha256(support_path), "field": support_record["field"], "source_schema": support_record["source_schema"]}, "source_support_voxels": int(source.sum()), "phase4r_l100_voxels": int(frozen.sum()), "base_native_support_voxels": int(values["base_native_support"].sum()), "primary_native_mask_voxels": int(values["primary_native_mask"].sum()), "component_selection": selection, "output": {"path": str(target.relative_to(staging)), "sha256": sha256(target)}, "no_interpolation": True})
+                    planes.append({"parameter": parameter, "stack": stack, "original_group_idx": group, "shape_rc": list(source.shape), "current_r0_source": current[stack]["provenance"], "l100_source": {"path": str(support_path.resolve()), "sha256": sha256(support_path), "field": support_record["field"], "source_schema": support_record["source_schema"]}, "manual_outer_segment": outer_provenance, "source_support_voxels": int(source.sum()), "phase4r_l100_voxels": int(frozen.sum()), "base_native_support_voxels": int(values["base_native_support"].sum()), "primary_native_mask_voxels": int(values["primary_native_mask"].sum()), "component_selection": selection, "output": {"path": str(target.relative_to(staging)), "sha256": sha256(target)}, "no_interpolation": True})
         expected_planes = len(PARAMETERS) * sum(group_counts.values())
         if len(planes) != expected_planes:
             raise ValueError(f"expected {expected_planes} current-native mask planes, got {len(planes)}")
-        write_immutable_json(staging / "manifest.json", {"schema": "phase4r_current_native_central_component_mask/v1", "subject": subject, "condition": "L100_fold0", "r0_native_root": {"path": str(Path(r0_native_maps_root).resolve()), "provenance": {stack: current[stack]["provenance"] for stack in STACKS}}, "sparse_manifest": _record(sparse_manifest), "sparse_manifest_schema": sparse_identity["sparse_manifest_schema"], "sparse_identity": sparse_identity["sparse_identity"], "frozen_l100_native_support_manifest": _record(Path(l100_native_support_root) / "manifest.json"), "observed_group_counts": group_counts, "planes": planes, "primary_mask": "primary_native_mask", "base_support_equation": "source_support AND phase4r_l100", "selection_rule": "SCMR-style central/largest 8-connected component", "minimum_ratio": float(minimum_ratio), "no_interpolation": True, "no_resampling": True, "no_training": True, "no_reconstruction": True})
+        write_immutable_json(staging / "manifest.json", {"schema": "phase4r_current_native_central_component_mask/v1", "subject": subject, "condition": "L100_fold0", "r0_native_root": {"path": str(Path(r0_native_maps_root).resolve()), "provenance": {stack: current[stack]["provenance"] for stack in STACKS}}, "sparse_manifest": _record(sparse_manifest), "sparse_manifest_schema": sparse_identity["sparse_manifest_schema"], "sparse_identity": sparse_identity["sparse_identity"], "frozen_l100_native_support_manifest": _record(Path(l100_native_support_root) / "manifest.json"), "manual_outer_masks_root": None if manual_outer_masks_root is None else str(Path(manual_outer_masks_root).resolve()), "observed_group_counts": group_counts, "planes": planes, "primary_mask": "primary_native_mask", "base_support_equation": "source_support AND phase4r_l100", "selection_rule": "manual outer segment AND source_support AND phase4r_l100 when available; otherwise SCMR-style central/largest 8-connected component", "minimum_ratio": float(minimum_ratio), "no_interpolation": True, "no_resampling": True, "no_training": True, "no_reconstruction": True})
         staging.rename(output)
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True); raise
@@ -145,7 +188,7 @@ def build_current_native_central_component_mask(*, r0_native_maps_root: str | Pa
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--r0-native-maps-root", required=True); parser.add_argument("--sparse-manifest", required=True); parser.add_argument("--l100-native-support-root", required=True); parser.add_argument("--output", required=True); parser.add_argument("--minimum-ratio", type=float, default=.25)
+    parser.add_argument("--r0-native-maps-root", required=True); parser.add_argument("--sparse-manifest", required=True); parser.add_argument("--l100-native-support-root", required=True); parser.add_argument("--output", required=True); parser.add_argument("--minimum-ratio", type=float, default=.25); parser.add_argument("--manual-outer-masks-root")
     print(build_current_native_central_component_mask(**vars(parser.parse_args())))
 
 

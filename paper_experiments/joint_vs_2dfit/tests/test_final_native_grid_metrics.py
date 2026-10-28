@@ -68,6 +68,21 @@ def test_formal_regions_keep_disconnected_l100_sampling_support() -> None:
     assert regions["l100_full"][1, 1]  # isolated sampling-support pixels are retained
 
 
+def test_formal_regions_can_use_manual_outer_segment_for_slice_domain() -> None:
+    from paper_experiments.joint_vs_2dfit.phase2_clean.final_native_grid_metrics import native_grid_regions
+
+    source = np.ones((4, 5), bool)
+    reference = np.full((4, 5), 1000.0)
+    l100 = np.ones((4, 5), bool)
+    sparse = np.zeros_like(l100)
+    outer = np.zeros_like(l100)
+    outer[1:3, 1:4] = True
+    regions = native_grid_regions(source, reference, l100, sparse, manual_outer_region=outer)
+    assert regions["l100_full"].sum() == int(outer.sum())
+    assert regions["l100_full"][1, 1]
+    assert not regions["l100_full"][0, 0]
+
+
 def test_exact_paired_support_is_shared_by_both_methods() -> None:
     from paper_experiments.joint_vs_2dfit.phase2_clean.final_native_grid_metrics import exact_paired_support
 

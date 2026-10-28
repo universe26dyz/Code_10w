@@ -646,13 +646,15 @@ def _run_direct_stage(stage: str, record: CaseRecord, root: Path, *, device: str
     elif stage == "l100_native_support":
         run_direct_native_endpoint_audit(checkpoint=paths["proposed"] / "model.pt", prepared_root=record.prepared_root, r0_native_maps_root=native, sparse_manifest=record.sparse_manifest, central_t1=paths["proposed_endpoint"] / "T1_3D.nii.gz", central_t2=paths["proposed_endpoint"] / "T2_3D.nii.gz", l100_t1=paths["proposed"] / "support_mask_3D.nii.gz", l100_t2=paths["proposed"] / "support_mask_3D.nii.gz", output=paths["native_support"], device=normalize_device(device).torch_device)
     elif stage == "current_native_mask":
-        build_current_native_central_component_mask(r0_native_maps_root=native, sparse_manifest=record.sparse_manifest, l100_native_support_root=paths["native_support"], output=paths["native_mask"])
+        manual_outer_root = os.environ.get("MANUAL_OUTER_MASKS_ROOT") if record.subject == "HHZ" else None
+        build_current_native_central_component_mask(r0_native_maps_root=native, sparse_manifest=record.sparse_manifest, l100_native_support_root=paths["native_support"], output=paths["native_mask"], manual_outer_masks_root=manual_outer_root)
     elif stage == "l100_metrics":
         build_final_pose_native_metrics(direct_bundle_root=paths["direct_bundle"], fit_first_bundle_root=paths["fit_bundle"], r0_native_maps_root=native, sparse_manifest=record.sparse_manifest, mask_root=paths["native_mask"], output=paths["l100_metrics"])
     elif stage == "sparse_metrics":
         build_final_sparse_native_metrics(proposed_endpoint_root=paths["proposed_endpoint"], fit_first_endpoint_root=paths["fit_endpoint"], native_mask_root=paths["native_mask"], r0_native_maps_root=native, sparse_manifest=record.sparse_manifest, output=paths["sparse_metrics"])
     elif stage == "final_native_grid_metrics":
-        build_final_native_grid_metrics(proposed_endpoint_root=paths["proposed_endpoint"], fit_first_endpoint_root=paths["fit_endpoint"], r0_native_maps_root=native, sparse_manifest=record.sparse_manifest, output=paths["final_native_grid_metrics"])
+        manual_outer_root = os.environ.get("MANUAL_OUTER_MASKS_ROOT") if record.subject == "HHZ" else None
+        build_final_native_grid_metrics(proposed_endpoint_root=paths["proposed_endpoint"], fit_first_endpoint_root=paths["fit_endpoint"], r0_native_maps_root=native, sparse_manifest=record.sparse_manifest, output=paths["final_native_grid_metrics"], manual_outer_masks_root=manual_outer_root)
 
 
 def _selected_records(records: list[CaseRecord], subject: str | None, case: str | None) -> list[CaseRecord]:

@@ -40,6 +40,12 @@ def _supported_native_cache_contract(manifest: dict[str, object]) -> bool:
             (manifest.get('method') == SCMR_V5_NATIVE_FIT_METHOD and manifest.get('dictionary_contract') == SCMR_V5_DICTIONARY_CONTRACT))
 
 
+def require_scmr_v5_native_cache_manifest(manifest: dict[str, object], *, stack: str = "native") -> None:
+    """Fail closed unless a cache was produced by the corrected SCMR-v5 route."""
+    if manifest.get('method') != SCMR_V5_NATIVE_FIT_METHOD or manifest.get('dictionary_contract') != SCMR_V5_DICTIONARY_CONTRACT:
+        raise ValueError(f'{stack}: native cache is not the corrected SCMR-v5 MATLAB mapping contract')
+
+
 def _native_group_audit(data: np.lib.npyio.NpzFile, groups: np.ndarray) -> list[dict[str, object]]:
     result = []
     for group in groups:

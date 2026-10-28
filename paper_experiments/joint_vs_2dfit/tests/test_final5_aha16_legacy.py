@@ -30,6 +30,8 @@ def test_manual_roi_core_uses_the_historical_one_mm_erosion() -> None:
     masks = build_filled_masks(outer, np.zeros((7, 7), bool), (1.0, 1.0))
     assert masks["myocardium"].sum() == 25
     assert masks["myocardium_core"].sum() == 9
+    assert masks["myocardium_core_legacy"].sum() == 9
+    assert masks["myocardium_core_1px"].sum() == 9
 
 
 def test_segment_statistics_use_one_shared_support_and_historical_sample_sd() -> None:

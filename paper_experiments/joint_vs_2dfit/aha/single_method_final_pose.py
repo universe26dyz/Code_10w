@@ -32,7 +32,7 @@ PROPOSED_SCHEMAS = {
     "direct_sparse_native_prediction_bundle/v1",
     "cyj11_r3_direct_final_pose_native_bundle/v1",
 }
-SUPPORT_EQUATION = "manual anatomical ROI AND finite(reference) AND method-final-pose-valid AND finite(prediction)"
+SUPPORT_EQUATION = "manual_myocardium_core_1px AND finite(reference) AND method-final-pose-valid AND finite(prediction)"
 SCHEMA = "single_method_final_pose_diagnostic/v1"
 
 
@@ -181,7 +181,7 @@ def build_single_method_final_pose(*, subject: str, case: str, method: str,
     from .cyj11_adapter import load_cyj11_native_sax, require_cyj11_mapping
     from .cyj11_legacy_roi import load_cyj11_roi_plane
     from .final5_myocardial_roi_metrics import ROI_NAMES
-    from .legacy_aha16 import (LEVELS, aha16_labels, build_filled_masks,
+    from .legacy_aha16 import (LEVELS, PRIMARY_MYOCARDIUM_ROI, aha16_labels, build_filled_masks,
                                render_scmr_figure3, render_single_bullseye,
                                segment_statistics, validate_aha16_statistics)
     if output.exists():
@@ -217,8 +217,8 @@ def build_single_method_final_pose(*, subject: str, case: str, method: str,
             if not (np.allclose(anterior, entry["anterior_xy"], atol=.5, rtol=0)
                     and np.allclose(inferior, entry["inferior_xy"], atol=.5, rtol=0)):
                 raise ValueError("mapping landmark coordinates disagree with current ROI bundle")
-            labels = aha16_labels({entry["level"]: anatomical["myocardium_core"],
-                                   **{level: anatomical["myocardium_core"] for level in LEVELS if level != entry["level"]}},
+            labels = aha16_labels({entry["level"]: anatomical[PRIMARY_MYOCARDIUM_ROI],
+                                   **{level: anatomical[PRIMARY_MYOCARDIUM_ROI] for level in LEVELS if level != entry["level"]}},
                                   {entry["level"]: (anterior, inferior),
                                    **{level: (anterior, inferior) for level in LEVELS if level != entry["level"]}})[entry["level"]]
             report: dict[str, Any] = {key: entry[key] for key in ("level", "native_group_idx", "roi_slice_index", "roi_transform")}
@@ -229,7 +229,7 @@ def build_single_method_final_pose(*, subject: str, case: str, method: str,
                 plane = load_single_method_plane(native=native, bundle_root=bundle_root, method=method,
                                                  group=group, parameter=parameter)
                 stats = single_method_statistics(reference=plane["reference"], prediction=plane["prediction"],
-                                                 valid=plane["valid"], roi=anatomical["myocardium_core"], parameter=parameter)
+                                                 valid=plane["valid"], roi=anatomical[PRIMARY_MYOCARDIUM_ROI], parameter=parameter)
                 segments_stats = segment_statistics(plane["reference"], plane["prediction"], labels, stats["support"], segments=segments, parameter=parameter)
                 report["parameters"][parameter] = {"support_voxels": stats["support_voxels"],
                                                      "statistics": {key: value for key, value in stats.items() if key != "support"},
@@ -293,13 +293,13 @@ def build_single_method_final_pose(*, subject: str, case: str, method: str,
                                   ssim_status=("mean_of_per_plane_common_support_ssim" if values["ssim"] else "not_available_2d_support"))
                 pooled_report[parameter][name] = {"reference": _distribution(reference),
                                                    "prediction": _distribution(prediction), "metrics": metric}
-        write_immutable_json(myocardial_root / "per_plane_statistics.json", {"schema": SCHEMA, "subject": subject, "case": case, "method": method, "sampling": "final_pose", "support_equation": SUPPORT_EQUATION, "planes": reports})
-        write_immutable_json(myocardial_root / "pooled_sax_statistics.json", {"schema": SCHEMA, "subject": subject, "case": case, "method": method, "sampling": "final_pose", "support_equation": SUPPORT_EQUATION, "pooled_sax": pooled_report})
+        write_immutable_json(myocardial_root / "per_plane_statistics.json", {"schema": SCHEMA, "subject": subject, "case": case, "method": method, "sampling": "final_pose", "primary_roi": PRIMARY_MYOCARDIUM_ROI, "support_equation": SUPPORT_EQUATION, "planes": reports})
+        write_immutable_json(myocardial_root / "pooled_sax_statistics.json", {"schema": SCHEMA, "subject": subject, "case": case, "method": method, "sampling": "final_pose", "primary_roi": PRIMARY_MYOCARDIUM_ROI, "support_equation": SUPPORT_EQUATION, "pooled_sax": pooled_report, "pooled_sax_primary": {parameter: pooled_report[parameter] for parameter in pooled_report}})
         write_immutable_json(staging / "manifest.json", {
             "schema": SCHEMA, "subject": subject, "case": case, "method": method,
             "diagnostic_only": True, "comparison": "native_reference_vs_single_method",
             "not_a_proposed_vs_fit_first_result": True, "sampling": "final_pose",
-            "support_equation": SUPPORT_EQUATION, "mapping": _record(mapping_path),
+            "primary_roi": PRIMARY_MYOCARDIUM_ROI, "support_equation": SUPPORT_EQUATION, "mapping": _record(mapping_path),
             "roi_bundle": _record(roi_root / "roi_derivation_manifest.json"),
             "prepared_sax": _record(prepared),
             "native_sax": {name: _record(native_root / name) for name in ("native_maps.npz", "geometry.npz", "manifest.json")},

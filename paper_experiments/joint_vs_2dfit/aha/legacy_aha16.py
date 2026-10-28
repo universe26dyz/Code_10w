@@ -19,6 +19,7 @@ LEVELS: dict[str, tuple[int, int]] = {
     "apical": (4, 13),
 }
 DISPLAY_RANGES = {"t1": (0.0, 2500.0), "t2": (0.0, 200.0)}
+PRIMARY_MYOCARDIUM_ROI = "myocardium_core_1px"
 
 
 def build_filled_masks(outer: np.ndarray, inner: np.ndarray, spacing_rc_mm: tuple[float, float], *, erosion_mm: float = 1.0) -> dict[str, np.ndarray]:
@@ -27,7 +28,7 @@ def build_filled_masks(outer: np.ndarray, inner: np.ndarray, spacing_rc_mm: tupl
     The operation is purely anatomical; it is never a prediction, training,
     reconstruction, or formal-metric mask.
     """
-    from scipy.ndimage import distance_transform_edt
+    from scipy.ndimage import binary_erosion, distance_transform_edt
 
     outer, inner = np.asarray(outer, bool), np.asarray(inner, bool)
     if outer.shape != inner.shape or outer.ndim != 2:
@@ -37,8 +38,14 @@ def build_filled_masks(outer: np.ndarray, inner: np.ndarray, spacing_rc_mm: tupl
     myocardium = outer & ~inner
     # The historical implementation uses a strict comparison: pixels exactly
     # one millimetre from a boundary are not part of the core.
-    core = myocardium & (distance_transform_edt(myocardium, sampling=spacing_rc_mm) > erosion_mm)
-    return {"myocardium": myocardium, "myocardium_core": core}
+    core_legacy = myocardium & (distance_transform_edt(myocardium, sampling=spacing_rc_mm) > erosion_mm)
+    core_1px = binary_erosion(myocardium, structure=np.ones((3, 3), bool), iterations=1, border_value=0)
+    return {
+        "myocardium": myocardium,
+        "myocardium_core": core_legacy,
+        "myocardium_core_legacy": core_legacy,
+        "myocardium_core_1px": np.asarray(core_1px, bool),
+    }
 
 
 def sectorize(mask: np.ndarray, anterior: tuple[float, float] | np.ndarray, inferior: tuple[float, float] | np.ndarray,
