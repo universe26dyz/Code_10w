@@ -339,6 +339,54 @@ def test_cyj11_r3_direct_contract_accepts_legacy_l50_by_declared_mapping(tmp_pat
     assert mappings["2ch"] == [(0, 15), (1, 13)]
 
 
+def test_cyj11_r3_direct_contract_maps_legacy_l100_derived_groups(tmp_path) -> None:
+    from paper_experiments.joint_vs_2dfit.aha.cyj11_r3_direct_final_pose_bundle import r3_sparse_prepared_contract
+    from paper_experiments.joint_vs_2dfit.phase2_clean.contracts import sha256
+
+    prepared = tmp_path / "legacy"
+    stacks = {}
+    for stack, original_groups in (("sax", [11, 10]), ("2ch", [3]), ("4ch", [2])):
+        path = prepared / stack / "observations.npz"; path.parent.mkdir(parents=True)
+        np.savez_compressed(path, group_idx=np.repeat(np.arange(len(original_groups)), 2),
+                            images=np.zeros((2 * len(original_groups), 3, 4)),
+                            pixel_spacing_rc_mm=np.ones((2 * len(original_groups), 2)))
+        stacks[stack] = {
+            "source_observation": {"path": f"/old/{stack}/source.npz", "sha256": "source"},
+            "derived_observation": {"path": f"/old/{stack}/derived.npz", "sha256": sha256(path)},
+            "retained_original_group_ids": original_groups,
+        }
+    manifest = tmp_path / "sparse_manifest.json"
+    manifest.write_text(json.dumps({"schema_version": "phase4r_sparse_v1", "status": "ELIGIBLE",
+                                    "subject": "HHZ", "condition": "L100", "phase": 0,
+                                    "stacks": stacks}))
+
+    _payload, _paths, mappings = r3_sparse_prepared_contract(
+        prepared_root=prepared, sparse_manifest=manifest, subject="HHZ", case="L100_fold0")
+
+    assert mappings["sax"] == [(0, 11), (1, 10)]
+
+
+def test_current_fit_first_mapping_uses_sparse_manifest_original_groups(tmp_path) -> None:
+    from paper_experiments.joint_vs_2dfit.aha.current_fit_first_final_pose_bundle import _sparse_group_mapping
+    sparse = tmp_path / "sparse_manifest.json"
+    sparse.write_text(json.dumps({
+        "schema_version": "phase4r_sparse_v1",
+        "stacks": {
+            "sax": {"derived_observation": {}, "retained_original_group_ids": [11, 10]},
+            "2ch": {"derived_observation": {}, "retained_original_group_ids": [15]},
+            "4ch": {"derived_observation": {}, "retained_original_group_ids": [9]},
+        },
+    }))
+    baseline = tmp_path / "baseline"
+    baseline.mkdir()
+    (baseline / "input_manifest.json").write_text(json.dumps({
+        "method": "fit_first", "sparse_manifest": {"path": str(sparse)},
+    }))
+    assert _sparse_group_mapping(baseline) == {
+        "sax": {0: 11, 1: 10}, "2ch": {0: 15}, "4ch": {0: 9},
+    }
+
+
 def test_through_plane_sampling_applies_one_shared_native_mask() -> None:
     from paper_experiments.joint_vs_2dfit.phase2_clean.visualization import sample_same_world_through_plane
 

@@ -13,16 +13,27 @@ REPO=${REPO:-/data/dengyz/code/Code_10w}
 PY=${PY:-/home/dengyz/miniconda3/envs/cr_dreme/bin/python}
 SUBJECT=HHZ
 NATIVE_ROOT=$BASE/reconstruction/fit_first/$SUBJECT/L100_fold0/native_maps
-PREP_SAX=$BASE/sparse_inputs/$SUBJECT/L100_fold0/sax/observations.npz
+NATIVE_MANIFEST=$NATIVE_ROOT/sax/manifest.json
 EVAL_ROOT=$BASE/evaluation/final_pose/$SUBJECT
 CASES=(L100_fold0 L50_fold0 L25_fold0 SAX100_2CH0_4CH0 SAX100_2CH0_4CH100 SAX100_2CH100_4CH0 S2CH100_4CH50_fold0 S2CH50_4CH100_fold0)
 
-if [ ! -x "$PY" ] || [ ! -d "$REPO" ] || [ ! -f "$PREP_SAX" ] || [ ! -f "$ROI_BUNDLE/roi_derivation_manifest.json" ]; then
+if [ ! -x "$PY" ] || [ ! -d "$REPO" ] || [ ! -f "$NATIVE_MANIFEST" ] || [ ! -f "$ROI_BUNDLE/roi_derivation_manifest.json" ]; then
   echo "Required Python/repository/native SAX/ROI bundle is missing; no downstream work started."
   exit 2
 fi
 
 cd "$REPO" || exit 2
+
+PREP_SAX=$($PY -c '
+import json,sys
+value=json.load(open(sys.argv[1])).get("source_observations",{}).get("path")
+if not isinstance(value,str) or not value: raise SystemExit("native SAX manifest lacks source_observations.path")
+print(value)
+' "$NATIVE_MANIFEST")
+if [ ! -f "$PREP_SAX" ]; then
+  echo "Authoritative native-cache source observations are missing: $PREP_SAX"
+  exit 1
+fi
 
 "$PY" - "$NATIVE_ROOT/sax/manifest.json" "$PREP_SAX" <<'PY'
 import hashlib, json, pathlib, sys

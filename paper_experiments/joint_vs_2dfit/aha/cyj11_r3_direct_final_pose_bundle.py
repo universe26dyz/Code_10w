@@ -92,7 +92,15 @@ def r3_sparse_prepared_contract(*, prepared_root: str | Path, sparse_manifest: s
                 groups = sorted(int(value) for value in np.unique(observations["group_idx"]))
             paths.append(path)
             if "derived_observation" in item:
-                mappings[stack] = _profile_mapping(item, stack)
+                if "derived_to_original_group_idx" in item:
+                    mappings[stack] = _profile_mapping(item, stack)
+                else:
+                    retained = item.get("retained_original_group_ids")
+                    if not isinstance(retained, list) or not all(isinstance(value, int) for value in retained):
+                        raise ValueError(f"{stack}: legacy derived observation lacks retained original group IDs")
+                    if len(retained) != len(groups):
+                        raise ValueError(f"{stack}: retained original group count disagrees with derived observation")
+                    mappings[stack] = list(enumerate(int(value) for value in retained))
                 if groups != [derived for derived, _original in mappings[stack]]:
                     raise ValueError(f"{stack}: legacy sparse observation group IDs disagree with manifest mapping")
             else:

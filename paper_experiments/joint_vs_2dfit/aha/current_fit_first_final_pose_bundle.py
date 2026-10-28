@@ -24,6 +24,7 @@ from .cyj11_r3_fit_first_final_pose_bundle import _cache_stack_root, _r0_shape, 
 SCHEMA = "fit_first_raw_final_pose_native_bundle/v1"
 PARAMETERS = ("t1", "t2")
 SUPPORT_POLICY = "volume_geometry_and_finite_prediction_only"
+STACKS = ("sax", "2ch", "4ch")
 
 
 def _input_manifest(root: Path, *, subject: str, case: str) -> Path:
@@ -39,6 +40,48 @@ def _input_manifest(root: Path, *, subject: str, case: str) -> Path:
     return path
 
 
+def _sparse_group_mapping(baseline: Path) -> dict[str, dict[int, int]]:
+    """Resolve NeSVoR-derived group IDs back to native-cache group IDs.
+
+    The NeSVoR input manifests retain the derived NPZ group numbering.  The
+    sparse manifest is the identity authority for cases where those IDs were
+    renumbered during sparse extraction.
+    """
+    input_payload = json.loads((baseline / "input_manifest.json").read_text(encoding="utf-8"))
+    record = input_payload.get("sparse_manifest")
+    if not isinstance(record, dict) or not isinstance(record.get("path"), str):
+        raise ValueError("Fit-first input manifest lacks sparse-manifest provenance")
+    sparse_path = Path(record["path"])
+    if not sparse_path.is_file():
+        raise FileNotFoundError(sparse_path)
+    sparse_payload = json.loads(sparse_path.read_text(encoding="utf-8"))
+    stacks = sparse_payload.get("stacks")
+    if not isinstance(stacks, dict):
+        raise ValueError("sparse manifest lacks stack records")
+    result: dict[str, dict[int, int]] = {}
+    for stack in STACKS:
+        item = stacks.get(stack)
+        if not isinstance(item, dict):
+            raise ValueError(f"sparse manifest lacks {stack} record")
+        records = item.get("derived_to_original_group_idx")
+        if isinstance(records, list):
+            mapping: dict[int, int] = {}
+            for entry in records:
+                if not isinstance(entry, dict) or not isinstance(entry.get("derived_group_idx"), int) or not isinstance(entry.get("original_group_idx"), int):
+                    raise ValueError(f"{stack}: malformed derived-to-original mapping")
+                mapping[int(entry["derived_group_idx"])] = int(entry["original_group_idx"])
+            result[stack] = mapping
+            continue
+        if "derived_observation" in item:
+            retained = item.get("retained_original_group_ids")
+            if not isinstance(retained, list) or not all(isinstance(value, int) for value in retained):
+                raise ValueError(f"{stack}: derived sparse record lacks retained original group IDs")
+            result[stack] = {index: int(group) for index, group in enumerate(retained)}
+        else:
+            result[stack] = {}
+    return result
+
+
 def build_current_fit_first_final_pose_bundle(*, baseline_root: str | Path, native_maps_root: str | Path,
                                               subject: str, case: str, output: str | Path) -> Path:
     """Sample current denormalised NeSVoR volumes at parameter-specific final poses."""
@@ -49,6 +92,7 @@ def build_current_fit_first_final_pose_bundle(*, baseline_root: str | Path, nati
     input_manifest = _input_manifest(baseline, subject=subject, case=case)
     if output.exists():
         raise FileExistsError(f"refusing overwrite: {output}")
+    group_mapping = _sparse_group_mapping(baseline)
     output.parent.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(prefix=f".{output.name}.staging-", dir=output.parent))
     try:
@@ -60,7 +104,9 @@ def build_current_fit_first_final_pose_bundle(*, baseline_root: str | Path, nati
             image = nib.load(str(volume_path))
             volume = np.asarray(image.get_fdata(), float)
             for group_record in r3_group_records(baseline, parameter):
-                stack, group = group_record["stack"], int(group_record["original_group_idx"])
+                stack = group_record["stack"]
+                derived_group = int(group_record["original_group_idx"])
+                group = group_mapping[stack].get(derived_group, derived_group)
                 shape = _r0_shape(native_root, stack, group, parameter)
                 input_stack = baseline / "nesvor_inputs" / stack / parameter / "stack.nii.gz"
                 if not input_stack.is_file():
