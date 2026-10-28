@@ -16,6 +16,9 @@ from .final5_adapter import ROI_TRANSFORMS, require_exact_native_roi_mapping, re
 from .legacy_aha16 import LEVELS, PRIMARY_MYOCARDIUM_ROI, build_filled_masks, render_single_bullseye, sectorize, segment_statistics
 
 
+AHA_MYOCARDIUM_ROIS = ("myocardium_core_1px", "myocardium_core_legacy")
+
+
 def require_new_aha_output(output: str | Path) -> Path:
     output = Path(output)
     if output.exists():
@@ -26,7 +29,8 @@ def require_new_aha_output(output: str | Path) -> Path:
 def build_paired_aha16_plane(*, level: str, reference: np.ndarray, proposed: np.ndarray, fit_first: np.ndarray,
                              proposed_valid: np.ndarray, fit_first_valid: np.ndarray, myocardium_core: np.ndarray,
                              anterior_xy: tuple[float, float], inferior_xy: tuple[float, float],
-                             parameter: str | None = None) -> dict[str, Any]:
+                             parameter: str | None = None,
+                             myocardium_roi: str = "myocardium_core_1px") -> dict[str, Any]:
     """Apply one AHA partition and one paired-valid support to both methods."""
     if level not in LEVELS:
         raise ValueError(f"unknown AHA16 level: {level}")
@@ -45,7 +49,7 @@ def build_paired_aha16_plane(*, level: str, reference: np.ndarray, proposed: np.
         "proposed_support": support, "fit_first_support": support,
         "proposed_statistics": segment_statistics(reference, proposed, labels, support, segments=segments, parameter=parameter),
         "fit_first_statistics": segment_statistics(reference, fit_first, labels, support, segments=segments, parameter=parameter),
-        "paired_support_equation": "manual_myocardium_core_1px AND finite(reference) AND proposed_reprojection_valid AND fit_first_reprojection_valid AND finite(proposed, fit_first)",
+        "paired_support_equation": f"manual_{myocardium_roi} AND finite(reference) AND proposed_reprojection_valid AND fit_first_reprojection_valid AND finite(proposed, fit_first)",
     }
 
 
@@ -143,8 +147,13 @@ def build_final5_aha16(*, final_root: str | Path, subject: str, case: str, roi_r
     output.parent.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(prefix=f".{output.name}.staging-", dir=output.parent))
     try:
+        rows_by_roi = {roi_name: [] for roi_name in AHA_MYOCARDIUM_ROIS}
+        figure_values_by_roi = {
+            roi_name: {method: {parameter: {} for parameter in ("t1", "t2")}
+                       for method in ("proposed", "fit_first")}
+            for roi_name in AHA_MYOCARDIUM_ROIS
+        }
         rows: list[dict[str, Any]] = []
-        figure_values = {method: {parameter: {} for parameter in ("t1", "t2")} for method in ("proposed", "fit_first")}
         planes: list[dict[str, Any]] = []
         for entry in entries:
             group = entry["native_group_idx"]
@@ -161,29 +170,41 @@ def build_final5_aha16(*, final_root: str | Path, subject: str, case: str, roi_r
             inferior = _landmark_from_point_labels(point_plane, (2, 4, 6), "inferior")
             if not (np.allclose(anterior, entry["anterior_xy"], atol=.5, rtol=0) and np.allclose(inferior, entry["inferior_xy"], atol=.5, rtol=0)):
                 raise ValueError("reviewed mapping landmark coordinates disagree with the subject's manual point labels")
-            plane_report: dict[str, Any] = {"level": entry["level"], "native_group_idx": group, "roi_slice_index": entry["roi_slice_index"], "roi_transform": entry["roi_transform"], "parameters": {}}
+            plane_report: dict[str, Any] = {"level": entry["level"], "native_group_idx": group, "roi_slice_index": entry["roi_slice_index"], "roi_transform": entry["roi_transform"], "parameters": {}, "parameters_by_roi": {roi_name: {} for roi_name in AHA_MYOCARDIUM_ROIS}}
             for parameter in ("t1", "t2"):
                 reference = np.asarray(native[f"{parameter}_ms"][index], float)
                 proposed, proposed_valid = _bundle_plane(direct_bundle, direct_root, parameter=parameter, stack="sax", group=int(group), method="proposed")
                 fit_first, fit_first_valid = _bundle_plane(fit_bundle, fit_root, parameter=parameter, stack="sax", group=int(group), method="fit_first")
                 if proposed.shape != reference.shape or fit_first.shape != reference.shape:
                     raise ValueError("final-pose AHA native bundle plane shape mismatch")
-                result = build_paired_aha16_plane(level=entry["level"], reference=reference,
-                                                  proposed=proposed, fit_first=fit_first,
-                                                  proposed_valid=proposed_valid, fit_first_valid=fit_first_valid,
-                                                  myocardium_core=masks[PRIMARY_MYOCARDIUM_ROI], anterior_xy=anterior, inferior_xy=inferior,
-                                                  parameter=parameter)
-                plane_report["parameters"][parameter] = {key: value for key, value in result.items() if key not in ("labels", "paired_support", "proposed_support", "fit_first_support")}
-                for method in ("proposed", "fit_first"):
-                    stats = result[f"{method}_statistics"]
-                    for segment, values in stats.items():
-                        figure_values[method][parameter][segment] = values["prediction_mean"]
-                        rows.append({"subject": subject, "case": case, "method": method, "parameter": parameter, "level": entry["level"], "segment": segment, **values})
+                for roi_name in AHA_MYOCARDIUM_ROIS:
+                    result = build_paired_aha16_plane(level=entry["level"], reference=reference,
+                                                      proposed=proposed, fit_first=fit_first,
+                                                      proposed_valid=proposed_valid, fit_first_valid=fit_first_valid,
+                                                      myocardium_core=masks[roi_name], anterior_xy=anterior, inferior_xy=inferior,
+                                                      parameter=parameter, myocardium_roi=roi_name)
+                    clean_result = {key: value for key, value in result.items() if key not in ("labels", "paired_support", "proposed_support", "fit_first_support")}
+                    plane_report["parameters_by_roi"][roi_name][parameter] = clean_result
+                    if roi_name == PRIMARY_MYOCARDIUM_ROI:
+                        plane_report["parameters"][parameter] = clean_result
+                    for method in ("proposed", "fit_first"):
+                        stats = result[f"{method}_statistics"]
+                        for segment, values in stats.items():
+                            figure_values_by_roi[roi_name][method][parameter][segment] = values["prediction_mean"]
+                            row = {"subject": subject, "case": case, "method": method, "parameter": parameter, "level": entry["level"], "segment": segment, **values}
+                            rows_by_roi[roi_name].append(row)
+                            rows.append({"myocardium_roi": roi_name, **row})
             planes.append(plane_report)
-        for method in ("proposed", "fit_first"):
-            for parameter in ("t1", "t2"):
-                render_single_bullseye(staging / "figures" / subject / case / method / f"{parameter}_aha16.png", figure_values[method][parameter], parameter=parameter, title=f"{subject} {case} {method.replace('_', '-')} {parameter.upper()} AHA16")
-        _write_csv(rows, staging / "aha16_segment_statistics.csv")
+        for roi_name in AHA_MYOCARDIUM_ROIS:
+            _write_csv(rows_by_roi[roi_name], staging / f"aha16_segment_statistics_{roi_name}.csv")
+            for method in ("proposed", "fit_first"):
+                for parameter in ("t1", "t2"):
+                    path = staging / "figures" / subject / case / method / roi_name / f"{parameter}_aha16.png"
+                    render_single_bullseye(path, figure_values_by_roi[roi_name][method][parameter], parameter=parameter, title=f"{subject} {case} {method.replace('_', '-')} {parameter.upper()} AHA16 ({roi_name})")
+                    if roi_name == PRIMARY_MYOCARDIUM_ROI:
+                        render_single_bullseye(staging / "figures" / subject / case / method / f"{parameter}_aha16.png", figure_values_by_roi[roi_name][method][parameter], parameter=parameter, title=f"{subject} {case} {method.replace('_', '-')} {parameter.upper()} AHA16")
+        _write_csv(rows, staging / "aha16_segment_statistics_all_rois.csv")
+        _write_csv(rows_by_roi[PRIMARY_MYOCARDIUM_ROI], staging / "aha16_segment_statistics.csv")
         write_immutable_json(staging / "manifest.json", {
             "schema": "final5_aha16_downstream/v1", "subject": subject, "case": case,
             "endpoint_provenance": endpoint_provenance, "native_sax": {"root": str(Path(native_sax_root).resolve()), "maps": _record(Path(native_sax_root) / "native_maps.npz"), "geometry": _record(Path(native_sax_root) / "geometry.npz"), "manifest": _record(Path(native_sax_root) / "manifest.json")},
@@ -192,8 +213,16 @@ def build_final5_aha16(*, final_root: str | Path, subject: str, case: str, roi_r
             "mapping": _record(Path(mapping_path)), "planes": planes,
             "native_sampling": "SAX is observed in every Final5 sparse profile; Proposed and Fit-first use their final learned-pose native bundles, never endpoint-to-R0 reprojection",
             "proposed_native_bundle": _record(direct_root / "manifest.json"), "fit_first_native_bundle": _record(fit_root / "manifest.json"),
-            "support_equation": "manual_myocardium_core_1px AND finite(reference) AND proposed_final_pose_valid AND fit_first_final_pose_valid AND finite(proposed, fit_first)",
+            "support_equation": "manual_<myocardium_roi> AND finite(reference) AND proposed_final_pose_valid AND fit_first_final_pose_valid AND finite(proposed, fit_first)",
             "primary_myocardium_roi": PRIMARY_MYOCARDIUM_ROI,
+            "aha_myocardium_rois": list(AHA_MYOCARDIUM_ROIS),
+            "roi_outputs": {
+                roi_name: {
+                    "segment_statistics": _record(staging / f"aha16_segment_statistics_{roi_name}.csv"),
+                    "figure_root": str((staging / "figures" / subject / case).resolve()),
+                }
+                for roi_name in AHA_MYOCARDIUM_ROIS
+            },
             "metric_contract": "RMSE, NRMSE, bias, MAE, Pearson CC, NCC, fixed-range PSNR, and mean masked 2-D SSIM per AHA segment",
             "psnr_data_ranges_ms": {"t1": 2500.0, "t2": 200.0},
             "algorithm": "historical AHA16 basal6/mid6/apical4; no segment17; historical anterior/inferior orientation and sample SD", "downstream_only": True,
