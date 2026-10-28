@@ -7,6 +7,7 @@ ROI masks; the volumes already incorporate their respective optimized poses.
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import shutil
 import tempfile
@@ -18,15 +19,16 @@ import numpy as np
 from ..phase2_clean.contracts import sha256, write_immutable_json
 from ..phase2_clean.final_native_grid_metrics import native_ras_affine
 from ..phase2_clean.visualization import (native_display_support, prepare_native_comparison_panels,
-                                          render_native_plane_comparison)
+                                          render_native_plane_comparison, render_through_plane_continuity)
 from .common_native import load_volume_images, sample_common_native_plane
-from .cyj11_adapter import load_cyj11_native_sax
+from .cyj11_adapter import derive_cyj11_historical_mapping, load_cyj11_native_sax
 from .cyj11_myocardial_roi_metrics import ROI_NAMES, _load_scmr_masks
 from .final5_myocardial_roi_metrics import paired_roi_statistics
+from .legacy_aha16 import DISPLAY_RANGES, render_single_bullseye, validate_aha16_statistics
 from .paired_final_pose_lv_metrics import load_outer_filled_masks
 
 
-SCHEMA = "common_native_paired_metrics_qc/v1"
+SCHEMA = "common_native_paired_metrics_qc/v2"
 STACKS = ("sax", "2ch", "4ch")
 PARAMETERS = ("t1", "t2")
 SUPPORT_EQUATION = "one immutable acquisition-native physical plane AND finite non-zero native foreground AND proposed-volume-geometry-valid AND fit-first-volume-geometry-valid AND finite(proposed, fit-first)"
@@ -67,6 +69,104 @@ def _sax_roi_plane_sets(outer_filled: np.ndarray, myocardium: dict[str, np.ndarr
         "lv_outer_filled": np.asarray(outer_filled[index], bool),
         **{name: np.asarray(mask[index], bool) for name, mask in myocardium.items()},
     }
+
+
+def _native_stack_affine(native: dict[str, np.ndarray]) -> np.ndarray:
+    """Build a regular RAS stack affine from the native SAX plane origins."""
+    affine_lps = np.asarray(native["affine_lps_rc"], float)
+    if affine_lps.ndim != 3 or affine_lps.shape[0] < 2 or affine_lps.shape[1:] != (4, 4):
+        raise ValueError("common-native through-plane QC requires at least two SAX planes")
+    affine = native_ras_affine(affine_lps[0])
+    origins = np.asarray([native_ras_affine(item)[:3, 3] for item in affine_lps], float)
+    steps = np.diff(origins, axis=0)
+    if not np.allclose(steps, steps[0], atol=1e-4, rtol=0):
+        raise ValueError("common-native through-plane QC requires a regular SAX stack")
+    affine[:3, 2] = steps[0]
+    return affine
+
+
+def _write_rows_csv(rows: list[dict[str, Any]], path: Path) -> None:
+    if path.exists():
+        raise FileExistsError(f"refusing overwrite: {path}")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fields = tuple(rows[0]) if rows else ("subject", "case", "roi", "method", "parameter", "segment")
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fields)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def _render_aha_outputs(*, staging: Path, subject: str, case: str,
+                        mapping: dict[str, Any], sax_planes: dict[str, dict[int, dict[str, Any]]],
+                        myocardium: dict[str, np.ndarray], groups: np.ndarray) -> dict[str, Any]:
+    """Create common-native AHA means, SDs, CSVs, and validation for both core masks."""
+    from .cyj11_aha16 import build_paired_aha16_plane
+
+    entries = {int(item["native_group_idx"]): item for item in mapping["planes"]}
+    rows: list[dict[str, Any]] = []
+    values: dict[str, dict[str, dict[str, dict[int, float]]]] = {
+        roi: {method: {parameter: {} for parameter in PARAMETERS} for method in ("reference", "proposed", "fit_first")}
+        for roi in ("myocardium_core_1px", "myocardium_core_legacy")
+    }
+    sd_values = {roi: {method: {parameter: {} for parameter in PARAMETERS} for method in ("reference", "proposed", "fit_first")}
+                 for roi in values}
+
+    for entry in mapping["planes"]:
+        group = int(entry["native_group_idx"])
+        if group not in entries or group not in set(map(int, groups)):
+            raise ValueError(f"common-native AHA mapping group is absent: {group}")
+        index = int(np.flatnonzero(groups == group)[0])
+        for parameter in PARAMETERS:
+            plane = sax_planes[parameter][group]
+            for roi_name in ("myocardium_core_1px", "myocardium_core_legacy"):
+                result = build_paired_aha16_plane(
+                    level=str(entry["level"]), reference=plane["reference"], proposed=plane["proposed"],
+                    fit_first=plane["fit_first"], proposed_valid=plane["proposed_valid"],
+                    fit_first_valid=plane["fit_first_valid"], myocardium_core=myocardium[roi_name][index],
+                    anterior_xy=tuple(map(float, entry["anterior_xy"])),
+                    inferior_xy=tuple(map(float, entry["inferior_xy"])), parameter=parameter,
+                )
+                for method in ("proposed", "fit_first"):
+                    for segment, stats in result[f"{method}_statistics"].items():
+                        rows.append({"subject": subject, "case": case, "roi": roi_name, "method": method,
+                                     "parameter": parameter, "level": entry["level"], "native_group_idx": group,
+                                     "segment": segment, **stats})
+                        values[roi_name][method][parameter][int(segment)] = stats["prediction_mean"]
+                        sd_values[roi_name][method][parameter][int(segment)] = stats["prediction_sd"]
+                        values[roi_name]["reference"][parameter][int(segment)] = stats["reference_mean"]
+                        sd_values[roi_name]["reference"][parameter][int(segment)] = stats["reference_sd"]
+
+    aha_root = staging / "aha"
+    validations: dict[str, Any] = {}
+    for roi_name in values:
+        roi_rows = [row for row in rows if row["roi"] == roi_name]
+        _write_rows_csv(roi_rows, aha_root / f"aha16_segment_statistics_{roi_name}.csv")
+        validations[roi_name] = validate_aha16_statistics(roi_rows)
+        for method in ("reference", "proposed", "fit_first"):
+            for parameter in PARAMETERS:
+                sd_max = max(
+                    (value for candidate in ("reference", "proposed", "fit_first")
+                     for value in sd_values[roi_name][candidate][parameter].values()),
+                    default=0.0,
+                )
+                render_single_bullseye(
+                    aha_root / "mean" / roi_name / method / f"{parameter}_aha16.png",
+                    values[roi_name][method][parameter], parameter=parameter,
+                    title=f"{subject} {case} {method.replace('_', '-')} {parameter.upper()} AHA16 ({roi_name})",
+                    display_range=DISPLAY_RANGES[parameter],
+                )
+                render_single_bullseye(
+                    aha_root / "sd" / roi_name / method / f"{parameter}_aha16_sd.png",
+                    sd_values[roi_name][method][parameter], parameter=parameter,
+                    title=f"{subject} {case} {method.replace('_', '-')} {parameter.upper()} AHA16 SD ({roi_name})",
+                    display_range=(0.0, max(1.0, sd_max)),
+                    colorbar_label=f"{parameter.upper()} SD (ms)",
+                )
+    _write_rows_csv(rows, aha_root / "aha16_segment_statistics_all_rois.csv")
+    write_immutable_json(aha_root / "aha16_validation_all_rois.json", validations)
+    return {"directory": "aha", "rois": list(values), "validations": validations,
+            "mean_colorbar_ranges_ms": {key: list(value) for key, value in DISPLAY_RANGES.items()},
+            "statistics_csv": "aha16_segment_statistics_all_rois.csv"}
 
 
 def _render_roi_qc(*, staging: Path, subject: str, case: str, parameter: str, group: int,
@@ -110,7 +210,13 @@ def build_common_native_metrics_qc(*, subject: str, case: str, native_maps_root:
     output.parent.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(prefix=f".{output.name}.staging-", dir=output.parent))
     try:
+        prepared_sax = prepared_subject_root / "sax" / "observations.npz"
+        mapping_path = staging / "aha_mapping.json"
+        derive_cyj11_historical_mapping(subject=subject, case=case, prepared_sax=prepared_sax,
+                                         roi_bundle=roi_bundle, output=mapping_path)
+        mapping = json.loads(mapping_path.read_text(encoding="utf-8"))
         pair_outputs: dict[str, Any] = {parameter: {} for parameter in PARAMETERS}
+        sax_planes: dict[str, dict[int, dict[str, Any]]] = {parameter: {} for parameter in PARAMETERS}
         lv_planes: list[dict[str, Any]] = []
         myo_planes: list[dict[str, Any]] = []
         lv_values = {parameter: {method: [] for method in ("reference", "proposed", "fit_first")} for parameter in PARAMETERS}
@@ -131,6 +237,8 @@ def build_common_native_metrics_qc(*, subject: str, case: str, native_maps_root:
                         reference=np.asarray(cache[f"{parameter}_ms"][index], float), native_affine_ras=affine,
                         proposed_volume=pvol, proposed_affine_ras=paff, fit_first_volume=fvol, fit_first_affine_ras=faff,
                     )
+                    if stack == "sax":
+                        sax_planes[parameter][group] = plane
                     display = native_display_support(plane["reference"], plane["proposed"], plane["fit_first"],
                                                      plane["proposed_valid"], plane["fit_first_valid"])
                     if display.any():
@@ -194,6 +302,36 @@ def build_common_native_metrics_qc(*, subject: str, case: str, native_maps_root:
         myo_pooled = {parameter: {roi: _pooled(values, parameter=parameter, ssim_values=myo_ssim[parameter][roi])
                                   for roi, values in by_roi.items()}
                        for parameter, by_roi in myo_values.items()}
+        through_plane_outputs: dict[str, Any] = {}
+        native_stack_affine = _native_stack_affine(sax)
+        reference_group = len(groups) // 2
+        for parameter in PARAMETERS:
+            native_stack = np.moveaxis(np.asarray(sax[f"{parameter}_ms"], float), 0, 2)
+            support_stack = np.moveaxis(np.stack([
+                native_display_support(sax_planes[parameter][int(group)]["reference"],
+                                       sax_planes[parameter][int(group)]["proposed"],
+                                       sax_planes[parameter][int(group)]["fit_first"],
+                                       sax_planes[parameter][int(group)]["proposed_valid"],
+                                       sax_planes[parameter][int(group)]["fit_first_valid"])
+                for group in groups
+            ]), 0, 2)
+            proposed_volume, proposed_affine, fit_volume, fit_affine = _volume_arrays(images, parameter)
+            figures = {}
+            for orientation in ("column", "row"):
+                figures[orientation] = render_through_plane_continuity(
+                    parameter, native_stack, native_stack_affine, proposed_volume, proposed_affine,
+                    fit_volume, fit_affine,
+                    staging / "through_plane" / f"{parameter}_through_plane_{orientation}.png",
+                    reference_group=reference_group, common_support=support_stack,
+                    cut_orientation=orientation,
+                    metadata={"subject": subject, "case": case, "parameter": parameter,
+                              "purpose": "common-native qualitative through-plane continuity QC",
+                              "support_equation": SUPPORT_EQUATION},
+                )
+            through_plane_outputs[parameter] = figures
+        aha_outputs = _render_aha_outputs(staging=staging, subject=subject, case=case,
+                                          mapping=mapping, sax_planes=sax_planes,
+                                          myocardium=myocardium, groups=groups)
         provenance = {"native_maps": {stack: {name: _record(native_maps_root / stack / name)
                                                 for name in ("native_maps.npz", "geometry.npz", "manifest.json")}
                                       for stack in STACKS},
@@ -210,6 +348,8 @@ def build_common_native_metrics_qc(*, subject: str, case: str, native_maps_root:
         write_immutable_json(staging / "myocardial_roi" / "per_plane_statistics.json", {**base, "region": "myocardium", "planes": myo_planes})
         write_immutable_json(staging / "myocardial_roi" / "pooled_sax_statistics.json", {**base, "region": "myocardium", "pooled_sax": myo_pooled})
         write_immutable_json(staging / "manifest.json", {**base, "pair_slices": pair_outputs,
+                                  "through_plane": through_plane_outputs, "aha": aha_outputs,
+                                  "aha_mapping": "aha_mapping.json",
                                   "metric_mask_qc": "outline overlays on Native/Proposed/Fit-first common-native planes"})
         staging.rename(output)
     except BaseException:
