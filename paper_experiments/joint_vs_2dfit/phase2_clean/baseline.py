@@ -38,7 +38,10 @@ def _copy_verified_full_native_maps(source_root: Path, prepared: Path, target: P
 def build_baseline_run(prepared_root: str|Path, subject_id: str, output: str|Path, nesvor_executable: str|Path = HISTORICAL_NESVOR_EXECUTABLE_DEFAULT, *, reuse_native_maps_root: str|Path|None = None, sparse_manifest: str|Path|None = None, prebuilt_native_maps_root: str|Path|None = None, require_scmr_v5_native_maps: bool = False, standardized_native_maps_root: str|Path|None = None, standardized_reuse_manifest: str|Path|None = None, expected_generator_git_sha: str|None = None, expected_manifest_sha256: str|None = None, device: str|int = 0) -> tuple[Path, list[str]]:
     base, destination = Path(prepared_root), Path(output)
     sparse_profile = validate_sparse_profile_manifest(sparse_manifest, subject=subject_id, strict=expected_generator_git_sha is not None, expected_generator_git_sha=expected_generator_git_sha, expected_manifest_sha256=expected_manifest_sha256) if sparse_manifest is not None else None
-    prepared = base if sparse_profile is not None or all((base/stack/'observations.npz').is_file() for stack in ('sax','2ch','4ch')) else base/subject_id
+    # Both full-data and sparse runs accept either PREPARED_ROOT or its
+    # subject directory.  Sparse manifests must not force the parent-root
+    # interpretation: the observation files still live under HHZ/sax, etc.
+    prepared = base if all((base/stack/'observations.npz').is_file() for stack in ('sax','2ch','4ch')) else base/subject_id
     if destination.exists(): raise FileExistsError(f'refusing overwrite: {destination}')
     destination.mkdir(parents=True)
     standardized_mode = standardized_native_maps_root is not None or standardized_reuse_manifest is not None
