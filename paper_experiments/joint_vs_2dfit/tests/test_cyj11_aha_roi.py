@@ -387,6 +387,16 @@ def test_current_fit_first_mapping_uses_sparse_manifest_original_groups(tmp_path
     }
 
 
+def test_current_fit_first_mapping_allows_legacy_full_l100_identity(tmp_path) -> None:
+    from paper_experiments.joint_vs_2dfit.aha.current_fit_first_final_pose_bundle import _sparse_group_mapping
+    baseline = tmp_path / "baseline"
+    baseline.mkdir()
+    (baseline / "input_manifest.json").write_text(json.dumps({
+        "method": "fit_first", "case_id": "L100_fold0",
+    }))
+    assert _sparse_group_mapping(baseline, case="L100_fold0") == {"sax": {}, "2ch": {}, "4ch": {}}
+
+
 def test_through_plane_sampling_applies_one_shared_native_mask() -> None:
     from paper_experiments.joint_vs_2dfit.phase2_clean.visualization import sample_same_world_through_plane
 

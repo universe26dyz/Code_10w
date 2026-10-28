@@ -40,7 +40,7 @@ def _input_manifest(root: Path, *, subject: str, case: str) -> Path:
     return path
 
 
-def _sparse_group_mapping(baseline: Path) -> dict[str, dict[int, int]]:
+def _sparse_group_mapping(baseline: Path, *, case: str | None = None) -> dict[str, dict[int, int]]:
     """Resolve NeSVoR-derived group IDs back to native-cache group IDs.
 
     The NeSVoR input manifests retain the derived NPZ group numbering.  The
@@ -50,6 +50,10 @@ def _sparse_group_mapping(baseline: Path) -> dict[str, dict[int, int]]:
     input_payload = json.loads((baseline / "input_manifest.json").read_text(encoding="utf-8"))
     record = input_payload.get("sparse_manifest")
     if not isinstance(record, dict) or not isinstance(record.get("path"), str):
+        if case == "L100_fold0":
+            # Historical full-data L100 runs predate sparse-manifest pins.  In
+            # that route NeSVoR input group IDs are the native-cache IDs.
+            return {stack: {} for stack in STACKS}
         raise ValueError("Fit-first input manifest lacks sparse-manifest provenance")
     sparse_path = Path(record["path"])
     if not sparse_path.is_file():
@@ -92,7 +96,7 @@ def build_current_fit_first_final_pose_bundle(*, baseline_root: str | Path, nati
     input_manifest = _input_manifest(baseline, subject=subject, case=case)
     if output.exists():
         raise FileExistsError(f"refusing overwrite: {output}")
-    group_mapping = _sparse_group_mapping(baseline)
+    group_mapping = _sparse_group_mapping(baseline, case=case)
     output.parent.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(prefix=f".{output.name}.staging-", dir=output.parent))
     try:
