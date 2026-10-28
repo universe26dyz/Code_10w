@@ -397,6 +397,14 @@ def test_current_fit_first_mapping_allows_legacy_full_l100_identity(tmp_path) ->
     assert _sparse_group_mapping(baseline, case="L100_fold0") == {"sax": {}, "2ch": {}, "4ch": {}}
 
 
+def test_paired_through_plane_staging_creates_figure_directory(tmp_path) -> None:
+    from paper_experiments.joint_vs_2dfit.aha.paired_final_pose_through_plane import _figure_dir
+    staging = tmp_path / ".figures.staging"
+    target = _figure_dir(staging)
+    assert target == staging / "figures"
+    assert target.is_dir()
+
+
 def test_through_plane_sampling_applies_one_shared_native_mask() -> None:
     from paper_experiments.joint_vs_2dfit.phase2_clean.visualization import sample_same_world_through_plane
 

@@ -33,6 +33,13 @@ def _record(path: str | Path) -> dict[str, str]:
     return {"path": str(path.resolve()), "sha256": sha256(path)}
 
 
+def _figure_dir(staging: Path) -> Path:
+    """Create the private figure directory before matplotlib writes outputs."""
+    target = staging / "figures"
+    target.mkdir(parents=True, exist_ok=True)
+    return target
+
+
 def _native_stack_affine(native: dict[str, np.ndarray]) -> np.ndarray:
     affine_lps = np.asarray(native["affine_lps_rc"], float)
     if affine_lps.ndim != 3 or affine_lps.shape[0] < 2 or affine_lps.shape[1:] != (4, 4):
@@ -85,6 +92,7 @@ def build_paired_final_pose_through_plane(*, subject: str, case: str, native_sax
     output.parent.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(prefix=f".{output.name}.staging-", dir=output.parent))
     try:
+        figure_dir = _figure_dir(staging)
         outputs = {}
         reference_group = int(len(groups) // 2)
         for parameter, (proposed_path, fit_path) in volume_paths.items():
@@ -97,7 +105,7 @@ def build_paired_final_pose_through_plane(*, subject: str, case: str, native_sax
                 parameter, np.moveaxis(np.asarray(native[f"{parameter}_ms"], float), 0, 2), native_affine,
                 np.asarray(proposed_image.get_fdata(), float), np.asarray(proposed_image.affine, float),
                 np.asarray(fit_image.get_fdata(), float), np.asarray(fit_image.affine, float),
-                staging / "figures" / f"{parameter}_through_plane_common_mask.png",
+                figure_dir / f"{parameter}_through_plane_common_mask.png",
                 reference_group=reference_group,
                 common_support=support,
                 metadata={"subject": subject, "case": case, "parameter": parameter,
