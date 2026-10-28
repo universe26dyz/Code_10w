@@ -145,6 +145,19 @@ def test_common_native_roi_sets_select_only_the_current_sax_plane() -> None:
     assert rois["myocardium_core_1px"].all()
 
 
+def test_sax_mask_stack_projects_as_nearest_neighbor_3d_volume() -> None:
+    from paper_experiments.joint_vs_2dfit.aha.common_native_all_stack_roi_metrics import (
+        project_sax_mask_volume, stack_sax_masks_as_volume,
+    )
+    affines = np.repeat(np.eye(4)[None], 2, axis=0)
+    affines[1, 2, 3] = 1.0
+    masks = {"lv_outer_filled": np.zeros((2, 3, 4), bool)}
+    masks["lv_outer_filled"][1, 1, 2] = True
+    volumes, affine = stack_sax_masks_as_volume({"affine_lps_rc": affines}, masks)
+    assert volumes["lv_outer_filled"].shape == (3, 4, 2)
+    assert project_sax_mask_volume(volumes["lv_outer_filled"], affine, affine, (3, 4), slice_index=1)[1, 2]
+
+
 def test_through_plane_grid_is_physical_for_anisotropic_geometry() -> None:
     native = np.arange(4 * 5 * 6, dtype=float).reshape(4, 5, 6)
     affine = np.diag([2.0, 3.0, 8.0, 1.0])
