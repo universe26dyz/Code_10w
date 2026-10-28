@@ -118,6 +118,20 @@ def test_orthogonal_centre_row_cut_uses_column_and_slice_world_axes() -> None:
     assert result["native"].shape == (5, 6)
 
 
+def test_common_native_plane_samples_both_reconstructions_on_one_native_world_grid() -> None:
+    from paper_experiments.joint_vs_2dfit.aha.common_native import sample_common_native_plane
+
+    reference = np.arange(12, dtype=float).reshape(3, 4)
+    plane = sample_common_native_plane(
+        reference=reference, native_affine_ras=np.eye(4),
+        proposed_volume=reference[:, :, None] + 10, proposed_affine_ras=np.eye(4),
+        fit_first_volume=reference[:, :, None] + 20, fit_first_affine_ras=np.eye(4),
+    )
+    assert np.array_equal(plane["proposed"], reference + 10)
+    assert np.array_equal(plane["fit_first"], reference + 20)
+    assert plane["proposed_valid"].all() and plane["fit_first_valid"].all()
+
+
 def test_through_plane_grid_is_physical_for_anisotropic_geometry() -> None:
     native = np.arange(4 * 5 * 6, dtype=float).reshape(4, 5, 6)
     affine = np.diag([2.0, 3.0, 8.0, 1.0])
