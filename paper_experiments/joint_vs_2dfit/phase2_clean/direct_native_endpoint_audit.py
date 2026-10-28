@@ -123,16 +123,16 @@ def _sparse_contract(path: Path) -> dict[str, Any]:
     schema = payload.get("schema_version")
     if schema == "phase4r_sparse_v1":
         subject, condition, phase, generator = payload.get("subject"), payload.get("condition"), payload.get("phase"), payload.get("git_sha")
-        if not isinstance(subject, str) or condition != "L100" or phase != 0 or not isinstance(generator, str) or len(generator) != 40:
-            raise ValueError("direct-native audit accepts phase4r_sparse_v1 only for L100_fold0")
+        if not isinstance(subject, str) or not isinstance(condition, str) or not isinstance(phase, int) or not isinstance(generator, str) or len(generator) != 40:
+            raise ValueError("legacy sparse manifest lacks subject/condition/phase/generator provenance")
         stacks = payload.get("stacks")
         if not isinstance(stacks, Mapping) or set(stacks) != set(STACKS):
             raise ValueError("sparse manifest lacks exact sax/2ch/4ch stack records")
         return {"path": path.resolve(), "sha256": sha256(path), "subject": subject,
-                "case": "L100", "generator_git_sha": generator, "active_stacks": STACKS,
+                "case": f"{condition}_fold{phase}", "generator_git_sha": generator, "active_stacks": STACKS,
                 "schema_version": schema}
     if schema != "phase4r_sparse_profile_v2":
-        raise ValueError("direct-native audit requires phase4r_sparse_profile_v2 or L100 phase4r_sparse_v1")
+        raise ValueError("direct-native audit requires phase4r_sparse_profile_v2 or phase4r_sparse_v1")
     subject, case, generator = payload.get("subject"), payload.get("case_id"), payload.get("git_sha")
     if not isinstance(subject, str) or not isinstance(case, str) or not isinstance(generator, str) or len(generator) != 40:
         raise ValueError("sparse manifest lacks subject/case/generator provenance")

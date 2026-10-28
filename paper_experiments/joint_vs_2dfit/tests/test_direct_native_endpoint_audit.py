@@ -254,6 +254,18 @@ def test_r3_l100_manifest_uses_per_stack_hashes_without_profile_sparse_record(tm
     audit._validate_checkpoint_sparse_provenance(checkpoint, contract)
 
 
+def test_legacy_sparse_contract_accepts_l25_with_its_declared_case_identity(tmp_path) -> None:
+    sparse = tmp_path / "sparse.json"
+    sparse.write_text(json.dumps({
+        "schema_version": "phase4r_sparse_v1", "status": "ELIGIBLE", "subject": "HHZ",
+        "condition": "L25", "phase": 0, "git_sha": "d" * 40,
+        "stacks": {stack: {} for stack in ("sax", "2ch", "4ch")},
+    }))
+    contract = audit._sparse_contract(sparse)
+    assert contract["case"] == "L25_fold0"
+    assert contract["active_stacks"] == ("sax", "2ch", "4ch")
+
+
 def test_sparse_case_accepts_only_manifest_active_stack_subset_in_canonical_order(tmp_path) -> None:
     """Catches treating absent 2CH/4CH sparse stacks as mandatory audit inputs."""
     sparse = tmp_path / "sparse.json"; _sparse_manifest(sparse, case="SAX100_2CH0_4CH0", active=("sax",))
