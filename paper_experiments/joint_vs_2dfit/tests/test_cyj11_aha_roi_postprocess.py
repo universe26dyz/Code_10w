@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import numpy as np
 import pytest
 
@@ -50,6 +51,23 @@ def test_aha_sd_writer_outputs_reference_and_method_bullseyes(tmp_path) -> None:
     assert (output / "CYJ/L50_fold0/reference/t1_aha16_sd.png").is_file()
     assert (output / "CYJ/L50_fold0/proposed/t1_aha16_sd.png").is_file()
     assert (output / "CYJ/L50_fold0/fit_first/t1_aha16_sd.pdf").is_file()
+
+
+def test_paired_aha_sd_writer_reads_completed_segment_csv(tmp_path) -> None:
+    from paper_experiments.joint_vs_2dfit.aha.paired_aha_sd import build_paired_aha_sd
+    source = tmp_path / "aha16_segment_statistics.csv"
+    rows = [
+        {"subject": "HHZ", "case": "L100_fold0", "method": method, "parameter": parameter,
+         "segment": segment, "reference_sd": 10.0, "prediction_sd": value}
+        for method, value in (("proposed", 12.0), ("fit_first", 14.0))
+        for parameter in ("t1", "t2")
+        for segment in range(1, 17)
+    ]
+    with source.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=rows[0].keys()); writer.writeheader(); writer.writerows(rows)
+    output = build_paired_aha_sd(segment_statistics_csv=source, output=tmp_path / "sd")
+    assert (output / "HHZ/L100_fold0/reference/t2_aha16_sd.png").is_file()
+    assert (output / "manifest.json").is_file()
 
 
 def test_native_roi_qc_writer_outputs_one_t1_t2_overlay_per_sax_group(tmp_path) -> None:

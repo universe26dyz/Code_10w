@@ -62,7 +62,7 @@ run_new() {
   "$@"
 }
 
-mkdir -p "$EVAL_ROOT/bundles/proposed" "$EVAL_ROOT/bundles/fit_first" "$EVAL_ROOT/roi/mapping" "$EVAL_ROOT/metrics" "$EVAL_ROOT/figures"
+mkdir -p "$EVAL_ROOT/bundles/proposed" "$EVAL_ROOT/bundles/fit_first" "$EVAL_ROOT/roi/mapping" "$EVAL_ROOT/metrics" "$EVAL_ROOT/visual_qc_full_heart"
 
 for CASE in "${CASES[@]}"; do
   CASE_ROOT=$BASE/sparse_inputs/$SUBJECT/$CASE
@@ -73,7 +73,8 @@ for CASE in "${CASES[@]}"; do
   FIT_BUNDLE=$EVAL_ROOT/bundles/fit_first/$CASE
   MAPPING=$EVAL_ROOT/roi/mapping/$CASE.json
   METRICS=$EVAL_ROOT/metrics/$CASE
-  FIGURES=$EVAL_ROOT/figures/$CASE
+  AHA_SD=$METRICS/aha16_sd
+  VISUAL_QC=$EVAL_ROOT/visual_qc_full_heart/$CASE
 
   if [ ! -f "$MANIFEST" ] || [ ! -f "$PROPOSED/model.pt" ] || [ ! -f "$FIT/input_manifest.json" ]; then
     echo "REFUSING $CASE: sparse manifest or completed reconstruction is missing"
@@ -99,12 +100,16 @@ for CASE in "${CASES[@]}"; do
       --subject "$SUBJECT" --case "$CASE" --native-sax-root "$NATIVE_ROOT/sax" --prepared-sax "$PREP_SAX" \
       --mapping "$MAPPING" --roi-bundle "$ROI_BUNDLE" --proposed-bundle "$DIRECT_BUNDLE" --fit-first-bundle "$FIT_BUNDLE" --output "$METRICS" || exit 1
 
-  run_new "$CASE shared-mask through-plane QC" "$FIGURES" \
+  run_new "$CASE AHA SD bullseyes" "$AHA_SD" \
+    "$PY" -m paper_experiments.joint_vs_2dfit.aha.paired_aha_sd \
+      --segment-statistics-csv "$METRICS/aha16/aha16_segment_statistics.csv" --output "$AHA_SD" || exit 1
+
+  run_new "$CASE full-heart shared-mask through-plane and paired-slice QC" "$VISUAL_QC" \
     "$PY" -m paper_experiments.joint_vs_2dfit.aha.paired_final_pose_through_plane \
-      --subject "$SUBJECT" --case "$CASE" --native-sax-root "$NATIVE_ROOT/sax" --prepared-sax "$PREP_SAX" --roi-bundle "$ROI_BUNDLE" \
+      --subject "$SUBJECT" --case "$CASE" --native-sax-root "$NATIVE_ROOT/sax" --prepared-sax "$PREP_SAX" \
       --proposed-bundle "$DIRECT_BUNDLE" --fit-first-bundle "$FIT_BUNDLE" \
       --proposed-t1 "$PROPOSED/T1_3D.nii.gz" --proposed-t2 "$PROPOSED/T2_3D.nii.gz" \
-      --fit-first-t1 "$FIT/nesvor/t1/volume_ms.nii.gz" --fit-first-t2 "$FIT/nesvor/t2/volume_ms.nii.gz" --output "$FIGURES" || exit 1
+      --fit-first-t1 "$FIT/nesvor/t1/volume_ms.nii.gz" --fit-first-t2 "$FIT/nesvor/t2/volume_ms.nii.gz" --output "$VISUAL_QC" || exit 1
 done
 
 echo "HHZ paired final-pose downstream evaluation: PASS"

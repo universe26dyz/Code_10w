@@ -424,6 +424,19 @@ def test_paired_through_plane_staging_creates_figure_directory(tmp_path) -> None
     assert target.is_dir()
 
 
+def test_final_pose_full_heart_support_excludes_only_background_and_invalid_pixels() -> None:
+    from paper_experiments.joint_vs_2dfit.aha.paired_final_pose_through_plane import _full_heart_common_support
+    reference = np.array([[1200.0, 0.0], [1200.0, 1200.0]])
+    proposed = np.array([[1200.0, 1200.0], [np.nan, 1200.0]])
+    fit_first = np.full((2, 2), 1200.0)
+    proposed_valid = np.array([[True, True], [True, True]])
+    fit_first_valid = np.array([[True, True], [True, False]])
+    assert np.array_equal(
+        _full_heart_common_support(reference, proposed, fit_first, proposed_valid, fit_first_valid),
+        np.array([[True, False], [False, False]]),
+    )
+
+
 def test_through_plane_sampling_applies_one_shared_native_mask() -> None:
     from paper_experiments.joint_vs_2dfit.phase2_clean.visualization import sample_same_world_through_plane
 
