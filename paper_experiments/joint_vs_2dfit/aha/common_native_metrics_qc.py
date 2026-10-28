@@ -321,7 +321,7 @@ def build_common_native_metrics_qc(*, subject: str, case: str, native_maps_root:
                 figures[orientation] = render_through_plane_continuity(
                     parameter, native_stack, native_stack_affine, proposed_volume, proposed_affine,
                     fit_volume, fit_affine,
-                    staging / "through_plane" / f"{parameter}_through_plane_{orientation}.png",
+                    staging / "through_plane" / parameter / orientation / f"{parameter}_through_plane_{orientation}.png",
                     reference_group=reference_group, common_support=support_stack,
                     cut_orientation=orientation,
                     metadata={"subject": subject, "case": case, "parameter": parameter,
