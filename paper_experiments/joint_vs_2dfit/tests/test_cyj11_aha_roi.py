@@ -397,6 +397,25 @@ def test_current_fit_first_mapping_allows_legacy_full_l100_identity(tmp_path) ->
     assert _sparse_group_mapping(baseline, case="L100_fold0") == {"sax": {}, "2ch": {}, "4ch": {}}
 
 
+def test_current_fit_first_mapping_accepts_explicit_sparse_manifest(tmp_path) -> None:
+    from paper_experiments.joint_vs_2dfit.aha.current_fit_first_final_pose_bundle import _sparse_group_mapping
+    sparse = tmp_path / "sparse_manifest.json"
+    sparse.write_text(json.dumps({
+        "schema_version": "phase4r_sparse_v1",
+        "stacks": {
+            "sax": {"derived_observation": {}, "retained_original_group_ids": [11, 10]},
+            "2ch": {"derived_observation": {}, "retained_original_group_ids": [15]},
+            "4ch": {"derived_observation": {}, "retained_original_group_ids": [9]},
+        },
+    }))
+    baseline = tmp_path / "baseline"
+    baseline.mkdir()
+    (baseline / "input_manifest.json").write_text(json.dumps({"method": "fit_first"}))
+    assert _sparse_group_mapping(baseline, sparse_manifest=sparse) == {
+        "sax": {0: 11, 1: 10}, "2ch": {0: 15}, "4ch": {0: 9},
+    }
+
+
 def test_paired_through_plane_staging_creates_figure_directory(tmp_path) -> None:
     from paper_experiments.joint_vs_2dfit.aha.paired_final_pose_through_plane import _figure_dir
     staging = tmp_path / ".figures.staging"

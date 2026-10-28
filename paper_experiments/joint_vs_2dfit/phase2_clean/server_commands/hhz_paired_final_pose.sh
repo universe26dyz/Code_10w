@@ -87,7 +87,8 @@ for CASE in "${CASES[@]}"; do
 
   run_new "$CASE Fit-first final-pose bundle" "$FIT_BUNDLE" \
     "$PY" -m paper_experiments.joint_vs_2dfit.aha.current_fit_first_final_pose_bundle \
-      --baseline-root "$FIT" --native-maps-root "$NATIVE_ROOT" --subject "$SUBJECT" --case "$CASE" --output "$FIT_BUNDLE" || exit 1
+      --baseline-root "$FIT" --native-maps-root "$NATIVE_ROOT" --subject "$SUBJECT" --case "$CASE" \
+      --sparse-manifest "$MANIFEST" --output "$FIT_BUNDLE" || exit 1
 
   run_new "$CASE AHA mapping" "$MAPPING" \
     "$PY" -m paper_experiments.joint_vs_2dfit.aha.derive_final_pose_mapping \

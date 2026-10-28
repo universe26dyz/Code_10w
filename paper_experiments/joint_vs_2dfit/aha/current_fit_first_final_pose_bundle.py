@@ -40,22 +40,26 @@ def _input_manifest(root: Path, *, subject: str, case: str) -> Path:
     return path
 
 
-def _sparse_group_mapping(baseline: Path, *, case: str | None = None) -> dict[str, dict[int, int]]:
+def _sparse_group_mapping(baseline: Path, *, case: str | None = None,
+                          sparse_manifest: str | Path | None = None) -> dict[str, dict[int, int]]:
     """Resolve NeSVoR-derived group IDs back to native-cache group IDs.
 
     The NeSVoR input manifests retain the derived NPZ group numbering.  The
     sparse manifest is the identity authority for cases where those IDs were
     renumbered during sparse extraction.
     """
-    input_payload = json.loads((baseline / "input_manifest.json").read_text(encoding="utf-8"))
-    record = input_payload.get("sparse_manifest")
-    if not isinstance(record, dict) or not isinstance(record.get("path"), str):
-        if case == "L100_fold0":
-            # Historical full-data L100 runs predate sparse-manifest pins.  In
-            # that route NeSVoR input group IDs are the native-cache IDs.
-            return {stack: {} for stack in STACKS}
-        raise ValueError("Fit-first input manifest lacks sparse-manifest provenance")
-    sparse_path = Path(record["path"])
+    if sparse_manifest is None:
+        input_payload = json.loads((baseline / "input_manifest.json").read_text(encoding="utf-8"))
+        record = input_payload.get("sparse_manifest")
+        if not isinstance(record, dict) or not isinstance(record.get("path"), str):
+            if case == "L100_fold0":
+                # Historical full-data L100 runs predate sparse-manifest pins.
+                # In that route NeSVoR input IDs are native-cache IDs.
+                return {stack: {} for stack in STACKS}
+            raise ValueError("Fit-first input manifest lacks sparse-manifest provenance")
+        sparse_path = Path(record["path"])
+    else:
+        sparse_path = Path(sparse_manifest)
     if not sparse_path.is_file():
         raise FileNotFoundError(sparse_path)
     sparse_payload = json.loads(sparse_path.read_text(encoding="utf-8"))
@@ -87,7 +91,8 @@ def _sparse_group_mapping(baseline: Path, *, case: str | None = None) -> dict[st
 
 
 def build_current_fit_first_final_pose_bundle(*, baseline_root: str | Path, native_maps_root: str | Path,
-                                              subject: str, case: str, output: str | Path) -> Path:
+                                              subject: str, case: str, output: str | Path,
+                                              sparse_manifest: str | Path | None = None) -> Path:
     """Sample current denormalised NeSVoR volumes at parameter-specific final poses."""
     import nibabel as nib
     from ..phase2_clean.fit_first_native_geometry import final_world_grid_original_order, negative_determinant_reindex
@@ -96,7 +101,7 @@ def build_current_fit_first_final_pose_bundle(*, baseline_root: str | Path, nati
     input_manifest = _input_manifest(baseline, subject=subject, case=case)
     if output.exists():
         raise FileExistsError(f"refusing overwrite: {output}")
-    group_mapping = _sparse_group_mapping(baseline, case=case)
+    group_mapping = _sparse_group_mapping(baseline, case=case, sparse_manifest=sparse_manifest)
     output.parent.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(prefix=f".{output.name}.staging-", dir=output.parent))
     try:
@@ -159,10 +164,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("baseline-root", "native-maps-root", "subject", "case", "output"):
         parser.add_argument("--" + name, required=True)
+    parser.add_argument("--sparse-manifest")
     args = vars(parser.parse_args())
     print(build_current_fit_first_final_pose_bundle(
         baseline_root=args["baseline_root"], native_maps_root=args["native_maps_root"],
         subject=args["subject"], case=args["case"], output=args["output"],
+        sparse_manifest=args.get("sparse_manifest"),
     ))
 
 
