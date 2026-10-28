@@ -18,7 +18,7 @@ from typing import Any, Mapping
 import numpy as np
 
 from ..phase2_clean.contracts import sha256, write_immutable_json
-from ..phase2_clean.direct_native_endpoint_audit import _checkpoint_manifest, _load_model, direct_native_world_grid
+from ..phase2_clean.direct_native_endpoint_audit import _checkpoint_manifest, _load_model, _sparse_contract, direct_native_world_grid
 
 
 SCHEMA = "cyj11_r3_direct_final_pose_native_bundle/v1"
@@ -133,10 +133,11 @@ def build_cyj11_r3_direct_final_pose_bundle(*, checkpoint: str | Path, prepared_
     profile, paths, mappings = r3_sparse_prepared_contract(
         prepared_root=prepared_root, sparse_manifest=sparse_path, subject=subject, case=case)
     _verify_checkpoint_r3_identity(checkpoint, profile, sparse_path, subject=subject, case=case)
+    sparse_contract = _sparse_contract(sparse_path)
     # This import carries the reconstruction runtime; keeping it here lets the
     # manifest-only contract validation run in a light CPU test environment.
     from ..phase2_clean.direct_native_bundles import _predict_central
-    model, space, torch = _load_model(checkpoint, paths, device)
+    model, space, torch = _load_model(checkpoint, paths, device, sparse_contract=sparse_contract)
     output.parent.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(prefix=f".{output.name}.staging-", dir=output.parent))
     try:
