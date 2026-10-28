@@ -158,6 +158,25 @@ def test_sax_mask_stack_projects_as_nearest_neighbor_3d_volume() -> None:
     assert project_sax_mask_volume(volumes["lv_outer_filled"], affine, affine, (3, 4), slice_index=1)[1, 2]
 
 
+def test_blood_pool_mask_uses_filled_endocardium_clipped_to_outer_contour() -> None:
+    from paper_experiments.joint_vs_2dfit.aha.common_native_all_stack_roi_metrics import legacy_blood_pool_mask
+
+    inner = np.array([[True, True, False], [False, True, False]])
+    outer = np.array([[True, False, False], [False, True, True]])
+    assert np.array_equal(legacy_blood_pool_mask(inner, outer), np.array([[True, False, False], [False, True, False]]))
+
+
+def test_fit_first_zero_audit_keeps_finite_zeroes_visible_in_roi_counts() -> None:
+    from paper_experiments.joint_vs_2dfit.aha.common_native_all_stack_roi_metrics import fit_first_zero_audit
+
+    roi = np.array([[True, True], [True, False]])
+    fit_first = np.array([[0.0, 1200.0], [0.0, np.nan]])
+    valid = np.array([[True, True], [False, True]])
+    common = np.array([[True, True], [False, False]])
+    audit = fit_first_zero_audit(roi=roi, fit_first=fit_first, fit_first_valid=valid, common_support=common)
+    assert audit == {"fit_first_zero_valid_roi_voxels": 1, "fit_first_zero_common_support_voxels": 1}
+
+
 def test_through_plane_grid_is_physical_for_anisotropic_geometry() -> None:
     native = np.arange(4 * 5 * 6, dtype=float).reshape(4, 5, 6)
     affine = np.diag([2.0, 3.0, 8.0, 1.0])

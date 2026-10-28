@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Evaluate the stacked manual SAX LV/myocardial mask volume on all common-native stacks.
+# Evaluate the stacked manual SAX LV/blood-pool/myocardial mask volume on all common-native stacks.
 
 if [ "$#" -lt 4 ]; then
   echo "Usage: bash $0 /data/.../proposed_run /data/.../fit_first_run /path/to/hhz_roi_bundle L100_fold0 [other cases...]"
@@ -16,6 +16,7 @@ SUBJECT=HHZ
 NATIVE_ROOT=$FIT_BASE/reconstruction/fit_first/$SUBJECT/L100_fold0/native_maps
 NATIVE_MANIFEST=$NATIVE_ROOT/sax/manifest.json
 OUT_ROOT=$FIT_BASE/evaluation/common_native/$SUBJECT
+OUTPUT_NAME=${OUTPUT_NAME:-all_stack_roi_metrics}
 
 if [ ! -x "$PY" ] || [ ! -d "$REPO" ] || [ ! -f "$NATIVE_MANIFEST" ] || [ ! -f "$ROI_BUNDLE/sax_myocardium_masks.npz" ]; then
   echo "Required Python/repository/native cache/ROI archive is missing; no work started."
@@ -36,7 +37,7 @@ for CASE in "$@"; do
   FIT=$FIT_BASE/reconstruction/fit_first/$SUBJECT/$CASE
   SPARSE_MANIFEST=$PROPOSED_BASE/sparse_inputs/$SUBJECT/$CASE/sparse_manifest.json
   COMMON_CASE=$OUT_ROOT/$CASE
-  OUTPUT=$COMMON_CASE/all_stack_roi_metrics
+  OUTPUT=$COMMON_CASE/$OUTPUT_NAME
   if [ ! -f "$COMMON_CASE/manifest.json" ]; then
     echo "REFUSING $CASE: completed common-native output is missing: $COMMON_CASE"
     exit 1

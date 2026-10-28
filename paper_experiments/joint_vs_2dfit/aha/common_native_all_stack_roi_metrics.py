@@ -23,7 +23,7 @@ from .final5_myocardial_roi_metrics import paired_roi_statistics
 from .paired_final_pose_lv_metrics import load_outer_filled_masks
 
 
-ALL_ROIS = ("lv_outer_filled", *ROI_NAMES)
+ALL_ROIS = ("lv_outer_filled", "blood_pool", *ROI_NAMES)
 ALL_SLICES = "all_slices"
 HELDOUT_SLICES = "heldout_slices"
 
@@ -54,6 +54,46 @@ def project_sax_mask_volume(mask_volume: np.ndarray, mask_affine_ras: np.ndarray
     return reproject_binary_mask_to_native_plane(mask_volume, mask_affine_ras, native_affine_ras, shape_rc, slice_index=slice_index)
 
 
+def legacy_blood_pool_mask(inner_filled: np.ndarray, outer_filled: np.ndarray) -> np.ndarray:
+    """Return the non-eroded endocardial-filled blood-pool region from the manual ROI bundle."""
+    inner_filled, outer_filled = (np.asarray(value, bool) for value in (inner_filled, outer_filled))
+    if inner_filled.shape != outer_filled.shape:
+        raise ValueError("inner_filled and outer_filled mask shapes must match")
+    return inner_filled & outer_filled
+
+
+def load_legacy_blood_pool_masks(bundle_root: str | Path, *, expected_groups: np.ndarray,
+                                  expected_shape: tuple[int, int], outer_filled: np.ndarray) -> np.ndarray:
+    """Load the manual filled endocardium, without a 1-pixel erosion, on the native SAX grid."""
+    archive_path = Path(bundle_root) / "sax_myocardium_masks.npz"
+    with np.load(archive_path, allow_pickle=False) as archive:
+        if "group_idx" not in archive or "inner_filled" not in archive:
+            raise ValueError("blood-pool metrics require group_idx and inner_filled in sax_myocardium_masks.npz")
+        groups = np.asarray(archive["group_idx"], int)
+        inner_filled = np.asarray(archive["inner_filled"], bool)
+    expected = (len(expected_groups), *expected_shape)
+    if not np.array_equal(groups, np.asarray(expected_groups, int)):
+        raise ValueError("inner_filled group identity mismatches native SAX cache")
+    if inner_filled.shape != expected or np.asarray(outer_filled).shape != expected:
+        raise ValueError("inner_filled/outer_filled shape mismatches native SAX cache")
+    return legacy_blood_pool_mask(inner_filled, outer_filled)
+
+
+def fit_first_zero_audit(*, roi: np.ndarray, fit_first: np.ndarray, fit_first_valid: np.ndarray,
+                         common_support: np.ndarray) -> dict[str, int]:
+    """Count finite numeric zeroes so zero-filled fit-first voxels are never hidden by metrics."""
+    roi, fit_first_valid, common_support = (np.asarray(value, bool) for value in
+                                            (roi, fit_first_valid, common_support))
+    fit_first = np.asarray(fit_first, float)
+    if not (roi.shape == fit_first.shape == fit_first_valid.shape == common_support.shape):
+        raise ValueError("fit-first zero audit requires equal-shape arrays")
+    zero = np.isfinite(fit_first) & (fit_first == 0.0)
+    return {
+        "fit_first_zero_valid_roi_voxels": int((roi & fit_first_valid & zero).sum()),
+        "fit_first_zero_common_support_voxels": int((common_support & zero).sum()),
+    }
+
+
 def _strata_for_plane(stack: str, membership: str) -> tuple[str, ...]:
     values = [ALL_SLICES, f"stack_{stack}"]
     if membership == "held-out":
@@ -65,7 +105,8 @@ def _empty_accumulators() -> dict[str, dict[str, dict[str, Any]]]:
     names = (ALL_SLICES, HELDOUT_SLICES, *(f"stack_{stack}" for stack in STACKS), "heldout_2ch", "heldout_4ch")
     return {
         name: {roi: {"reference": [], "proposed": [], "fit_first": [],
-                     "proposed_ssim": [], "fit_first_ssim": [], "mask_voxels": 0}
+                     "proposed_ssim": [], "fit_first_ssim": [], "mask_voxels": 0,
+                     "fit_first_zero_valid_roi_voxels": 0, "fit_first_zero_common_support_voxels": 0}
                for roi in ALL_ROIS}
         for name in names
     }
@@ -106,6 +147,12 @@ def _aggregate(accumulators: dict[str, dict[str, Any]], *, parameter: str, heldo
                                     "common_support_voxels": int(pooled["reference"]["n"]),
                                     "coverage_fraction": (float(pooled["reference"]["n"] / values["mask_voxels"])
                                                           if values["mask_voxels"] else 0.0),
+                                    "fit_first_zero_valid_roi_voxels": int(values["fit_first_zero_valid_roi_voxels"]),
+                                    "fit_first_zero_valid_roi_fraction": (float(values["fit_first_zero_valid_roi_voxels"] / values["mask_voxels"])
+                                                                           if values["mask_voxels"] else 0.0),
+                                    "fit_first_zero_common_support_voxels": int(values["fit_first_zero_common_support_voxels"]),
+                                    "fit_first_zero_common_support_fraction": (float(values["fit_first_zero_common_support_voxels"] / pooled["reference"]["n"])
+                                                                             if pooled["reference"]["n"] else 0.0),
                                     "statistics": pooled}
     return result
 
@@ -130,7 +177,10 @@ def build_common_native_all_stack_roi_metrics(*, subject: str, case: str, native
     sax_groups = np.asarray(sax["group_idx"], int)
     sax_shape = tuple(map(int, np.asarray(sax["t1_ms"]).shape[1:]))
     myocardium = _load_scmr_masks(roi_bundle, expected_groups=sax_groups, expected_shape=sax_shape)
-    masks = {"lv_outer_filled": load_outer_filled_masks(roi_bundle, expected_groups=sax_groups, expected_shape=sax_shape),
+    outer_filled = load_outer_filled_masks(roi_bundle, expected_groups=sax_groups, expected_shape=sax_shape)
+    masks = {"lv_outer_filled": outer_filled,
+             "blood_pool": load_legacy_blood_pool_masks(roi_bundle, expected_groups=sax_groups,
+                                                          expected_shape=sax_shape, outer_filled=outer_filled),
              **myocardium}
     mask_volumes, mask_affine = stack_sax_masks_as_volume(sax, masks)
     source_groups = {stack: [int(group) for group in native[stack]["group_idx"]] for stack in STACKS}
@@ -166,9 +216,13 @@ def build_common_native_all_stack_roi_metrics(*, subject: str, case: str, native
                         roi = project_sax_mask_volume(mask_volumes[roi_name], mask_affine, affine,
                                                       tuple(plane["reference"].shape))
                         stats = paired_roi_statistics(roi=roi, parameter=parameter, **plane)
+                        zero_audit = fit_first_zero_audit(roi=roi, fit_first=plane["fit_first"],
+                                                          fit_first_valid=plane["fit_first_valid"],
+                                                          common_support=stats["common_support"])
                         roi_records[roi_name] = {
                             "mask_voxels": int(roi.sum()), "common_support_voxels": stats["common_support_voxels"],
                             "coverage_fraction": (float(stats["common_support_voxels"] / roi.sum()) if roi.any() else 0.0),
+                            **zero_audit,
                             "statistics": {key: value for key, value in stats.items() if key != "common_support"},
                         }
                         _render_mask_qc(staging=staging, subject=subject, case=case, stack=stack,
@@ -177,6 +231,8 @@ def build_common_native_all_stack_roi_metrics(*, subject: str, case: str, native
                         for stratum in _strata_for_plane(stack, membership):
                             target = accumulators[parameter][stratum][roi_name]
                             target["mask_voxels"] += int(roi.sum())
+                            for key, value in zero_audit.items():
+                                target[key] += value
                             if stats["common_support"].any():
                                 support = stats["common_support"]
                                 for method in ("reference", "proposed", "fit_first"):
@@ -190,17 +246,21 @@ def build_common_native_all_stack_roi_metrics(*, subject: str, case: str, native
                                             heldout_available=heldout_available)
                      for parameter in PARAMETERS}
         write_immutable_json(staging / "per_plane_statistics.json", {
-            "schema": "common_native_all_stack_roi_per_plane/v1", "subject": subject, "case": case,
+            "schema": "common_native_all_stack_roi_per_plane/v2", "subject": subject, "case": case,
             "planes": per_plane,
         })
         write_immutable_json(staging / "aggregate_statistics.json", {
-            "schema": "common_native_all_stack_roi_aggregate/v1", "subject": subject, "case": case,
+            "schema": "common_native_all_stack_roi_aggregate/v2", "subject": subject, "case": case,
             "aggregates": aggregate,
         })
         write_immutable_json(staging / "manifest.json", {
-            "schema": "common_native_all_stack_roi_metrics/v1", "subject": subject, "case": case,
+            "schema": "common_native_all_stack_roi_metrics/v2", "subject": subject, "case": case,
             "sampling": "common_acquisition_native_plane", "mask_volume": "all hand-drawn SAX masks stacked on the regular SAX physical lattice and nearest-neighbour projected to each target native plane",
             "support_equation": "nearest-neighbour projected SAX ROI AND finite(native reference) AND proposed-volume-geometry-valid AND fit-first-volume-geometry-valid AND finite(proposed, fit-first)",
+            "roi_definitions": {"lv_outer_filled": "manual epicardial contour plus its filled interior",
+                                "blood_pool": "manual endocardial inner_filled AND outer_filled; no 1-pixel erosion",
+                                "myocardium_full": "manual myocardium", "myocardium_core_legacy": "legacy myocardial core",
+                                "myocardium_core_1px": "1-pixel-eroded myocardial core"},
             "strata": {"all_slices": "all SAX, 2CH and 4CH source planes", "heldout_slices": "all manifest-held-out 2CH/4CH planes; not applicable for L100", "per_stack": "all source planes separately for sax, 2ch and 4ch", "per_stack_heldout": "manifest-held-out planes separately for 2ch and 4ch"},
             "input_provenance": {"native_maps": {stack: {name: _record(native_maps_root / stack / name)
                                                               for name in ("native_maps.npz", "geometry.npz", "manifest.json")}
@@ -210,6 +270,7 @@ def build_common_native_all_stack_roi_metrics(*, subject: str, case: str, native
                                              for parameter, items in images.items()}},
             "metric_contract": "mean, sample SD, RMSE, NRMSE, bias, MAE, Pearson CC, NCC, fixed-range PSNR, and mean masked 2-D SSIM",
             "psnr_data_ranges_ms": {"t1": 2500.0, "t2": 200.0}, "metric_mask_qc": "all ROI supports are overlaid on Native/Proposed/Fit-first for every stack/plane",
+            "fit_first_zero_audit": "exact finite zeroes are retained in metric support and reported both in each ROI's fit-first-valid area and in common metric support",
             "no_reconstruction": True,
         })
         staging.rename(output)
