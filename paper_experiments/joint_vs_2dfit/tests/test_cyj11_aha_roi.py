@@ -608,7 +608,11 @@ def test_cyj11_aha_bundle_is_immutable_and_uses_mapped_common_support(tmp_path, 
                                           mapping_path=tmp_path / "mapping.json", roi_bundle=tmp_path,
                                           output=output) == output
     assert (output / "aha16_segment_statistics.csv").is_file()
-    assert len(list((output / "figures").rglob("*.png"))) == 4
+    # Both established core definitions are rendered, while the 1px core also
+    # retains the historical compatibility paths.
+    assert len(list((output / "figures").rglob("*.png"))) == 12
+    assert (output / "aha16_segment_statistics_myocardium_core_1px.csv").is_file()
+    assert (output / "aha16_segment_statistics_myocardium_core_legacy.csv").is_file()
     with pytest.raises(FileExistsError):
         cyj11_aha16.build_cyj11_aha16(analysis_root=tmp_path, subject="DYZ", case="L100_fold0",
                                       mapping_path=tmp_path / "mapping.json", roi_bundle=tmp_path, output=output)
@@ -648,6 +652,17 @@ def test_cyj11_myocardial_bundle_writes_per_plane_and_pooled_statistics(tmp_path
     pooled = json.loads((output / "pooled_sax_statistics.json").read_text())
     assert [plane["native_group_idx"] for plane in per_plane["planes"]] == [1, 2, 3, 4]
     assert pooled["pooled_sax"]["t1"]["myocardium_full"]["proposed"]["bias"] == 2.0
+
+
+def test_lv_outer_filled_loader_requires_exact_native_group_order_and_shape(tmp_path) -> None:
+    from paper_experiments.joint_vs_2dfit.aha.paired_final_pose_lv_metrics import load_outer_filled_masks
+
+    np.savez_compressed(tmp_path / "sax_myocardium_masks.npz", group_idx=np.array([3, 4]),
+                        outer_filled=np.ones((2, 3, 4), np.uint8))
+    masks = load_outer_filled_masks(tmp_path, expected_groups=np.array([3, 4]), expected_shape=(3, 4))
+    assert masks.dtype == bool and masks.shape == (2, 3, 4) and masks.all()
+    with pytest.raises(ValueError, match="group identity"):
+        load_outer_filled_masks(tmp_path, expected_groups=np.array([4, 3]), expected_shape=(3, 4))
 
 
 def test_cyj11_roi_derivation_copies_only_integer_native_lattice_pixels(tmp_path, monkeypatch) -> None:

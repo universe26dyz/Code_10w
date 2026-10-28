@@ -22,7 +22,7 @@ from .cyj11_adapter import load_cyj11_native_sax
 from .cyj11_runner import final_pose_sax_plane, load_cyj11_final_pose_bundles
 
 
-SCHEMA = "paired_final_pose_full_heart_through_plane_qc/v2"
+SCHEMA = "paired_final_pose_full_heart_through_plane_qc/v3"
 SUPPORT_EQUATION = "finite non-zero native foreground AND proposed-final-pose-valid AND fit-first-final-pose-valid AND finite(proposed, fit-first)"
 
 
@@ -102,17 +102,21 @@ def build_paired_final_pose_through_plane(*, subject: str, case: str, native_sax
             proposed_image, fit_image = nib.load(str(proposed_path)), nib.load(str(fit_path))
             support = _support_stack(native=native, bundles=bundles, parameter=parameter)
             np.savez_compressed(staging / f"{parameter}_full_heart_common_support.npz", group_idx=groups, support=np.moveaxis(support, 2, 0))
-            figure = render_through_plane_continuity(
-                parameter, np.moveaxis(np.asarray(native[f"{parameter}_ms"], float), 0, 2), native_affine,
-                np.asarray(proposed_image.get_fdata(), float), np.asarray(proposed_image.affine, float),
-                np.asarray(fit_image.get_fdata(), float), np.asarray(fit_image.affine, float),
-                figure_dir / f"{parameter}_through_plane_common_mask.png",
-                reference_group=reference_group,
-                common_support=support,
-                metadata={"subject": subject, "case": case, "parameter": parameter,
-                          "purpose": "qualitative through-plane continuity QC; final-pose native planes remain the quantitative authority",
-                          "support_equation": SUPPORT_EQUATION},
-            )
+            figures = {}
+            for orientation in ("column", "row"):
+                figures[orientation] = render_through_plane_continuity(
+                    parameter, np.moveaxis(np.asarray(native[f"{parameter}_ms"], float), 0, 2), native_affine,
+                    np.asarray(proposed_image.get_fdata(), float), np.asarray(proposed_image.affine, float),
+                    np.asarray(fit_image.get_fdata(), float), np.asarray(fit_image.affine, float),
+                    figure_dir / f"{parameter}_through_plane_{orientation}_common_mask.png",
+                    reference_group=reference_group,
+                    common_support=support,
+                    cut_orientation=orientation,
+                    metadata={"subject": subject, "case": case, "parameter": parameter,
+                              "cut_orientation": orientation,
+                              "purpose": "qualitative through-plane continuity QC; final-pose native planes remain the quantitative authority",
+                              "support_equation": SUPPORT_EQUATION},
+                )
             pair_slices: dict[str, object] = {}
             for index, group in enumerate(groups):
                 if not support[:, :, index].any():
@@ -133,7 +137,7 @@ def build_paired_final_pose_through_plane(*, subject: str, case: str, native_sax
                         "purpose": "qualitative paired native-plane comparison; not myocardial ROI quantification",
                     },
                 )
-            outputs[parameter] = {"through_plane": figure, "pair_slices": pair_slices}
+            outputs[parameter] = {"through_plane": figures, "pair_slices": pair_slices}
         write_immutable_json(staging / "manifest.json", {
             "schema": SCHEMA, "subject": subject, "case": case,
             "support_equation": SUPPORT_EQUATION, "prepared_sax": _record(prepared_sax),

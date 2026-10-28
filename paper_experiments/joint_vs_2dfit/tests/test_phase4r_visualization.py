@@ -109,6 +109,15 @@ def test_figure_one_uses_one_world_plane_for_both_methods() -> None:
     assert result["grid_spacing_mm"] == {"row": 1.0, "slice": 1.0}
 
 
+def test_orthogonal_centre_row_cut_uses_column_and_slice_world_axes() -> None:
+    native = np.arange(4 * 5 * 6, dtype=float).reshape(4, 5, 6)
+    result = viz.sample_same_world_through_plane(native, np.eye(4), native, np.eye(4), native, np.eye(4), cut_row=2)
+    assert result["cut_orientation"] == "row"
+    assert result["cut_row"] == 2 and result["cut_column"] is None
+    assert result["grid_spacing_mm"] == {"column": 1.0, "slice": 1.0}
+    assert result["native"].shape == (5, 6)
+
+
 def test_through_plane_grid_is_physical_for_anisotropic_geometry() -> None:
     native = np.arange(4 * 5 * 6, dtype=float).reshape(4, 5, 6)
     affine = np.diag([2.0, 3.0, 8.0, 1.0])

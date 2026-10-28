@@ -206,9 +206,15 @@ def sample_same_world_through_plane(
     fit_first_affine: np.ndarray,
     *,
     cut_column: int | None = None,
+    cut_row: int | None = None,
     common_support: np.ndarray | None = None,
 ) -> dict[str, Any]:
-    """Sample a regular 1-mm native-world plane shared by all three volumes."""
+    """Sample a regular 1-mm native-world plane shared by all three volumes.
+
+    ``cut_column`` gives the historical row--slice reformat.  ``cut_row``
+    gives its orthogonal column--slice reformat.  Exactly one may be supplied;
+    omitting both retains the historical centre-column view.
+    """
     native = np.asarray(native, float)
     if native.ndim != 3:
         raise ValueError("Figure-1 native stack must be a 3-D [row,col,group] array")
@@ -216,9 +222,22 @@ def sample_same_world_through_plane(
         common_support = np.asarray(common_support, bool)
         if common_support.shape != native.shape:
             raise ValueError("through-plane common support must use the native [row,col,group] lattice")
-    column = native.shape[1] // 2 if cut_column is None else int(cut_column)
-    if not 0 <= column < native.shape[1]:
-        raise ValueError("cut column is outside the native plane")
+    if cut_column is not None and cut_row is not None:
+        raise ValueError("specify either cut_column or cut_row, not both")
+    if cut_row is None:
+        orientation = "column"
+        fixed_index = native.shape[1] // 2 if cut_column is None else int(cut_column)
+        if not 0 <= fixed_index < native.shape[1]:
+            raise ValueError("cut column is outside the native plane")
+        in_plane_axis, in_plane_label = 0, "row"
+        origin_index = (0.0, float(fixed_index), 0.0, 1.0)
+    else:
+        orientation = "row"
+        fixed_index = int(cut_row)
+        if not 0 <= fixed_index < native.shape[0]:
+            raise ValueError("cut row is outside the native plane")
+        in_plane_axis, in_plane_label = 1, "column"
+        origin_index = (float(fixed_index), 0.0, 0.0, 1.0)
     def physical_affine(value: np.ndarray, label: str) -> np.ndarray:
         affine = np.asarray(value, float)
         if affine.shape != (4, 4) or not np.all(np.isfinite(affine)):
@@ -231,20 +250,20 @@ def sample_same_world_through_plane(
     proposed_affine = physical_affine(proposed_affine, "proposed")
     fit_first_affine = physical_affine(fit_first_affine, "fit-first")
     linear = affine[:3, :3]
-    row_vector, slice_vector = linear[:, 0], linear[:, 2]
-    row_spacing, slice_spacing = np.linalg.norm(row_vector), np.linalg.norm(slice_vector)
-    if row_spacing <= 0 or slice_spacing <= 0 or np.linalg.norm(np.cross(row_vector, slice_vector)) <= 1e-8 * row_spacing * slice_spacing:
-        raise ValueError("invalid physical through-plane geometry: row and slice axes are degenerate")
-    row_basis, slice_basis = row_vector / row_spacing, slice_vector / slice_spacing
-    origin = (affine @ np.array((0.0, float(column), 0.0, 1.0)))[:3]
-    row_extent = (native.shape[0] - 1) * row_spacing
+    in_plane_vector, slice_vector = linear[:, in_plane_axis], linear[:, 2]
+    in_plane_spacing, slice_spacing = np.linalg.norm(in_plane_vector), np.linalg.norm(slice_vector)
+    if in_plane_spacing <= 0 or slice_spacing <= 0 or np.linalg.norm(np.cross(in_plane_vector, slice_vector)) <= 1e-8 * in_plane_spacing * slice_spacing:
+        raise ValueError("invalid physical through-plane geometry: in-plane and slice axes are degenerate")
+    in_plane_basis, slice_basis = in_plane_vector / in_plane_spacing, slice_vector / slice_spacing
+    origin = (affine @ np.array(origin_index))[:3]
+    in_plane_extent = (native.shape[in_plane_axis] - 1) * in_plane_spacing
     slice_extent = (native.shape[2] - 1) * slice_spacing
     grid_spacing = 1.0
-    row_coordinates = np.arange(0.0, row_extent + grid_spacing * .5, grid_spacing)
+    in_plane_coordinates = np.arange(0.0, in_plane_extent + grid_spacing * .5, grid_spacing)
     slice_coordinates = np.arange(0.0, slice_extent + grid_spacing * .5, grid_spacing)
-    row_grid, slice_grid = np.meshgrid(row_coordinates, slice_coordinates, indexing="ij")
-    world = np.empty((4, *row_grid.shape), dtype=float)
-    world[:3] = (origin[:, None, None] + row_basis[:, None, None] * row_grid + slice_basis[:, None, None] * slice_grid)
+    in_plane_grid, slice_grid = np.meshgrid(in_plane_coordinates, slice_coordinates, indexing="ij")
+    world = np.empty((4, *in_plane_grid.shape), dtype=float)
+    world[:3] = (origin[:, None, None] + in_plane_basis[:, None, None] * in_plane_grid + slice_basis[:, None, None] * slice_grid)
     world[3] = 1.0
     native_values, native_geometry = _world_sample(native, affine, world, order=0)
     proposed_values, proposed_geometry = _world_sample(proposed, proposed_affine, world, order=1)
@@ -260,13 +279,15 @@ def sample_same_world_through_plane(
         "world": world, "proposed_world": world, "fit_first_world": world,
         "native": native_values, "proposed": proposed_values, "fit_first": fit_values,
         "common_support": sampled_support,
-        "cut_column": column,
+        "cut_orientation": orientation,
+        "cut_column": int(fixed_index) if orientation == "column" else None,
+        "cut_row": int(fixed_index) if orientation == "row" else None,
         "interpolation": {"native": "nearest", "reconstructions": "linear"},
         "world_plane_origin_mm": origin.tolist(),
-        "world_plane_basis_vectors": {"row": row_basis.tolist(), "slice": slice_basis.tolist()},
-        "grid_spacing_mm": {"row": grid_spacing, "slice": grid_spacing},
-        "physical_extent_mm": {"row": [0.0, float(row_coordinates[-1])], "slice": [0.0, float(slice_coordinates[-1])]},
-        "grid_shape": list(row_grid.shape),
+        "world_plane_basis_vectors": {in_plane_label: in_plane_basis.tolist(), "slice": slice_basis.tolist()},
+        "grid_spacing_mm": {in_plane_label: grid_spacing, "slice": grid_spacing},
+        "physical_extent_mm": {in_plane_label: [0.0, float(in_plane_coordinates[-1])], "slice": [0.0, float(slice_coordinates[-1])]},
+        "grid_shape": list(in_plane_grid.shape),
     }
 
 
@@ -332,6 +353,7 @@ def render_through_plane_continuity(
     reference_group: int,
     metadata: Mapping[str, Any],
     common_support: np.ndarray | None = None,
+    cut_orientation: str = "column",
 ) -> dict[str, str]:
     """Render the same-world-plane through-plane continuity QC figure."""
     import matplotlib.pyplot as plt
@@ -340,8 +362,11 @@ def render_through_plane_continuity(
     target = Path(output)
     if target.exists() or target.with_suffix(".pdf").exists():
         raise FileExistsError(f"refusing overwrite: {target}")
+    if cut_orientation not in ("column", "row"):
+        raise ValueError("cut_orientation must be column or row")
+    cut_argument = {"cut_column": native.shape[1] // 2} if cut_orientation == "column" else {"cut_row": native.shape[0] // 2}
     sampled = sample_same_world_through_plane(native, native_affine, proposed, proposed_affine, fit_first, fit_first_affine,
-                                               common_support=common_support)
+                                               common_support=common_support, **cut_argument)
     bars = colorbars()
     figure, axes = plt.subplots(1, 5, figsize=(12, 3), gridspec_kw={"width_ratios": [1, 1, 1, 1, .07]})
     limit = DISPLAY_RANGES_MS[parameter]
@@ -349,9 +374,14 @@ def render_through_plane_continuity(
     if common_support is not None:
         reference = np.ma.masked_where(~np.asarray(common_support, bool)[:, :, int(reference_group)], reference)
     h0 = axes[0].imshow(reference, cmap=bars.mapping[parameter], vmin=limit[0], vmax=limit[1], origin="lower", interpolation="nearest", aspect="equal")
-    axes[0].axvline(sampled["cut_column"], color="white", linewidth=.75)
-    axes[0].set_title("Native SAX + cut line", fontsize=8)
-    extent = [*sampled["physical_extent_mm"]["slice"], *sampled["physical_extent_mm"]["row"]]
+    if sampled["cut_orientation"] == "column":
+        axes[0].axvline(sampled["cut_column"], color="white", linewidth=.75)
+        in_plane_label = "row"
+    else:
+        axes[0].axhline(sampled["cut_row"], color="white", linewidth=.75)
+        in_plane_label = "column"
+    axes[0].set_title(f"Native SAX + centre {sampled['cut_orientation']} cut", fontsize=8)
+    extent = [*sampled["physical_extent_mm"]["slice"], *sampled["physical_extent_mm"][in_plane_label]]
     for axis, value, label in zip(axes[1:4], (sampled["native"], sampled["proposed"], sampled["fit_first"]), ("Native through-plane", "Proposed 3-D through-plane", "Fit-first 3-D through-plane")):
         if sampled["common_support"] is not None:
             value = np.ma.masked_where(~np.asarray(sampled["common_support"], bool), value)
@@ -363,7 +393,7 @@ def render_through_plane_continuity(
     figure.suptitle("Through-plane continuity QC; not native-plane quantitative accuracy", fontsize=10)
     written = _write_figure(figure, target)
     plt.close(figure)
-    geometry = {key: sampled[key] for key in ("cut_column", "interpolation", "world_plane_origin_mm", "world_plane_basis_vectors", "grid_spacing_mm", "physical_extent_mm", "grid_shape")}
+    geometry = {key: sampled[key] for key in ("cut_orientation", "cut_column", "cut_row", "interpolation", "world_plane_origin_mm", "world_plane_basis_vectors", "grid_spacing_mm", "physical_extent_mm", "grid_shape")}
     metadata_record = dict(metadata)
     metadata_record.update(geometry)
     metadata_record.update({"reference_group": int(reference_group), "outputs": written,

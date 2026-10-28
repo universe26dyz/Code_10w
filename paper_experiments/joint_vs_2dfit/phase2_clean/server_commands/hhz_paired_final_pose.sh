@@ -2,20 +2,26 @@
 # Completed-HHZ downstream only: final-pose bundles, paired AHA/ROI, and
 # shared-mask through-plane QC.  It never trains or reconstructs.
 
-if [ "$#" -ne 2 ]; then
-  echo "Usage: bash $0 /data/.../ismrm_v2 /path/to/verified_hhz_native_roi_bundle"
+if [ "$#" -lt 3 ]; then
+  echo "Usage: bash $0 /data/.../proposed_run /data/.../fit_first_run /path/to/verified_hhz_native_roi_bundle [L100_fold0 ...]"
   exit 2
 fi
 
-BASE=$1
-ROI_BUNDLE=$2
+PROPOSED_BASE=$1
+FIT_BASE=$2
+ROI_BUNDLE=$3
+shift 3
 REPO=${REPO:-/data/dengyz/code/Code_10w}
 PY=${PY:-/home/dengyz/miniconda3/envs/cr_dreme/bin/python}
 SUBJECT=HHZ
-NATIVE_ROOT=$BASE/reconstruction/fit_first/$SUBJECT/L100_fold0/native_maps
+NATIVE_ROOT=$FIT_BASE/reconstruction/fit_first/$SUBJECT/L100_fold0/native_maps
 NATIVE_MANIFEST=$NATIVE_ROOT/sax/manifest.json
-EVAL_ROOT=$BASE/evaluation/final_pose/$SUBJECT
-CASES=(L100_fold0 L50_fold0 L25_fold0 SAX100_2CH0_4CH0 SAX100_2CH0_4CH100 SAX100_2CH100_4CH0 S2CH100_4CH50_fold0 S2CH50_4CH100_fold0)
+EVAL_ROOT=$FIT_BASE/evaluation/final_pose/$SUBJECT
+if [ "$#" -eq 0 ]; then
+  CASES=(L100_fold0)
+else
+  CASES=("$@")
+fi
 
 if [ ! -x "$PY" ] || [ ! -d "$REPO" ] || [ ! -f "$NATIVE_MANIFEST" ] || [ ! -f "$ROI_BUNDLE/roi_derivation_manifest.json" ]; then
   echo "Required Python/repository/native SAX/ROI bundle is missing; no downstream work started."
@@ -73,15 +79,16 @@ run_new() {
 mkdir -p "$EVAL_ROOT/bundles/proposed" "$EVAL_ROOT/bundles/fit_first" "$EVAL_ROOT/roi/mapping" "$EVAL_ROOT/metrics" "$EVAL_ROOT/visual_qc_full_heart"
 
 for CASE in "${CASES[@]}"; do
-  CASE_ROOT=$BASE/sparse_inputs/$SUBJECT/$CASE
+  CASE_ROOT=$PROPOSED_BASE/sparse_inputs/$SUBJECT/$CASE
   MANIFEST=$CASE_ROOT/sparse_manifest.json
-  PROPOSED=$BASE/reconstruction/proposed/$SUBJECT/$CASE
-  FIT=$BASE/reconstruction/fit_first/$SUBJECT/$CASE
+  PROPOSED=$PROPOSED_BASE/reconstruction/proposed/$SUBJECT/$CASE
+  FIT=$FIT_BASE/reconstruction/fit_first/$SUBJECT/$CASE
   DIRECT_BUNDLE=$EVAL_ROOT/bundles/proposed/$CASE
   FIT_BUNDLE=$EVAL_ROOT/bundles/fit_first/$CASE
   MAPPING=$EVAL_ROOT/roi/mapping/$CASE.json
   METRICS=$EVAL_ROOT/metrics/$CASE
-  AHA_SD=$METRICS/aha16_sd
+  AHA_SD_1PX=$METRICS/aha16_sd_myocardium_core_1px
+  AHA_SD_LEGACY=$METRICS/aha16_sd_myocardium_core_legacy
   VISUAL_QC=$EVAL_ROOT/visual_qc_full_heart/$CASE
 
   if [ ! -f "$MANIFEST" ] || [ ! -f "$PROPOSED/model.pt" ] || [ ! -f "$FIT/input_manifest.json" ]; then
@@ -106,11 +113,16 @@ for CASE in "${CASES[@]}"; do
   run_new "$CASE paired AHA and myocardial metrics" "$METRICS" \
     "$PY" -m paper_experiments.joint_vs_2dfit.aha.paired_final_pose_postprocess \
       --subject "$SUBJECT" --case "$CASE" --native-sax-root "$NATIVE_ROOT/sax" --prepared-sax "$PREP_SAX" \
-      --mapping "$MAPPING" --roi-bundle "$ROI_BUNDLE" --proposed-bundle "$DIRECT_BUNDLE" --fit-first-bundle "$FIT_BUNDLE" --output "$METRICS" || exit 1
+      --mapping "$MAPPING" --roi-bundle "$ROI_BUNDLE" --outer-mask-bundle "$ROI_BUNDLE" \
+      --proposed-bundle "$DIRECT_BUNDLE" --fit-first-bundle "$FIT_BUNDLE" --output "$METRICS" || exit 1
 
-  run_new "$CASE AHA SD bullseyes" "$AHA_SD" \
+  run_new "$CASE 1px-core AHA SD bullseyes" "$AHA_SD_1PX" \
     "$PY" -m paper_experiments.joint_vs_2dfit.aha.paired_aha_sd \
-      --segment-statistics-csv "$METRICS/aha16/aha16_segment_statistics.csv" --output "$AHA_SD" || exit 1
+      --segment-statistics-csv "$METRICS/aha16/aha16_segment_statistics_myocardium_core_1px.csv" --output "$AHA_SD_1PX" || exit 1
+
+  run_new "$CASE legacy-core AHA SD bullseyes" "$AHA_SD_LEGACY" \
+    "$PY" -m paper_experiments.joint_vs_2dfit.aha.paired_aha_sd \
+      --segment-statistics-csv "$METRICS/aha16/aha16_segment_statistics_myocardium_core_legacy.csv" --output "$AHA_SD_LEGACY" || exit 1
 
   run_new "$CASE full-heart shared-mask through-plane and paired-slice QC" "$VISUAL_QC" \
     "$PY" -m paper_experiments.joint_vs_2dfit.aha.paired_final_pose_through_plane \
