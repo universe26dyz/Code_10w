@@ -20,18 +20,30 @@ MATLAB=${4:-matlab}
 REPO=${REPO:-/data/dengyz/code/Code_10w}
 PY=${PY:-/home/dengyz/miniconda3/envs/cr_dreme/bin/python}
 NESVOR=${NESVOR:-/home/dengyz/miniconda3/envs/nesvor/bin/nesvor}
-DATA_ROOT=${DATA_ROOT:-/data/dengyz/dataset/Code_10w_v1}
 SUBJECT=HHZ
 CACHE=$RUN_ROOT/native_cache/HHZ_scmr_v5
 MAPPING_ROOT=$RUN_ROOT/mapping/scmr_v5/$SUBJECT
 
-test -x "$PY"
-test -x "$NESVOR"
-test -d "$REPO"
-test -d "$PREPROCESSED_ROOT/$SUBJECT"
-test -d "$PREPARED_ROOT/$SUBJECT"
-test ! -e "$CACHE"
-test ! -e "$MAPPING_ROOT"
+die() { echo "ERROR: $*" >&2; exit 2; }
+require_executable() { [ -x "$1" ] || die "executable is missing or not executable: $1"; }
+require_directory() { [ -d "$1" ] || die "directory is missing: $1"; }
+require_absent() { [ ! -e "$1" ] || die "refusing to overwrite existing path: $1"; }
+
+require_executable "$PY"
+require_executable "$NESVOR"
+require_directory "$REPO"
+require_directory "$PREPROCESSED_ROOT/$SUBJECT"
+require_directory "$PREPARED_ROOT/$SUBJECT"
+require_absent "$CACHE"
+require_absent "$MAPPING_ROOT"
+echo "HHZ SCMR-v5 Fit-first inputs:"
+echo "  RUN_ROOT=$RUN_ROOT"
+echo "  PREPROCESSED_ROOT=$PREPROCESSED_ROOT"
+echo "  PREPARED_ROOT=$PREPARED_ROOT"
+echo "  PY=$PY"
+echo "  NESVOR=$NESVOR"
+echo "  CACHE=$CACHE"
+echo "  MAPPING_ROOT=$MAPPING_ROOT"
 mkdir -p "$RUN_ROOT/mapping/scmr_v5"
 cd "$REPO"
 
