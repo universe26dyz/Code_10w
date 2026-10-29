@@ -47,6 +47,7 @@ def test_build_freeze_readmes_writes_bilingual_subject_example_without_subject_h
     assert "SUBJECT_X" in zh.read_text(encoding="utf-8")
     assert "TI=[10,100]" in zh.read_text(encoding="utf-8")
     assert "/proposed/SUBJECT_X/L100/model.pt" in zh.read_text(encoding="utf-8")
+    assert zh.read_text(encoding="utf-8").index("## 操作步骤") < zh.read_text(encoding="utf-8").index("## 冻结现场文件与 SHA 附录")
     assert "SUBJECT_X" in en.read_text(encoding="utf-8")
     assert "Where each stage runs" in en.read_text(encoding="utf-8")
     assert "HHZ" not in zh.read_text(encoding="utf-8")
