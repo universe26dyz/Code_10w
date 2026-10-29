@@ -20,7 +20,7 @@ MATLAB=${4:-matlab}
 REPO=${REPO:-/data/dengyz/code/Code_10w}
 PY=${PY:-/home/dengyz/miniconda3/envs/cr_dreme/bin/python}
 NESVOR=${NESVOR:-/home/dengyz/miniconda3/envs/nesvor/bin/nesvor}
-SUBJECT=HHZ
+SUBJECT=${SUBJECT:-HHZ}
 CACHE=$RUN_ROOT/native_cache/HHZ_scmr_v5
 MAPPING_ROOT=$RUN_ROOT/mapping/scmr_v5/$SUBJECT
 
@@ -36,7 +36,7 @@ require_directory "$PREPROCESSED_ROOT/$SUBJECT"
 require_directory "$PREPARED_ROOT/$SUBJECT"
 require_absent "$CACHE"
 require_absent "$MAPPING_ROOT"
-echo "HHZ SCMR-v5 Fit-first inputs:"
+echo "SCMR-v5 Fit-first inputs:"
 echo "  RUN_ROOT=$RUN_ROOT"
 echo "  PREPROCESSED_ROOT=$PREPROCESSED_ROOT"
 echo "  PREPARED_ROOT=$PREPARED_ROOT"
@@ -84,4 +84,4 @@ PY
     --nesvor-executable "$NESVOR" --output "$OUTPUT" --execute 2>&1 | tee "$OUTPUT.log"
 done
 
-echo "HHZ SCMR-v5 Fit-first native maps and reconstructions: PASS"
+echo "SCMR-v5 Fit-first native maps and reconstructions: PASS"

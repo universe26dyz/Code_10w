@@ -13,7 +13,7 @@ ROI_BUNDLE=$3
 shift 3
 REPO=${REPO:-/data/dengyz/code/Code_10w}
 PY=${PY:-/home/dengyz/miniconda3/envs/cr_dreme/bin/python}
-SUBJECT=HHZ
+SUBJECT=${SUBJECT:-HHZ}
 NATIVE_ROOT=$FIT_BASE/reconstruction/fit_first/$SUBJECT/L100_fold0/native_maps
 NATIVE_MANIFEST=$NATIVE_ROOT/sax/manifest.json
 EVAL_ROOT=$FIT_BASE/evaluation/final_pose/$SUBJECT
@@ -34,8 +34,8 @@ cd "$REPO" || exit 2
 import json, pathlib, sys
 from paper_experiments.joint_vs_2dfit.phase2_clean.fit_first import require_scmr_v5_native_cache_manifest
 path = pathlib.Path(sys.argv[1])
-require_scmr_v5_native_cache_manifest(json.loads(path.read_text()), stack="HHZ SAX")
-print("HHZ native-cache mapping contract: SCMR-v5 MATLAB PASS")
+require_scmr_v5_native_cache_manifest(json.loads(path.read_text()), stack="SCMR-v5 SAX")
+print("native-cache mapping contract: SCMR-v5 MATLAB PASS")
 PY
 
 PREP_SAX=$($PY -c '
@@ -132,4 +132,4 @@ for CASE in "${CASES[@]}"; do
       --fit-first-t1 "$FIT/nesvor/t1/volume_ms.nii.gz" --fit-first-t2 "$FIT/nesvor/t2/volume_ms.nii.gz" --output "$VISUAL_QC" || exit 1
 done
 
-echo "HHZ paired final-pose downstream evaluation: PASS"
+echo "paired final-pose downstream evaluation: PASS"

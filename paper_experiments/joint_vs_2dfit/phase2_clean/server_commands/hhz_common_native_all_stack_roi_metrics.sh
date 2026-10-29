@@ -12,7 +12,7 @@ ROI_BUNDLE=$3
 shift 3
 REPO=${REPO:-/data/dengyz/code/Code_10w}
 PY=${PY:-/home/dengyz/miniconda3/envs/cr_dreme/bin/python}
-SUBJECT=HHZ
+SUBJECT=${SUBJECT:-HHZ}
 NATIVE_ROOT=$FIT_BASE/reconstruction/fit_first/$SUBJECT/L100_fold0/native_maps
 NATIVE_MANIFEST=$NATIVE_ROOT/sax/manifest.json
 OUT_ROOT=$FIT_BASE/evaluation/common_native/$SUBJECT
@@ -68,4 +68,4 @@ for CASE in "$@"; do
     --output "$OUTPUT" || exit 1
 done
 
-echo "HHZ all-stack common-native LV/myocardial ROI metrics: PASS"
+echo "all-stack common-native LV/myocardial ROI metrics: PASS"
