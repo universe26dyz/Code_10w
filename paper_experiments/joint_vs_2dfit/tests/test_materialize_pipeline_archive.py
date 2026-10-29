@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import subprocess
 
 
 def test_copy_plan_is_subject_parameterized_and_keeps_inputs_outputs_separate(tmp_path: Path) -> None:
@@ -39,3 +40,23 @@ def test_copy_plan_is_subject_parameterized_and_keeps_inputs_outputs_separate(tm
     assert by_label["prepared"].destination.parts[:4] == ("03_subject_examples", "SUBJECT_X", "01_inputs", "prepared")
     assert by_label["fit_first"].destination.parts[:4] == ("03_subject_examples", "SUBJECT_X", "02_outputs", "fit_first")
     assert by_label["proposed"].destination.parts[:4] == ("03_subject_examples", "SUBJECT_X", "02_outputs", "proposed")
+
+
+def test_code_snapshot_writes_a_nonempty_bundle_for_the_exact_head(tmp_path: Path) -> None:
+    from paper_experiments.joint_vs_2dfit.phase2_clean.materialize_pipeline_archive import _archive_code
+
+    repo, archive = tmp_path / "repo", tmp_path / "archive"
+    repo.mkdir()
+    for command in (
+        ["git", "init"], ["git", "config", "user.email", "test@example.invalid"],
+        ["git", "config", "user.name", "Test"],
+    ):
+        subprocess.run(command, cwd=repo, check=True, capture_output=True)
+    (repo / "file.txt").write_text("frozen\n", encoding="utf-8")
+    subprocess.run(["git", "add", "file.txt"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-m", "snapshot"], cwd=repo, check=True, capture_output=True)
+
+    record = _archive_code(repo, archive)
+
+    assert len(record["commit"]) == 40
+    assert (archive / "01_code_snapshot" / "source.bundle").stat().st_size > 0

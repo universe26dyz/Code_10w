@@ -107,7 +107,10 @@ def _archive_code(code_root: Path, archive_root: Path) -> dict[str, str]:
     target = archive_root / "01_code_snapshot"
     target.mkdir(parents=True)
     subprocess.run(["git", "-C", str(code_root), "archive", "--format=tar", "--output", str(target / "source.tar"), commit], check=True)
-    subprocess.run(["git", "-C", str(code_root), "bundle", "create", str(target / "source.bundle"), commit], check=True)
+    # ``git bundle create`` accepts a revision *range*.  A raw object ID is
+    # treated as an exclusion-only range by Git and can yield an empty bundle;
+    # symbolic HEAD includes the complete reachable history for this snapshot.
+    subprocess.run(["git", "-C", str(code_root), "bundle", "create", str(target / "source.bundle"), "HEAD"], check=True)
     (target / "git_status.txt").write_text(status, encoding="utf-8")
     record = {"code_root": str(code_root), "commit": commit, "source_tar_sha256": _sha256(target / "source.tar"),
               "source_bundle_sha256": _sha256(target / "source.bundle")}
