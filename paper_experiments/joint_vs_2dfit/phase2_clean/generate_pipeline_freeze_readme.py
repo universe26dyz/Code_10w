@@ -108,6 +108,7 @@ def _zh_readme(report: dict[str, Any], semantic: dict[str, Any]) -> str:
 | 工作 | 在哪里运行 | 输入 | 输出 | 目的 |
 |---|---|---|---|---|
 | 检查代码、版本与 SHA | 本地或服务器 code checkout | 冻结目录与原文件 | 检查结果 | 确认没有把旧路线混入。 |
+| 原始 DICOM 预处理 | 本地 MATLAB | 每个 stack 的原始十权重 DICOM | `preprocessed.mat` 与 QC | 裁切、MIND 配准、MP-PCA，并保存 DICOM 身份。 |
 | SCMR-v5 MATLAB fitting | 服务器（MATLAB） | `preprocessed.mat` | 三个 stack 的 mapping 与 native cache | 获得正确的 native T1/T2/B1。 |
 | 2D-fit-first / NeSVoR | 服务器 GPU | native cache 与 sparse input | T1/T2 volume | 重建 fit-first 对照方法。 |
 | Proposed / MLP | 服务器 GPU | sparse input、冻结 decoder/B6/protocol | checkpoint 与 T1/T2 volume | 重建 Proposed 方法。 |
@@ -115,7 +116,66 @@ def _zh_readme(report: dict[str, Any], semantic: dict[str, Any]) -> str:
 
 下面所有会产生文件的命令都应写到**新的空运行根**；不要对本附录记录的完成目录再次运行 reconstruction。评估可只读现有重建结果。
 
-### 1. 在服务器设置变量并做最小预检
+### 1. 准备新 subject 的原始 DICOM（本地）
+
+每个新 subject 的真正起点是三个 stack 的**原始 DICOM**：`<local_dicom_root>/<SUBJECT>/sax/*.dcm`、`2ch/*.dcm`、`4ch/*.dcm`。每个 slice/group 必须恰有 10 个 weight，且三个 stack 都不能缺失。**NIfTI 不能替代 DICOM**：本路线需要 `SOPInstanceUID`、`SeriesInstanceUID`、`AcquisitionTime`、病人坐标/方向、像素间距、层厚、TR 与 VPS；十个 `nii.gz` 无法恢复这些 provenance 与几何信息。若当前仅有 NIfTI，必须先找回原始 DICOM。
+
+~~~bash
+LOCAL_CODE="/path/to/Code_10w"
+SUBJECT="NEW_SUBJECT"
+LOCAL_DICOM_ROOT="/path/to/local_dicom"
+DEPLOYMENT_MANIFEST="/path/outside_code/$SUBJECT-deployment.json"
+
+for STACK in sax 2ch 4ch; do
+  N=$(find "$LOCAL_DICOM_ROOT/$SUBJECT/$STACK" -maxdepth 1 -name '*.dcm' | wc -l)
+  echo "$STACK: $N DICOM files"
+  test "$N" -gt 0 && test $((N % 10)) -eq 0
+done
+cp "$LOCAL_CODE/configs/subject_stack_manifest.example.json" "$DEPLOYMENT_MANIFEST"
+~~~
+
+编辑该仓库外 JSON：为每个 stack 填入本地 `local_dicom_dir` 与服务器上**同一批 DICOM**的 `server_dicom_dir`。不得从 NIfTI 反推 DICOM，也不得把 DICOM 放入代码目录。
+
+### 2. 本地 MATLAB：DICOM 到 `preprocessed.mat`
+
+输入：manifest 指定的原始 DICOM。输出：`<local_preprocessed_root>/$SUBJECT/<stack>/preprocessed.mat` 与 `preprocess_qc.json`。此步骤在本地 MATLAB 执行固定 central crop、MIND 配准与 MP-PCA；服务器不执行这一步。
+
+~~~bash
+LOCAL_PREPROCESSED_ROOT="/path/to/local_preprocessed"
+mkdir -p "$LOCAL_PREPROCESSED_ROOT"
+matlab -batch "addpath('$LOCAL_CODE/trad/scripts'); local_preprocess_all('$DEPLOYMENT_MANIFEST','$LOCAL_PREPROCESSED_ROOT');"
+~~~
+
+完成判据：三个 stack 都有上述两个文件；MAT 的 `Mag_crop` 第三维为 10，QC 记录 MP-PCA enabled、`center_data=true`、full stack、figures off。源 MAT 会保存历史 acquisition/preprocessing metadata 的 `TI=[50,150]`；不得改动像素或 MAT。后续 SCMR-v5 matching 与 observation timing 会明确使用 `TI=[10,100]`，但 TR/VPS 必须保持 DICOM/MAT 原值。
+
+### 3. 传输并在服务器生成 `observations.npz`
+
+输入：传输后的 `preprocessed.mat`、服务器上的同一批原始 DICOM、deployment manifest。输出：`transfer_qc.json`，以及 `<server_prepared_root>/$SUBJECT/<stack>/observations.npz`、`manifest.json`、`timing.npy`、`qc_summary.json`。因此 `observations.npz` 是由 MAT 像素、DICOM UID/几何、正确 protocol 共同生成的桥接产物，并非原始输入。
+
+先把本地 preprocessed 目录与 manifest 的服务器副本都**复制**到服务器；manifest 中的 `server_dicom_dir` 必须已经指向同一批原始 DICOM。随后在服务器运行：
+
+~~~bash
+CODE="{command['code']}"
+PY="/path/to/server/python"
+SERVER_DEPLOYMENT_MANIFEST="/path/to/server-deployment.json"
+SERVER_PREPROCESSED_ROOT="/path/to/server_preprocessed"
+SERVER_PREPARED_ROOT="/path/to/server_prepared"
+
+"$PY" "$CODE/trad/scripts/validate_transferred_preprocessed.py" \
+  --manifest "$SERVER_DEPLOYMENT_MANIFEST" \
+  --preprocessed-root "$SERVER_PREPROCESSED_ROOT" \
+  --output "$SERVER_PREPROCESSED_ROOT/$SUBJECT/transfer_qc.json"
+
+"$PY" "$CODE/trad/scripts/prepare_all_observations.py" \
+  --manifest "$SERVER_DEPLOYMENT_MANIFEST" \
+  --preprocessed-root "$SERVER_PREPROCESSED_ROOT" \
+  --prepared-root "$SERVER_PREPARED_ROOT" \
+  --protocol "{protocol['path']}"
+~~~
+
+完成判据：`PREPARED_BATCH_QC.json` 存在；每个 stack 有 10×group observations，`manifest.json` 能解析 MAT 保存的 SOP UID，`qc_summary.json` 的 TR/VPS 与 MAT 一致，且 timing contract 使用 `TI=[10,100] ms`。至此才可把 `observations.npz` 作为下游共同输入。
+
+### 4. 在服务器设置变量并做最小预检
 
 输入：服务器代码 checkout、prepared observations、ROI、两种方法的运行根。输出：仅终端检查结果，不写入数据。
 
@@ -133,7 +193,7 @@ git -C "$CODE" rev-parse HEAD
 
 完成判据：目录存在，Git commit 与底部“冻结现场文件与 SHA 附录”一致。若不一致，停止；不要用目录名猜测版本。
 
-### 2. 核对共同输入与稀疏方案
+### 5. 核对共同输入与稀疏方案
 
 输入：`$PREPARED_ROOT/$SUBJECT/{{sax,2ch,4ch}}/observations.npz`、每个 case 的 `sparse_manifest.json`。输出：文件 SHA 与 manifest 内容的比对结果。
 
@@ -147,7 +207,7 @@ find "$PROPOSED_RUN/sparse_inputs/$SUBJECT" -name sparse_manifest.json -print
 
 作用：prepared observations 是两种方法共同的原始 10-weight 信号；`sparse_manifest.json` 才是每个 case 的 retained/held-out group 的权威来源。完成判据：三个 observations SHA、case 名称和附录一致。不得把旧 `ismrm_v1` 或 generic/TRAD cache 当作输入。
 
-### 3. 在服务器生成正确的 SCMR-v5 mapping 与 fit-first 重建
+### 6. 在服务器生成正确的 SCMR-v5 mapping 与 fit-first 重建
 
 输入：三个 `preprocessed.mat`、prepared observations、已复制到新根的 sparse inputs。输出：`mapping/scmr_v5/$SUBJECT/*_mapping.mat`、`native_cache/${{SUBJECT}}_scmr_v5`、`reconstruction/fit_first/$SUBJECT/<CASE>/`。
 
@@ -167,7 +227,7 @@ bash "$CODE/paper_experiments/joint_vs_2dfit/phase2_clean/server_commands/run_{c
 
 作用：脚本先以 SCMR-v5 MATLAB matcher 生成 mapping，再构造 native cache，随后对 sparse cases 做 fit-first/NeSVoR。完成判据：每个 stack 的 `manifest.json` 同时记录 `source_observations.sha256`、`source_preprocessed.sha256`、`scmr_v5_mapping.sha256`、`native_maps_sha256`；每个 case 有 `input_manifest.json`、`commands.sh` 和 T1/T2 `volume_ms.nii.gz`。本次正确 contract 是 `TI=[10,100] ms`、`TR={protocol['tr_ms']} ms`、`VPS={protocol['vps']}`，而不是历史 `TI=[50,150]`。
 
-### 4. 在服务器运行或复核 Proposed
+### 7. 在服务器运行或复核 Proposed
 
 输入：该 case 的 sparse input、冻结 decoder/B6、正确 protocol、`config_resolved.yaml`。输出：`model.pt`、`T1_3D.nii.gz`、`T2_3D.nii.gz`、`experiment_manifest.json`、`run_provenance.json`。
 
@@ -182,7 +242,7 @@ find "$PROPOSED_RUN/reconstruction/proposed/$SUBJECT/$CASE" -maxdepth 1 \\
 
 完成判据：六类文件齐全，且附录的 case SHA 及 semantic verification 都为 PASS。Proposed 使用原始信号；不可用错误 mapping cache 代替它的输入。
 
-### 5. 在服务器运行 final-pose、AHA 与心肌/LV 定量
+### 8. 在服务器运行 final-pose、AHA 与心肌/LV 定量
 
 输入：已完成的 Proposed root、已完成的 fit-first root、同一 ROI bundle。输出：final-pose bundle、AHA（legacy 与 1px）、心肌/LV 指标、common-native all-stack/held-out/blood-pool/zero-audit 结果和 QC 图。
 
@@ -201,7 +261,7 @@ bash "$CODE/paper_experiments/joint_vs_2dfit/phase2_clean/server_commands/{comma
 
 作用：final-pose 将两种方法投到同一 native 查询面；心肌定量保留 `myocardium_core_1px` 与 `myocardium_core_legacy`，血池固定为 `inner_filled AND outer_filled`，LV 为 `outer_filled`。完成判据：输出 manifest 写明 final pose、mask、ROI 像素数、all-slice/held-out 分层以及 zero audit。数值为 0 的 fit-first voxel 不会被自动排除，必须查看 zero-audit。
 
-### 6. 最后做可复现性检查
+### 9. 最后做可复现性检查
 
 输入：本次产生的 manifest 和冻结目录。输出：SHA 比对记录。
 
@@ -279,6 +339,7 @@ Software, configurations, and formal launchers must remain subject-agnostic. `{s
 | Work | Location | Input | Output | Purpose |
 |---|---|---|---|---|
 | Inspect code, versions, and SHA | local or server code checkout | freeze evidence and original files | terminal checks | prevents mixing routes. |
+| Raw DICOM preprocessing | local MATLAB | raw 10-weight DICOM for each stack | `preprocessed.mat` and QC | crop, MIND registration, MP-PCA, and DICOM identity capture. |
 | SCMR-v5 MATLAB fitting | server with MATLAB | `preprocessed.mat` | mapping and native cache for all stacks | creates correct native T1/T2/B1. |
 | 2D-fit-first / NeSVoR | server GPU | native cache and sparse input | T1/T2 volumes | reconstructs the fit-first comparator. |
 | Proposed / MLP | server GPU | sparse input, frozen decoder/B6/protocol | checkpoint and T1/T2 volumes | reconstructs the Proposed method. |
@@ -286,7 +347,66 @@ Software, configurations, and formal launchers must remain subject-agnostic. `{s
 
 Any command that creates output must use a **new empty run root**. Do not rerun reconstruction in the completed directories recorded in the appendix. Evaluation can read completed reconstructions.
 
-### 1. Set server variables and perform the minimum preflight
+### 1. Prepare raw DICOM for a new subject (local)
+
+The real input for every new subject is **raw DICOM**, in three stack directories: `<local_dicom_root>/<SUBJECT>/sax/*.dcm`, `2ch/*.dcm`, and `4ch/*.dcm`. Every slice/group must contain exactly ten weights and no stack may be absent. **NIfTI cannot replace DICOM**: this route requires SOP/Series Instance UIDs, AcquisitionTime, patient position/orientation, pixel spacing, slice thickness, TR, and VPS. Ten `nii.gz` files cannot recover this geometry and provenance. If only NIfTI remains, recover the original DICOM before proceeding.
+
+~~~bash
+LOCAL_CODE="/path/to/Code_10w"
+SUBJECT="NEW_SUBJECT"
+LOCAL_DICOM_ROOT="/path/to/local_dicom"
+DEPLOYMENT_MANIFEST="/path/outside_code/$SUBJECT-deployment.json"
+
+for STACK in sax 2ch 4ch; do
+  N=$(find "$LOCAL_DICOM_ROOT/$SUBJECT/$STACK" -maxdepth 1 -name '*.dcm' | wc -l)
+  echo "$STACK: $N DICOM files"
+  test "$N" -gt 0 && test $((N % 10)) -eq 0
+done
+cp "$LOCAL_CODE/configs/subject_stack_manifest.example.json" "$DEPLOYMENT_MANIFEST"
+~~~
+
+Edit that JSON outside the repository: enter the new subject ID plus each stack's local `local_dicom_dir` and the **same DICOM series** on the server as `server_dicom_dir`. Do not infer DICOM from NIfTI or store DICOM in the code tree.
+
+### 2. Local MATLAB: DICOM to `preprocessed.mat`
+
+Input: raw DICOM selected in the deployment manifest. Output: `<local_preprocessed_root>/$SUBJECT/<stack>/preprocessed.mat` and `preprocess_qc.json`. This is where the fixed central crop, MIND registration, and MP-PCA run; it is local MATLAB work, not server work.
+
+~~~bash
+LOCAL_PREPROCESSED_ROOT="/path/to/local_preprocessed"
+mkdir -p "$LOCAL_PREPROCESSED_ROOT"
+matlab -batch "addpath('$LOCAL_CODE/trad/scripts'); local_preprocess_all('$DEPLOYMENT_MANIFEST','$LOCAL_PREPROCESSED_ROOT');"
+~~~
+
+Pass condition: all three stacks have both files; the MAT has 10 in the third dimension of `Mag_crop`, and QC records MP-PCA enabled, `center_data=true`, full stack, and figures off. The source MAT truthfully preserves historical acquisition/preprocessing metadata `TI=[50,150]`; do not alter its pixels or MAT. SCMR-v5 matching and observation timing explicitly use `TI=[10,100]` later, while TR/VPS must remain the DICOM/MAT values.
+
+### 3. Transfer and create `observations.npz` on the server
+
+Input: copied `preprocessed.mat`, the same raw DICOM available on the server, and the deployment manifest. Output: `transfer_qc.json` and `<server_prepared_root>/$SUBJECT/<stack>/observations.npz`, `manifest.json`, `timing.npy`, and `qc_summary.json`. Thus `observations.npz` is a bridge generated from MAT pixels, DICOM UID/geometry, and the correct protocol; it is not a raw input.
+
+Copy (never move) the local preprocessed directory and a server copy of the manifest to the server; the manifest's `server_dicom_dir` must already point to the same raw DICOM. Then run on the server:
+
+~~~bash
+CODE="{command['code']}"
+PY="/path/to/server/python"
+SERVER_DEPLOYMENT_MANIFEST="/path/to/server-deployment.json"
+SERVER_PREPROCESSED_ROOT="/path/to/server_preprocessed"
+SERVER_PREPARED_ROOT="/path/to/server_prepared"
+
+"$PY" "$CODE/trad/scripts/validate_transferred_preprocessed.py" \
+  --manifest "$SERVER_DEPLOYMENT_MANIFEST" \
+  --preprocessed-root "$SERVER_PREPROCESSED_ROOT" \
+  --output "$SERVER_PREPROCESSED_ROOT/$SUBJECT/transfer_qc.json"
+
+"$PY" "$CODE/trad/scripts/prepare_all_observations.py" \
+  --manifest "$SERVER_DEPLOYMENT_MANIFEST" \
+  --preprocessed-root "$SERVER_PREPROCESSED_ROOT" \
+  --prepared-root "$SERVER_PREPARED_ROOT" \
+  --protocol "{protocol['path']}"
+~~~
+
+Pass condition: `PREPARED_BATCH_QC.json` exists; every stack has 10×group observations; `manifest.json` resolves MAT-stored SOP UIDs; `qc_summary.json` TR/VPS agree with MAT; and the timing contract states `TI=[10,100] ms`. Only then is `observations.npz` a valid shared downstream input.
+
+### 4. Set server variables and perform the minimum preflight
 
 Input: server code checkout, prepared observations, ROI, and the two method roots. Output: terminal-only checks; no data are written.
 
@@ -304,7 +424,7 @@ git -C "$CODE" rev-parse HEAD
 
 Pass condition: the directories exist and the Git commit equals the appendix. If it does not, stop; do not infer provenance from a directory name.
 
-### 2. Verify shared inputs and the sparse selection
+### 5. Verify shared inputs and the sparse selection
 
 Input: `$PREPARED_ROOT/$SUBJECT/{{sax,2ch,4ch}}/observations.npz` and each case's `sparse_manifest.json`. Output: observation SHA256 values and the sparse-manifest list.
 
@@ -318,7 +438,7 @@ find "$PROPOSED_RUN/sparse_inputs/$SUBJECT" -name sparse_manifest.json -print
 
 Purpose: prepared observations are the common 10-weight raw signal for both methods. `sparse_manifest.json` is authoritative for retained and held-out groups. Pass condition: the three SHA256 values and case names agree with the appendix. Do not use historical `ismrm_v1` inputs or a generic/TRAD cache.
 
-### 3. Run correct SCMR-v5 mapping and fit-first reconstruction on the server
+### 6. Run correct SCMR-v5 mapping and fit-first reconstruction on the server
 
 Input: the three `preprocessed.mat` files, prepared observations, and sparse inputs copied into a new root. Output: `mapping/scmr_v5/$SUBJECT/*_mapping.mat`, `native_cache/${{SUBJECT}}_scmr_v5`, and `reconstruction/fit_first/$SUBJECT/<CASE>/`.
 
@@ -338,7 +458,7 @@ bash "$CODE/paper_experiments/joint_vs_2dfit/phase2_clean/server_commands/run_{c
 
 Purpose: the script runs the SCMR-v5 MATLAB matcher, packages the native cache, then runs fit-first/NeSVoR for sparse cases. Pass condition: each stack `manifest.json` contains `source_observations.sha256`, `source_preprocessed.sha256`, `scmr_v5_mapping.sha256`, and `native_maps_sha256`; each case has `input_manifest.json`, `commands.sh`, and T1/T2 `volume_ms.nii.gz`. The required contract is `TI=[10,100] ms`, `TR={protocol['tr_ms']} ms`, and `VPS={protocol['vps']}`, not the historical `TI=[50,150]` route.
 
-### 4. Run or verify Proposed on the server
+### 7. Run or verify Proposed on the server
 
 Input: the case sparse input, frozen decoder/B6, correct protocol, and `config_resolved.yaml`. Output: `model.pt`, `T1_3D.nii.gz`, `T2_3D.nii.gz`, `experiment_manifest.json`, and `run_provenance.json`.
 
@@ -353,7 +473,7 @@ find "$PROPOSED_RUN/reconstruction/proposed/$SUBJECT/$CASE" -maxdepth 1 \\
 
 Pass condition: all six artifact types are present and the case SHA256 values in the appendix and semantic verification are PASS. Proposed consumes raw signal; it does not take an erroneous fitting cache as its input.
 
-### 5. Run final-pose, AHA, and myocardial/LV evaluation on the server
+### 8. Run final-pose, AHA, and myocardial/LV evaluation on the server
 
 Input: completed Proposed root, completed fit-first root, and the same ROI bundle. Output: final-pose bundles, AHA (legacy and 1px), myocardial/LV metrics, common-native all-stack/held-out/blood-pool/zero-audit reports, and QC figures.
 
@@ -372,7 +492,7 @@ bash "$CODE/paper_experiments/joint_vs_2dfit/phase2_clean/server_commands/{comma
 
 Purpose: final pose evaluates both methods on common native query planes. Myocardial reporting retains `myocardium_core_1px` and `myocardium_core_legacy`; blood pool is always `inner_filled AND outer_filled`; LV is `outer_filled`. Pass condition: manifests record final pose, masks, ROI voxel count, all-slice/held-out strata, and the zero audit. Fit-first zeros are not automatically excluded; inspect the zero-audit values.
 
-### 6. Perform the reproducibility check
+### 9. Perform the reproducibility check
 
 Input: newly generated manifests and the freeze directory. Output: a SHA comparison record.
 
