@@ -87,7 +87,8 @@ SERVER_PREPARED_ROOT="/path/to/server_prepared"
 ### 4. 服务器：SCMR-v5 fitting 与 2D-fit-first
 
 ~~~
-bash "$CODE/paper_experiments/joint_vs_2dfit/phase2_clean/server_commands/run_scmr_v5_fit_first.sh" \
+PY="$PY" NESVOR="/path/to/nesvor/bin/nesvor" REPO="$WORK_CODE" \
+bash "$WORK_CODE/paper_experiments/joint_vs_2dfit/phase2_clean/server_commands/run_scmr_v5_fit_first.sh" \
   "$FIT_RUN" "$SERVER_PREPROCESSED_ROOT" "$SUBJECT" "$SERVER_PREPARED_ROOT" matlab
 ~~~
 
@@ -210,6 +211,7 @@ SPARSE_SOURCE="/path/to/proposed_or_sparse_input_run"
 mkdir -p "$FIT_RUN"
 cp -a "$SPARSE_SOURCE/sparse_inputs" "$FIT_RUN/"
 
+PY="$PY" NESVOR="/path/to/nesvor/bin/nesvor" REPO="$WORK_CODE" \
 bash "$WORK_CODE/paper_experiments/joint_vs_2dfit/phase2_clean/server_commands/run_scmr_v5_fit_first.sh" \
   "$FIT_RUN" "$SERVER_PREPROCESSED_ROOT" "$SUBJECT" "$SERVER_PREPARED_ROOT" matlab
 ~~~
