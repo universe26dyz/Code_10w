@@ -4,6 +4,8 @@
 
 服务器上的 MATLAB 将十个权重的 DICOM 转换为每个 stack 的 `preprocessed.mat` 和 `preprocess_qc.json`。这是 fitting 前的输入生成步骤；不能复用含有错误 timing 的旧 prepared 结果，除非重新由正确 protocol 生成 observations。
 
+`run_stage.sh` 是本模块唯一入口：调用 `local_preprocess_all`，随后执行 Python 预处理验证。
+
 ## 命令
 
 ```bash

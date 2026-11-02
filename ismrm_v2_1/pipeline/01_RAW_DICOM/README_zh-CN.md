@@ -4,6 +4,10 @@
 
 这是第一个模块，只负责确认三种 stack 的原始输入和部署清单；不修改 DICOM。必须先于 MATLAB 预处理执行。
 
+## 文件清单
+
+`run_stage.sh`：生成单 subject manifest，并检查三种 stack 的 DICOM 数量。
+
 ## 输入与输出
 
 - 输入：`sax/`、`2ch/`、`4ch/` 三个服务器 DICOM 目录；每个 group 必须恰好十个 weight。
@@ -29,4 +33,3 @@ done
 ## 文件说明与故障排除
 
 `extract_subject_deployment_manifest.py` 只抽取一个 subject；发现 0 个或多个匹配项时应停止。数量不是 10 的整数倍、路径不存在或 stack 缺失时不要进入 02。
-
