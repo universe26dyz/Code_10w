@@ -22,6 +22,8 @@ def _zh(subject: str, manifest: dict[str, Any]) -> str:
 00_live_route_freeze/                 原始分散成功路线的冻结证据
 01_code_snapshot/source.tar           可恢复的代码快照
 01_code_snapshot/source.bundle        Git 历史 bundle
+01_execution_code/code/               可直接复制使用的、未压缩项目代码树
+01_execution_code/00_pipeline_code_map/ 按运行步骤索引源码
 02_runtime_configuration/             独立、已哈希的通用配置与示例 provenance
 03_subject_examples/{subject}/01_inputs/
   raw_dicom/ deployment_manifest.json preprocessed/ prepared/ roi/ sparse_inputs/
@@ -36,13 +38,13 @@ def _zh(subject: str, manifest: dict[str, Any]) -> str:
 
 ### 0. 先取出代码，并建立本次运行的通用配置副本
 
-`01_code_snapshot/source.tar` 是本次成功路线的只读代码证据。先解压到新的工作目录；之后的改动不能发生在归档目录内。`02_runtime_configuration/00_common/` 保存不带 subject 名称的正确 protocol 和 Proposed 配置；其逐文件 SHA 位于同目录的 `runtime_configuration_manifest.jsonl`。
+`01_code_snapshot/` 是本次成功路线的只读证据；实际操作使用 `01_execution_code/code/` 这一未压缩代码树。先将它复制到新的工作目录；之后的改动不能发生在归档目录内。`02_runtime_configuration/00_common/` 保存不带 subject 名称的正确 protocol 和 Proposed 配置；其逐文件 SHA 位于同目录的 `runtime_configuration_manifest.jsonl`。
 
 ~~~bash
 ARCHIVE="/path/to/01_reproducible_pipeline"
 WORK_CODE="/path/to/new_work/Code_10w"
 mkdir -p "$WORK_CODE"
-tar -xf "$ARCHIVE/01_code_snapshot/source.tar" -C "$WORK_CODE"
+cp -a "$ARCHIVE/01_execution_code/code/." "$WORK_CODE/"
 cp "$ARCHIVE/02_runtime_configuration/00_common/protocol_scmr_v5_10_100.yaml" \
    "$WORK_CODE/mlp/configs/protocol_scmr_v5_10_100.yaml"
 PROTOCOL="$WORK_CODE/mlp/configs/protocol_scmr_v5_10_100.yaml"
@@ -130,6 +132,8 @@ This is a physically copied, SHA256-recorded reproducibility archive. It contain
 00_live_route_freeze/                 frozen evidence for the successful live route
 01_code_snapshot/source.tar           recoverable code snapshot
 01_code_snapshot/source.bundle        Git-history bundle
+01_execution_code/code/               visible, uncompressed project source tree
+01_execution_code/00_pipeline_code_map/ source index organized by pipeline stage
 02_runtime_configuration/             separately hashed generic configuration and example provenance
 03_subject_examples/{subject}/01_inputs/
   raw_dicom/ deployment_manifest.json preprocessed/ prepared/ roi/ sparse_inputs/
@@ -144,13 +148,13 @@ The archived code commit is {manifest["code_snapshot"]["commit"]}; {manifest["fi
 
 ### 0. Extract the frozen code and create a generic protocol filename
 
-`01_code_snapshot/source.tar` is the read-only evidence snapshot. Extract it to a new work directory; never edit code within this archive. `02_runtime_configuration/00_common/` holds the subject-agnostic protocol and Proposed configuration; its per-file SHA256 records are in `runtime_configuration_manifest.jsonl`.
+`01_code_snapshot/` is the read-only evidence snapshot. Use the visible source tree in `01_execution_code/code/` for operations, but first copy it to a new work directory; never edit code within this archive. `02_runtime_configuration/00_common/` holds the subject-agnostic protocol and Proposed configuration; its per-file SHA256 records are in `runtime_configuration_manifest.jsonl`.
 
 ~~~bash
 ARCHIVE="/path/to/01_reproducible_pipeline"
 WORK_CODE="/path/to/new_work/Code_10w"
 mkdir -p "$WORK_CODE"
-tar -xf "$ARCHIVE/01_code_snapshot/source.tar" -C "$WORK_CODE"
+cp -a "$ARCHIVE/01_execution_code/code/." "$WORK_CODE/"
 cp "$ARCHIVE/02_runtime_configuration/00_common/protocol_scmr_v5_10_100.yaml" \
    "$WORK_CODE/mlp/configs/protocol_scmr_v5_10_100.yaml"
 PROTOCOL="$WORK_CODE/mlp/configs/protocol_scmr_v5_10_100.yaml"
@@ -256,7 +260,7 @@ def build_archive_readmes(archive_root: str | Path, *, replace_existing: bool = 
     subjects = manifest.get("subject_examples")
     if not isinstance(subjects, list) or len(subjects) != 1 or not isinstance(subjects[0], str):
         raise ValueError("archive README requires exactly one subject example")
-    for required in ("00_live_route_freeze", "01_code_snapshot", "02_runtime_configuration", "03_subject_examples", "99_integrity"):
+    for required in ("00_live_route_freeze", "01_code_snapshot", "01_execution_code", "02_runtime_configuration", "03_subject_examples", "99_integrity"):
         if not (archive / required).is_dir():
             raise FileNotFoundError(f"archive layout is incomplete: {required}")
     zh, en = archive / "README_zh-CN.md", archive / "README_en.md"
