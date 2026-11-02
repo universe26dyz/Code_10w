@@ -1,0 +1,4 @@
+base_config: B6.yaml
+spatial_regularization:
+  amplitude_guidance: {enabled: true, alpha: 1.0, t1_weight: 0.0001, t2_weight: 0.0001}
+experiment: {id: AMP_EDGE, output_root: Code_10w_runs/trad_v3/AMP_EDGE}

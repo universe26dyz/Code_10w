@@ -1,0 +1,15 @@
+SCMR vendored exact legacy colormap notice
+
+lipari.txt and navia.txt in this directory are byte-for-byte copies of the
+files historically used by the local 2D-fit-first SCMR visualization:
+
+  /home/universe/SVR/multimap_postprogramming/MultiMapCode/method_repositories/2D_fit_first/python/visualization/assets/colormaps/
+
+The local legacy asset README identifies them as original RGB tables distributed
+by the cmcrameri Matplotlib wrapper, based on Fabio Crameri's Scientific Colour
+Maps 8.0, and states that the wrapper repository is MIT licensed. This directory
+retains that notice and the exact source-file hashes in PROVENANCE.json.
+
+No Scientific Colour Maps or cmcrameri release has been downloaded, substituted,
+or inferred during vendoring. Refer to the legacy source's LICENSES.md and
+python/visualization/assets/colormaps/README.md for the audited local notices.

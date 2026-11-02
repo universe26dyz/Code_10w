@@ -1,0 +1,14 @@
+{
+  "schema_version": "deployment-v1.1",
+  "subjects": [
+    {
+      "subject_id": "SUBJECT_ID",
+      "stacks": [
+        {"stack": "sax", "local_dicom_dir": "/server/path/SUBJECT_ID/sax", "server_dicom_dir": "/server/path/SUBJECT_ID/sax"},
+        {"stack": "2ch", "local_dicom_dir": "/server/path/SUBJECT_ID/2ch", "server_dicom_dir": "/server/path/SUBJECT_ID/2ch"},
+        {"stack": "4ch", "local_dicom_dir": "/server/path/SUBJECT_ID/4ch", "server_dicom_dir": "/server/path/SUBJECT_ID/4ch"}
+      ]
+    }
+  ]
+}
+

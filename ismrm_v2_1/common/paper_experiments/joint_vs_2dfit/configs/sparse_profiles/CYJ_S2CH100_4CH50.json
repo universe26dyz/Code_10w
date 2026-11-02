@@ -1,0 +1,9 @@
+{
+  "profile_id": "S2CH100_4CH50",
+  "schema": "phase4r_sparse_profile/v2",
+  "stacks": {
+    "2ch": {"mode": "all"},
+    "4ch": {"mode": "stride", "stride": 2},
+    "sax": {"mode": "all"}
+  }
+}

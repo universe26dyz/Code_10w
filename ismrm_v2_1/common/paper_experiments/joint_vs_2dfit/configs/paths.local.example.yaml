@@ -1,0 +1,12 @@
+code_root: /home/universe/SVR/multimap_postprogramming/Code_10w
+data_root: /home/universe/SVR/data/Code_10w_v1
+preprocessed_root: /home/universe/SVR/data/Code_10w_v1/Code_10w_preprocessed
+prepared_root: /home/universe/SVR/data/Code_10w_v1/Code_10w_prepared
+runs_root: /home/universe/SVR/data/Code_10w_v1/Code_10w_runs
+runtime_root: /home/universe/SVR/data/Code_10w_v1/Code_10w_runtime
+dicom_root: /home/universe/SVR/multimap_postprogramming/subject_dicom
+conda_env: knesvr_torch
+native_reference_root: null
+myocardium_mask_root: null
+decoder_checkpoint: null
+mrxcat_root: null

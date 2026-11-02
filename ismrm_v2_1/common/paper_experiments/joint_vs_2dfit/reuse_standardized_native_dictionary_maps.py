@@ -1,0 +1,166 @@
+"""Fail-closed, immutable native dictionary-map reuse after slice standardization."""
+from __future__ import annotations
+
+import argparse
+import json
+import shutil
+import tempfile
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+
+from .contracts import sha256, write_immutable_json
+from .fit_first import NATIVE_FIT_METHOD, _dictionary_contract
+from .sparse import STACKS, _git_sha
+from .standardize_subject_slices import MAPPING_FIELD, TARGET_COUNTS, validate_standardization_manifest, validated_standardized_mapping
+
+
+SCHEMA = "phase4r_standardized_native_dictionary_reuse/v1"
+
+
+def validate_standardized_native_dictionary_reuse(manifest: str | Path, *, subject: str | None = None) -> dict[str, Any]:
+    """Revalidate standardized dictionary reuse from every referenced artifact."""
+    path = Path(manifest)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if payload.get("schema") != SCHEMA or payload.get("status") != "REUSE_VERIFIED" or not isinstance(payload.get("subject"), str):
+        raise ValueError("invalid standardized native dictionary reuse schema, subject, or status")
+    if subject is not None and payload["subject"] != subject:
+        raise ValueError("standardized native dictionary reuse subject mismatch")
+    standard_record = payload.get("standardization_manifest", {})
+    standard_path = Path(str(standard_record.get("path", "")))
+    if not standard_path.is_file() or sha256(standard_path) != standard_record.get("sha256"):
+        raise ValueError("standardization manifest SHA256 mismatch")
+    standardization = validate_standardization_manifest(standard_path, subject=payload["subject"])
+    root = path.parent
+    for stack, target in TARGET_COUNTS.items():
+        record = payload.get("stacks", {}).get(stack)
+        if not isinstance(record, dict) or record.get("status") != "REUSE_VERIFIED" or int(record.get("target_count", -1)) != target:
+            raise ValueError(f"{stack}: standardized native reuse record is incomplete")
+        mapping = validated_standardized_mapping(record.get("standardized_to_original_group_idx"), target_count=target, retained_original_group_ids=[int(item["original_group_idx"]) for item in record.get("standardized_to_original_group_idx", [])] if isinstance(record.get("standardized_to_original_group_idx"), list) else [])
+        if mapping != standardization["stacks"][stack][MAPPING_FIELD]:
+            raise ValueError(f"{stack}: standardized native reuse mapping disagrees with standardization")
+        source = standardization["stacks"][stack]
+        for label, key in (("source native maps", "source_native_maps"), ("source geometry", "source_geometry"), ("source native manifest", "source_native_manifest")):
+            evidence = record.get(key, {}); artifact = Path(str(evidence.get("path", "")))
+            if not artifact.is_file() or sha256(artifact) != evidence.get("sha256"):
+                raise ValueError(f"{stack}: {label} SHA256 mismatch")
+        folder = root / stack
+        maps_path, geometry_path, output_manifest = folder / "native_maps.npz", folder / "geometry.npz", folder / "manifest.json"
+        for artifact, key, label in ((maps_path, "output_native_maps_sha256", "output native maps"), (geometry_path, "output_geometry_sha256", "output geometry"), (output_manifest, "output_manifest_sha256", "output manifest")):
+            if not artifact.is_file() or sha256(artifact) != record.get(key):
+                raise ValueError(f"{stack}: {label} SHA256 mismatch")
+        output = json.loads(output_manifest.read_text(encoding="utf-8"))
+        if output.get("method") != NATIVE_FIT_METHOD or output.get("dictionary_contract") != _dictionary_contract() or output.get("standardization_mapping") != mapping:
+            raise ValueError(f"{stack}: output native manifest does not satisfy the frozen dictionary reuse contract")
+        if output.get("source_observations", {}).get("sha256") != source["output_observation"]["sha256"]:
+            raise ValueError(f"{stack}: output native manifest source observation mismatch")
+        with np.load(maps_path, allow_pickle=False) as maps, np.load(geometry_path, allow_pickle=False) as geometry:
+            if np.asarray(maps["group_idx"]).tolist() != list(range(target)) or any(np.asarray(value).shape[0] != target for value in (maps["t1_ms"], maps["t2_ms"], maps["b1"], geometry["affine_lps_rc"], geometry["pixel_spacing_rc_mm"], geometry["slice_thickness_mm"])):
+                raise ValueError(f"{stack}: output native groups are not contiguous or artifact dimensions disagree")
+    return payload
+
+
+def _group_rows(data: np.lib.npyio.NpzFile, group: int, path: Path) -> np.ndarray:
+    rows = np.flatnonzero(np.asarray(data["group_idx"], int) == group)
+    if len(rows) != 10 or not np.array_equal(np.sort(np.asarray(data["weight_idx"])[rows]), np.arange(10)):
+        raise ValueError(f"{path}: original group {group} is not a complete ten-weight group")
+    return rows
+
+
+def _fingerprint(data: np.lib.npyio.NpzFile, rows: np.ndarray) -> str:
+    import hashlib
+    digest = hashlib.sha256()
+    for key in sorted(data.files):
+        if key == "group_idx":
+            continue
+        value = np.asarray(data[key])
+        digest.update(key.encode("utf-8")); digest.update(np.ascontiguousarray(value[rows] if value.shape[:1] == data["group_idx"].shape else value).tobytes())
+    return digest.hexdigest()
+
+
+def _native_inputs(root: Path, stack: str) -> tuple[Path, Path, Path, dict[str, Any]]:
+    folder = root / stack
+    maps, geometry, manifest = folder / "native_maps.npz", folder / "geometry.npz", folder / "manifest.json"
+    if not all(path.is_file() for path in (maps, geometry, manifest)):
+        raise FileNotFoundError(f"{stack}: native maps, geometry, and manifest are all required")
+    payload = json.loads(manifest.read_text(encoding="utf-8"))
+    if payload.get("method") != NATIVE_FIT_METHOD or payload.get("dictionary_contract") != _dictionary_contract():
+        raise ValueError(f"{stack}: native manifest does not satisfy the frozen dictionary contract")
+    if payload.get("native_maps_sha256") != sha256(maps) or payload.get("geometry_sha256") != sha256(geometry):
+        raise ValueError(f"{stack}: native artifact SHA256 mismatch")
+    return maps, geometry, manifest, payload
+
+
+def audit_standardized_native_dictionary_maps(standardization_manifest: str | Path, full_native_maps_root: str | Path, output: str | Path) -> Path:
+    source_manifest, native_root, target = Path(standardization_manifest), Path(full_native_maps_root), Path(output)
+    if target.exists():
+        raise FileExistsError(f"refusing overwrite: {target}")
+    if not source_manifest.is_file():
+        raise FileNotFoundError(source_manifest)
+    standardization = json.loads(source_manifest.read_text(encoding="utf-8"))
+    if standardization.get("schema") != "phase4r_common_slice_standardization/v1" or not isinstance(standardization.get("subject"), str):
+        raise ValueError("standardization manifest schema/subject is invalid")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    staging = Path(tempfile.mkdtemp(prefix=f".{target.name}.staging-", dir=target.parent))
+    try:
+        records: dict[str, Any] = {}
+        for stack in STACKS:
+            record = standardization.get("stacks", {}).get(stack)
+            if not isinstance(record, dict):
+                raise ValueError(f"{stack}: standardization record is missing")
+            original_path = Path(str(record.get("source_observation", {}).get("path", "")))
+            standardized_path = Path(str(record.get("output_observation", {}).get("path", "")))
+            if not original_path.is_file() or not standardized_path.is_file():
+                raise FileNotFoundError(f"{stack}: standardization observation evidence is unavailable")
+            if sha256(original_path) != record["source_observation"].get("sha256") or sha256(standardized_path) != record["output_observation"].get("sha256"):
+                raise ValueError(f"{stack}: standardization observation SHA256 mismatch")
+            mapping = validated_standardized_mapping(record.get(MAPPING_FIELD), target_count=int(record.get("output_count", -1)), retained_original_group_ids=[int(value) for value in record.get("retained_original_group_ids", [])])
+            declared_fingerprints = record.get("source_group_content_sha256")
+            if not isinstance(declared_fingerprints, dict):
+                raise ValueError(f"{stack}: standardization manifest lacks per-group content fingerprints")
+            maps_path, geometry_path, native_manifest_path, native_manifest = _native_inputs(native_root, stack)
+            source_observation = native_manifest.get("source_observations", {})
+            if source_observation.get("sha256") != sha256(original_path):
+                raise ValueError(f"{stack}: native map source observation does not match standardization source")
+            with np.load(original_path, allow_pickle=False) as original, np.load(standardized_path, allow_pickle=False) as standardized, np.load(maps_path, allow_pickle=False) as maps, np.load(geometry_path, allow_pickle=False) as geometry:
+                native_groups = [int(value) for value in maps["group_idx"]]
+                if len(native_groups) != len(set(native_groups)):
+                    raise ValueError(f"{stack}: duplicate native group identity")
+                if any(np.asarray(geometry[key]).shape[0] != len(native_groups) for key in ("affine_lps_rc", "pixel_spacing_rc_mm", "slice_thickness_mm")):
+                    raise ValueError(f"{stack}: native geometry length mismatch")
+                positions: list[int] = []; checks: list[dict[str, Any]] = []
+                for mapping_record in mapping:
+                    derived, original_group = mapping_record["derived_group_idx"], mapping_record["original_group_idx"]
+                    if native_groups.count(original_group) != 1:
+                        raise ValueError(f"{stack}: missing native group {original_group}")
+                    original_rows, derived_rows = _group_rows(original, original_group, original_path), _group_rows(standardized, derived, standardized_path)
+                    content_match = _fingerprint(original, original_rows) == _fingerprint(standardized, derived_rows)
+                    if declared_fingerprints.get(str(original_group)) != _fingerprint(original, original_rows):
+                        raise ValueError(f"{stack}: declared content fingerprint mismatch for original group {original_group}")
+                    position = native_groups.index(original_group)
+                    geometry_match = all(np.array_equal(np.asarray(original[name])[original_rows[0]], np.asarray(standardized[name])[derived_rows[0]]) for name in ("affine_lps_rc", "pixel_spacing_rc_mm", "slice_thickness_mm")) and all(np.array_equal(np.asarray(geometry[name])[position], np.asarray(original[name])[original_rows[0]]) for name in ("affine_lps_rc", "pixel_spacing_rc_mm", "slice_thickness_mm"))
+                    if not content_match or not geometry_match:
+                        raise ValueError(f"{stack}: content or geometry mismatch for original group {original_group}")
+                    positions.append(position); checks.append({"standardized_group_idx": derived, "original_group_idx": original_group, "content_match": True, "geometry_match": True})
+                folder = staging / stack; folder.mkdir()
+                np.savez_compressed(folder / "native_maps.npz", t1_ms=np.asarray(maps["t1_ms"])[positions], t2_ms=np.asarray(maps["t2_ms"])[positions], b1=np.asarray(maps["b1"])[positions], group_idx=np.arange(len(positions), dtype=np.int64))
+                np.savez_compressed(folder / "geometry.npz", affine_lps_rc=np.asarray(geometry["affine_lps_rc"])[positions], pixel_spacing_rc_mm=np.asarray(geometry["pixel_spacing_rc_mm"])[positions], slice_thickness_mm=np.asarray(geometry["slice_thickness_mm"])[positions])
+                write_immutable_json(folder / "manifest.json", {"method": NATIVE_FIT_METHOD, "dictionary_contract": _dictionary_contract(), "source_observations": {"path": str(standardized_path.resolve()), "sha256": sha256(standardized_path)}, "group_ids": list(range(len(mapping))), "native_maps_sha256": sha256(folder / "native_maps.npz"), "geometry_sha256": sha256(folder / "geometry.npz"), "standardization_mapping": mapping, "source_native_manifest": {"path": str(native_manifest_path.resolve()), "sha256": sha256(native_manifest_path)}, "code_git_sha": _git_sha()})
+            records[stack] = {"status": "REUSE_VERIFIED", "source_native_maps": {"path": str(maps_path.resolve()), "sha256": sha256(maps_path)}, "source_geometry": {"path": str(geometry_path.resolve()), "sha256": sha256(geometry_path)}, "source_native_manifest": {"path": str(native_manifest_path.resolve()), "sha256": sha256(native_manifest_path)}, "source_count": len(native_groups), "target_count": len(mapping), "standardized_to_original_group_idx": mapping, "per_group_checks": checks, "output_native_maps_sha256": sha256(folder / "native_maps.npz"), "output_geometry_sha256": sha256(folder / "geometry.npz"), "output_manifest_sha256": sha256(folder / "manifest.json")}
+        write_immutable_json(staging / "reuse_manifest.json", {"schema": SCHEMA, "subject": standardization["subject"], "status": "REUSE_VERIFIED", "standardization_manifest": {"path": str(source_manifest.resolve()), "sha256": sha256(source_manifest)}, "full_native_maps_root": str(native_root.resolve()), "stacks": records, "code_sha": _git_sha(), "immutable_output": True})
+        staging.rename(target)
+    except BaseException:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
+    return target
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--standardization-manifest", required=True); parser.add_argument("--full-native-maps-root", required=True); parser.add_argument("--output", required=True)
+    args = parser.parse_args(); print(audit_standardized_native_dictionary_maps(args.standardization_manifest, args.full_native_maps_root, args.output))
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,16 @@
+# Corrected SCMR-v5 protocol reproduced from MultiMapCode 2D_fit_first.
+protocol_version: hhz_scmr_v5
+scientific_authority: MultiMapCode_2D_fit_first_v5
+num_images: 10
+flip_angle_degrees: [45, 45, 45]
+inversion_times_ms: [10, 100]
+t2prep_ms: [35, 45, 55]
+ramp_up_pulses: 10
+tr_ms: 2.61
+vps: 87
+dicom_fields:
+  tr_ms: RepetitionTime
+  vps: EchoTrainLength
+timing_formula: delta_AcquisitionTime-TR*(EchoTrainLength+10)-preparation_delay
+matching: normalized_absolute_10D_inner_product
+interpolation_refinement: false

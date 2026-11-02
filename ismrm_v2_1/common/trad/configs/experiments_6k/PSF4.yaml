@@ -1,0 +1,4 @@
+base_config: B6.yaml
+training: {psf_samples: 4}
+psf: {training: {enabled: true, type: gaussian, n_samples: 4, sampling_mode: random}}
+experiment: {id: PSF4, output_root: Code_10w_runs/trad_v3/PSF4}

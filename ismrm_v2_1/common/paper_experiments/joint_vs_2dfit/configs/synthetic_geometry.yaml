@@ -1,0 +1,11 @@
+selection_rule: modal group count/shape/spacing/thickness/orientation; lexicographic subject tie-break
+source_subjects: [CYJ, DYZ, HHZ, HJL]
+stacks: [sax, 2ch, 4ch]
+modal_sources:
+  sax: {subject: DYZ, group_count: 12, image_shape_rows_cols: [129, 145]}
+  2ch: {subject: DYZ, group_count: 16, image_shape_rows_cols: [145, 129]}
+  4ch: {subject: DYZ, group_count: 10, image_shape_rows_cols: [129, 145]}
+inplane_samples: 2
+thickness_samples: 3
+integration: signal-domain midpoint quadrature; linear interpolation of signal field; no parameter-map averaging
+translation_policy: recentered_on_MRXCAT_bbox

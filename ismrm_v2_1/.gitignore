@@ -1,0 +1,26 @@
+# Patient data and generated outputs are never committed.
+subjects/*/raw_dicom/
+subjects/*/preprocessed/
+subjects/*/prepared/
+subjects/*/roi/
+runs/
+runtime/model_assets/*.pth
+runtime/model_assets/*.pt
+runtime/environment/*_pip_freeze.txt
+runtime/environment/matlab_version.txt
+*.mat
+*.npz
+*.nii
+*.nii.gz
+*.dcm
+*.log
+__pycache__/
+.pytest_cache/
+
+# Keep metadata and manuals visible to Git.
+!subjects/*/manifest.json
+!subjects/*/sha256.jsonl
+!runtime/source_records/*.json
+!runtime/source_records/*.jsonl
+!runtime/source_records/*.txt
+

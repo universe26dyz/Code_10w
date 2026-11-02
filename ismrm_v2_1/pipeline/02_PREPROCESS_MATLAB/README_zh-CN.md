@@ -1,0 +1,21 @@
+# 02 MATLAB 预处理
+
+## 作用
+
+服务器上的 MATLAB 将十个权重的 DICOM 转换为每个 stack 的 `preprocessed.mat` 和 `preprocess_qc.json`。这是 fitting 前的输入生成步骤；不能复用含有错误 timing 的旧 prepared 结果，除非重新由正确 protocol 生成 observations。
+
+## 命令
+
+```bash
+RUN_ROOT=/data/.../runs/$SUBJECT
+MATLAB=matlab
+PYTHON=/path/to/python
+bash "$PROJECT_ROOT/common/paper_experiments/joint_vs_2dfit/phase2_clean/server_commands/server_preprocess_and_prepare.sh" \
+  "$RUN_ROOT" "$SUBJECT" "$PROJECT_ROOT/subjects/$SUBJECT/manifest.json" \
+  "$PROJECT_ROOT/configs/protocol_scmr_v5_10_100.yaml" "$MATLAB" "$PYTHON"
+```
+
+## 检查
+
+输出在 `$RUN_ROOT/preprocessed/$SUBJECT/{sax,2ch,4ch}`。检查 `Mag_crop` 第三维为 10、MP-PCA enabled、`center_data=true`。脚本拒绝覆盖已有目录；已有半成品时先确认后清理该 subject 的新 run 根。
+

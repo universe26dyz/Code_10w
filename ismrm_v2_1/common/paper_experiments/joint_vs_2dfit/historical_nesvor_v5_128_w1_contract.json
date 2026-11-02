@@ -1,0 +1,52 @@
+{
+  "baseline": "nesvor_v5_128_w1",
+  "authoritative_result_json": "/data/dengyz/dataset/scmr_data/HJL_mapping_v5/nesvor_v5_128_w1/T2/result.json",
+  "runtime": {
+    "executable": "/home/dengyz/miniconda3/envs/nesvor/bin/nesvor",
+    "python": "/home/dengyz/miniconda3/envs/nesvor/bin/python",
+    "version": "0.6.0rc1",
+    "source_root": "/data/dengyz/code/NeSVoR-master/nesvor"
+  },
+  "historical_explicit_flags": {
+    "n_inference_samples": 128,
+    "registration": "stack",
+    "scanner_space": true,
+    "metric": "none",
+    "pixel_variance_weight": 1.0,
+    "weight_pixel_var_smooth": 0.0,
+    "no_slice_scale": true,
+    "single_precision": true,
+    "batch_size": 2000,
+    "n_iter": 10000,
+    "output_resolution_mm": 1.0,
+    "output_psf_factor": 1.0,
+    "seed": 20260823
+  },
+  "historical_resolved_defaults": {
+    "inference_batch_size": 16000,
+    "n_samples": 256,
+    "coarsest_resolution": 16.0,
+    "finest_resolution": 0.5,
+    "level_scale": 1.3819,
+    "n_features_per_level": 2,
+    "depth": 1,
+    "width": 64,
+    "n_features_z": 15,
+    "n_features_slice": 16,
+    "weight_bias": 100.0,
+    "image_regularization": "edge",
+    "delta": 0.2,
+    "learning_rate": 0.005,
+    "gamma": 0.33,
+    "milestones": [0.5, 0.75, 0.9],
+    "no_pixel_variance": false,
+    "no_slice_variance": false,
+    "no_transformation_optimization": false
+  },
+  "pixel_variance_semantics": {
+    "pixel_variance_weight": "used by nesvor/inr/models.py",
+    "weight_pixel_var_smooth": "used by nesvor/inr/train.py"
+  },
+  "independent_t1_t2_policy": "separate stack registration/transformation optimization; no pose copying",
+  "normalization": {"t1_input_divisor_ms": 2500, "t2_input_divisor_ms": 200, "output_denormalization": "multiply before evaluation"}
+}

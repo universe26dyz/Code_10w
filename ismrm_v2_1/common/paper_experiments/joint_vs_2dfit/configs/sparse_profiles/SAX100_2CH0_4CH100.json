@@ -1,0 +1,9 @@
+{
+  "profile_id": "SAX100_2CH0_4CH100",
+  "schema": "phase4r_sparse_profile/v2",
+  "stacks": {
+    "2ch": {"mode": "none"},
+    "4ch": {"mode": "all"},
+    "sax": {"mode": "all"}
+  }
+}

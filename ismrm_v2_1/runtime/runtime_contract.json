@@ -1,0 +1,9 @@
+{
+  "schema_version": "runtime-contract-v1",
+  "protocol": {"name": "SCMR-v5", "tr_ms": 2.61, "vps": 87, "ti_ms": [10.0, 100.0], "t2prep_ms": [35.0, 45.0, 55.0], "n_ramp_up": 10},
+  "decoder_sha256": "338f2c0b8db90851f733ed31caa2c99914605fed3f7215ec2f69f19eba59583b",
+  "b6_model_sha256": "15981fbe93d2c70e14755ea756a02856c9383481e7d92d239619268a628a29b5",
+  "protocol_sha256": "3865b6bde1154750d4ed687456823fafad7b0cad5a61f763decb27dd1a4ed1c7",
+  "forbidden_decoder_ti_ms": [50.0, 150.0]
+}
+

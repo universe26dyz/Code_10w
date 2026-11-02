@@ -1,0 +1,16 @@
+{
+  "decoder": {
+    "filename": "decoder_scmr_v5_10_100.pth",
+    "sha256": "338f2c0b8db90851f733ed31caa2c99914605fed3f7215ec2f69f19eba59583b",
+    "ti_ms": [10.0, 100.0]
+  },
+  "b6_model": {
+    "filename": "b6_model.pt",
+    "sha256": "15981fbe93d2c70e14755ea756a02856c9383481e7d92d239619268a628a29b5"
+  },
+  "protocol": {
+    "filename": "protocol_scmr_v5_10_100.yaml",
+    "sha256": "3865b6bde1154750d4ed687456823fafad7b0cad5a61f763decb27dd1a4ed1c7"
+  }
+}
+
