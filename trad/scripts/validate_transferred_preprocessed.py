@@ -11,8 +11,13 @@ CODE_ROOT = Path(__file__).resolve().parents[2]
 if str(CODE_ROOT) not in sys.path:
     sys.path.insert(0, str(CODE_ROOT))
 
+# This file is commonly launched directly as
+# ``python trad/scripts/validate_transferred_preprocessed.py``.  Importing
+# through the repository package keeps that mode independent of the caller's
+# current working directory and avoids relying on a top-level ``modules`` or
+# ``scripts`` path entry.
 from scripts.deployment_manifest import load_deployment_manifest
-from modules.module_02_data_bridge.mat_v73 import load_preprocessed_v73
+from trad.modules.module_02_data_bridge.mat_v73 import load_preprocessed_v73
 
 
 def _mat_path(root: Path, subject_id: str, stack: str) -> Path:
