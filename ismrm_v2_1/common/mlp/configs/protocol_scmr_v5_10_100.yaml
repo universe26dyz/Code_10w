@@ -1,5 +1,5 @@
-# Subject-agnostic SCMR-v5 protocol reproduced from MultiMapCode 2D_fit_first.
-protocol_version: scmr_v5_10_100
+# Corrected SCMR-v5 protocol reproduced from MultiMapCode 2D_fit_first.
+protocol_version: hhz_scmr_v5
 scientific_authority: MultiMapCode_2D_fit_first_v5
 num_images: 10
 flip_angle_degrees: [45, 45, 45]

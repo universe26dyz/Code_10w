@@ -52,7 +52,7 @@ def build_protocol_from_dataset(dataset: QuantPointDataset, protocol_yaml: str |
     tr_ms, vps = dataset.validated_tr_vps()
     dicom_fields = _require(protocol, "dicom_fields")
     if not isinstance(dicom_fields, dict) or dicom_fields.get("tr_ms") != "RepetitionTime" or dicom_fields.get("vps") != "EchoTrainLength":
-        raise ValueError("protocol_hhz_v1.yaml must declare DICOM RepetitionTime and EchoTrainLength provenance.")
+        raise ValueError("protocol_scmr_v5_10_100.yaml must declare DICOM RepetitionTime and EchoTrainLength provenance.")
     result = TradProtocol(
         tr_ms=tr_ms,
         vps=vps,

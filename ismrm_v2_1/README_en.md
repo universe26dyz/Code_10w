@@ -7,4 +7,3 @@ Run all new experiments from this root, with explicit `SUBJECT`, run roots and m
 The immutable contract is TR 2.61 ms, VPS 87, TI `[10,100]`, T2-preparation `[35,45,55]`, FA `[45,45,45]`, ramp-up 10, ten weights per group. Proposed accepts only decoder SHA `338f2c...`; the historical `[50,150]` decoder is invalid.
 
 Start with the commands in `pipeline/01_RAW_DICOM/README_en.md`, then follow modules 02–09 in order. Every module documents inputs, outputs, execution host, SHA checks, pass markers and recovery from partial outputs.
-

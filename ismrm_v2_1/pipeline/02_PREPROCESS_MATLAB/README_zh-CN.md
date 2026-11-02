@@ -10,7 +10,7 @@
 RUN_ROOT=/data/.../runs/$SUBJECT
 MATLAB=matlab
 PYTHON=/path/to/python
-bash "$PROJECT_ROOT/common/paper_experiments/joint_vs_2dfit/phase2_clean/server_commands/server_preprocess_and_prepare.sh" \
+bash "$PROJECT_ROOT/pipeline/02_PREPROCESS_MATLAB/run_stage.sh" \
   "$RUN_ROOT" "$SUBJECT" "$PROJECT_ROOT/subjects/$SUBJECT/manifest.json" \
   "$PROJECT_ROOT/configs/protocol_scmr_v5_10_100.yaml" "$MATLAB" "$PYTHON"
 ```
@@ -18,4 +18,3 @@ bash "$PROJECT_ROOT/common/paper_experiments/joint_vs_2dfit/phase2_clean/server_
 ## 检查
 
 输出在 `$RUN_ROOT/preprocessed/$SUBJECT/{sax,2ch,4ch}`。检查 `Mag_crop` 第三维为 10、MP-PCA enabled、`center_data=true`。脚本拒绝覆盖已有目录；已有半成品时先确认后清理该 subject 的新 run 根。
-

@@ -22,7 +22,7 @@ def resolve_subject_observations(prepared_root: str | Path, subject_id: str) -> 
 def reconstruct_subject(prepared_root: str | Path, subject_id: str, config: str | Path, output: str | Path) -> dict[str, object]:
     observations = resolve_subject_observations(prepared_root, subject_id)
     method_root = Path(__file__).resolve().parents[1]
-    return run_reconstruction(config, method_root / "configs" / "protocol_hhz_v1.yaml", observations, output, subject_id=subject_id)
+    return run_reconstruction(config, method_root / "configs" / "protocol_scmr_v5_10_100.yaml", observations, output, subject_id=subject_id)
 
 
 def main() -> None:

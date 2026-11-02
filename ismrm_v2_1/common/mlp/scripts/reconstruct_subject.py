@@ -16,7 +16,7 @@ def reconstruct_subject(prepared_root: str | Path, subject_id: str, config: str 
     if missing:
         raise FileNotFoundError("Required exact prepared stack observations are missing: " + "; ".join(missing))
     method_root = Path(__file__).resolve().parents[1]
-    protocol_path = method_root / "configs" / "protocol_hhz_v1.yaml" if protocol is None else Path(protocol)
+    protocol_path = method_root / "configs" / "protocol_scmr_v5_10_100.yaml" if protocol is None else Path(protocol)
     return run_reconstruction(config, protocol_path, observations, output, mlp_checkpoint=mlp_checkpoint, subject_id=subject_id)
 
 

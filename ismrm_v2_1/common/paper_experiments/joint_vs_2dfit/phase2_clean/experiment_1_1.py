@@ -19,7 +19,7 @@ def _require_sha256(label: str, value: str) -> None:
         raise ValueError(f"Experiment 1.1 requires a valid externally pinned SHA256 for {label}")
 
 
-def build_experiment_1_1_command(manifest: dict[str, Any], *, expected_generator_git_sha: str, expected_manifest_sha256: str, expected_b6_model_sha256: str, expected_protocol_sha256: str, b6_model: str | Path, decoder: str | Path, output: str | Path, device: str = "cuda:0", protocol: str = "trad/configs/protocol_hhz_v1.yaml", executable: str = sys.executable) -> str:
+def build_experiment_1_1_command(manifest: dict[str, Any], *, expected_generator_git_sha: str, expected_manifest_sha256: str, expected_b6_model_sha256: str, expected_protocol_sha256: str, b6_model: str | Path, decoder: str | Path, output: str | Path, device: str = "cuda:0", protocol: str = "mlp/configs/protocol_scmr_v5_10_100.yaml", executable: str = sys.executable) -> str:
     """Build (but never execute) the one permitted Experiment 1.1 invocation."""
     if manifest.get("_manifest_path") is None or manifest.get("_manifest_sha256") is None:
         raise ValueError("manifest must be validated by validate_sparse_profile_manifest")
@@ -105,7 +105,7 @@ def main() -> None:
     parser.add_argument("--expected-manifest-sha256", required=True, help="immutable digest recorded for this named sparse case")
     parser.add_argument("--output", required=True)
     parser.add_argument("--device", default="cuda:0")
-    parser.add_argument("--protocol", default="trad/configs/protocol_hhz_v1.yaml")
+    parser.add_argument("--protocol", default="mlp/configs/protocol_scmr_v5_10_100.yaml")
     # The repository and prior run records contain no authoritative protocol
     # digest.  Formal admission therefore requires the run record to supply it.
     parser.add_argument("--expected-protocol-sha256", required=True, help="external immutable admission digest for the exact protocol file")

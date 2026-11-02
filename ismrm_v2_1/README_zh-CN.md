@@ -25,6 +25,7 @@ mkdir -p "$RUN_ROOT"
 ```bash
 "$PROJECT_ROOT/pipeline/01_RAW_DICOM/run_stage.sh" "$SUBJECT" /data/dengyz/dataset/mapping_subject_dicom
 "$PROJECT_ROOT/pipeline/02_PREPROCESS_MATLAB/run_stage.sh" "$RUN_ROOT" "$SUBJECT" "$PROJECT_ROOT/subjects/$SUBJECT/manifest.json" matlab "$PYTHON"
+"$PROJECT_ROOT/pipeline/03_PREPARE_OBSERVATIONS/run_stage.sh" "$RUN_ROOT" "$SUBJECT" "$PROJECT_ROOT/subjects/$SUBJECT/manifest.json" "$PYTHON"
 "$PROJECT_ROOT/pipeline/04_SPARSE_PROFILES/run_stage.sh" "$RUN_ROOT" "$SUBJECT" "$PYTHON"
 "$PROJECT_ROOT/pipeline/05_SCMR_V5_FIT_FIRST/run_stage.sh" "$RUN_ROOT" "$SUBJECT" matlab
 ```
@@ -40,4 +41,3 @@ python "$PROJECT_ROOT/scripts/verify_no_legacy_code_path.py" "$PROJECT_ROOT"
 ```
 
 不要把原始 DICOM、MAT/NPZ/NIfTI、模型二进制或结果树提交到 GitHub；提交 manifests、SHA、配置、脚本和 README。服务器同步后，应先运行 09 模块，再开始新 subject。
-

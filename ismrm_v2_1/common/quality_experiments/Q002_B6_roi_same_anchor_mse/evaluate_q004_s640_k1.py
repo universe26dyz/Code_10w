@@ -32,7 +32,7 @@ Q004_ID = "Q004S640_K1_B6_roi_same_anchor_mse"
 def _load_model(checkpoint_path: Path, dataset: QuantPointDataset, device: torch.device):
     checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
     config = checkpoint["resolved_config"]
-    protocol = config["decoder"].get("protocol_yaml", "trad/configs/protocol_hhz_v1.yaml")
+    protocol = config["decoder"].get("protocol_yaml", "mlp/configs/protocol_scmr_v5_10_100.yaml")
     model, space, _, _ = build_mlp_training_model(dataset, config, protocol, device)
     load_checkpoint(checkpoint_path, model, device)
     return model, space

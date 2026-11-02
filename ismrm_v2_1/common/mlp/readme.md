@@ -34,7 +34,7 @@ conda run --no-capture-output -n knesvr_torch \
   python -m mlp.modules.module_05_signal_decoder.train_mlp \
   --config mlp/configs/rr_synthetic/formal_signalonly.yaml \
   --dataset-dir /absolute/new_rr_synthetic_dataset \
-  --protocol mlp/configs/protocol_hhz_v1.yaml \
+  --protocol mlp/configs/protocol_scmr_v5_10_100.yaml \
   --output-dir /absolute/new_mlp_candidate
 ```
 

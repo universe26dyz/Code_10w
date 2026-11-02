@@ -1,5 +1,5 @@
 method: current_joint_signal_domain
-protocol_yaml: mlp/configs/protocol_hhz_v1.yaml
+protocol_yaml: mlp/configs/protocol_scmr_v5_10_100.yaml
 decoder: null # Phase 0 must resolve this through approved B6/current provenance.
 parameter_ranges:
   t1_ms: [t2_ms, 2500]

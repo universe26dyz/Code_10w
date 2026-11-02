@@ -81,7 +81,7 @@ def export_mlp_from_checkpoint(prepared_root: str | Path, subject_id: str, check
     observations = _prepared_observations(prepared_root, subject_id, stack_names)
     dataset = QuantPointDataset(observations, device=device)
     method_root = Path(__file__).resolve().parents[1]
-    model, _, _, _ = build_mlp_training_model(dataset, config, method_root / "configs" / "protocol_hhz_v1.yaml", device)
+    model, _, _, _ = build_mlp_training_model(dataset, config, method_root / "configs" / "protocol_scmr_v5_10_100.yaml", device)
     loaded = load_mlp_reconstruction_checkpoint(checkpoint_path, model, device)
     space = TrainingSpace.from_state_dict(loaded["training_space"])
     output = Path(output_dir)

@@ -22,7 +22,7 @@ def frozen_mlp_decoder_factory(dataset: Any, config: Mapping[str, Any], protocol
         raise ValueError("decoder.checkpoint must name a validated MLP checkpoint.")
     if not isinstance(allowance, bool):
         raise ValueError("decoder.allow_functional_fixture_checkpoint must be an explicit boolean.")
-    protocol_path = decoder_config.get("protocol_yaml", "trad/configs/protocol_hhz_v1.yaml")
+    protocol_path = decoder_config.get("protocol_yaml", "mlp/configs/protocol_scmr_v5_10_100.yaml")
     decoder = load_frozen_mlp_decoder(checkpoint, dataset, protocol_path, allow_functional_fixture=allowance, device=device)
     metadata = torch.load(Path(checkpoint), map_location="cpu", weights_only=False)
     scientific_checkpoint = (

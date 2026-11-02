@@ -85,7 +85,7 @@ def protocol_from_yaml(protocol_path: str | Path, *, tr_ms: float = 2.61, vps: i
 
 def _fixed_rr_protocol() -> TradProtocol:
     """Backward-compatible default for existing v1 tests and runs."""
-    return protocol_from_yaml(Path(__file__).resolve().parents[3] / "configs" / "protocol_hhz_v1.yaml")
+    return protocol_from_yaml(Path(__file__).resolve().parents[3] / "configs" / "protocol_scmr_v5_10_100.yaml")
 
 
 def _generate_rr_split(path: Path, rhythm_ids: np.ndarray, rhythms: Mapping[str, np.ndarray], *, tissue_samples_per_rhythm: int, seed: int, chunk_size: int, device: torch.device, store_jacobian: bool, protocol: TradProtocol) -> int:

@@ -65,7 +65,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         config = yaml.safe_load(handle)
     config["training"] = dict(config["training"]); config["training"]["device"] = str(device)
     dataset = QuantPointDataset(observations, device=device)
-    model, _, _ = build_training_model(dataset, config, _TRAD_ROOT / "configs" / "protocol_hhz_v1.yaml", device)
+    model, _, _ = build_training_model(dataset, config, _TRAD_ROOT / "configs" / "protocol_scmr_v5_10_100.yaml", device)
     if nesvor_models.USE_TORCH or not hasattr(model.inr.encoding, "params"):
         raise RuntimeError("Stage 1 did not instantiate the tiny-cuda-nn HashGrid backend.")
     checkpoint = load_checkpoint(args.checkpoint, model, device)

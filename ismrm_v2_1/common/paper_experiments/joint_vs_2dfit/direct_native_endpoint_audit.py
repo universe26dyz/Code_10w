@@ -272,7 +272,7 @@ def _load_model(checkpoint: Path, prepared_paths: list[Path], device_text: str,
         _validate_checkpoint_sparse_provenance(checkpoint, sparse_contract)
     dataset = QuantPointDataset(prepared_paths, device=device)
     config = payload["resolved_config"]
-    protocol = config["decoder"].get("protocol_yaml", "trad/configs/protocol_hhz_v1.yaml")
+    protocol = config["decoder"].get("protocol_yaml", "mlp/configs/protocol_scmr_v5_10_100.yaml")
     initial_pose = _checkpoint_initial_pose(payload, torch, device)
     model, rebuilt_space, _, _ = build_mlp_training_model(
         dataset, config, protocol, device, initial_group_axisangle_physical=initial_pose)

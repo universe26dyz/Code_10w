@@ -15,6 +15,6 @@ bash "${PROJECT_ROOT}/scripts/prepare_smoke_case.sh" "${PREPARED_DIR}"
 cd "${PROJECT_ROOT}"
 conda run -n knesvr_torch python -m scripts.run_training \
   --config configs/smoke_cpu.yaml \
-  --protocol configs/protocol_hhz_v1.yaml \
+  --protocol configs/protocol_scmr_v5_10_100.yaml \
   --observations "${PREPARED_DIR}/observations.npz" \
   --output-dir "${OUTPUT_DIR}"

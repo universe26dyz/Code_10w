@@ -10,7 +10,7 @@ METHOD_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 cd "${METHOD_ROOT}"
 conda run -n cr_dreme python -m scripts.run_training \
   --config configs/server_train_example.yaml \
-  --protocol configs/protocol_hhz_v1.yaml \
+  --protocol configs/protocol_scmr_v5_10_100.yaml \
   --observations "${PREPARED_SAX_NPZ}" \
   --observations "${PREPARED_2CH_NPZ}" \
   --observations "${PREPARED_4CH_NPZ}" \

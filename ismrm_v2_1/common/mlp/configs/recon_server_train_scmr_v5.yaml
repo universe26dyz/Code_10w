@@ -70,5 +70,5 @@ export:
   output_batch_size: 65536
 decoder:
   checkpoint: /absolute/path/to/approved_signal_simulator_scmr_v5.pth
-  protocol_yaml: mlp/configs/protocol_hhz_scmr_v5_10_100.yaml
+  protocol_yaml: mlp/configs/protocol_scmr_v5_10_100.yaml
   allow_functional_fixture_checkpoint: false
