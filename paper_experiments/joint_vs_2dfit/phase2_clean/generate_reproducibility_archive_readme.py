@@ -154,11 +154,16 @@ for CASE_ROOT in "$RUN_ROOT/sparse_inputs/$SUBJECT"/*; do
   CASE=$(basename "$CASE_ROOT")
   SPARSE_MANIFEST="$CASE_ROOT/sparse_manifest.json"
   OUTPUT="$RUN_ROOT/reconstruction/proposed/$SUBJECT/$CASE"
+  if [ "$CASE" = "L100_fold0" ]; then
+    INPUT_ROOT="$RUN_ROOT/prepared/$SUBJECT"
+  else
+    INPUT_ROOT="$CASE_ROOT"
+  fi
   test -f "$SPARSE_MANIFEST"
   test ! -e "$OUTPUT"
 
   "$PY" -m paper_experiments.joint_vs_2dfit.phase2_clean.proposed \
-    --prepared-root "$CASE_ROOT" \
+    --prepared-root "$INPUT_ROOT" \
     --subject-id "$SUBJECT" \
     --decoder "$DECODER" \
     --b6-model "$B6_MODEL" \
@@ -169,7 +174,7 @@ for CASE_ROOT in "$RUN_ROOT/sparse_inputs/$SUBJECT"/*; do
     --output "$OUTPUT" \
     --method proposed \
     --subject "$SUBJECT" \
-    --prepared-root "$CASE_ROOT" \
+    --prepared-root "$INPUT_ROOT" \
     --decoder "$DECODER" \
     --b6-model "$B6_MODEL"
 done
@@ -351,11 +356,16 @@ for CASE_ROOT in "$RUN_ROOT/sparse_inputs/$SUBJECT"/*; do
   CASE=$(basename "$CASE_ROOT")
   SPARSE_MANIFEST="$CASE_ROOT/sparse_manifest.json"
   OUTPUT="$RUN_ROOT/reconstruction/proposed/$SUBJECT/$CASE"
+  if [ "$CASE" = "L100_fold0" ]; then
+    INPUT_ROOT="$RUN_ROOT/prepared/$SUBJECT"
+  else
+    INPUT_ROOT="$CASE_ROOT"
+  fi
   test -f "$SPARSE_MANIFEST"
   test ! -e "$OUTPUT"
 
   "$PY" -m paper_experiments.joint_vs_2dfit.phase2_clean.proposed \
-    --prepared-root "$CASE_ROOT" \
+    --prepared-root "$INPUT_ROOT" \
     --subject-id "$SUBJECT" \
     --decoder "$DECODER" \
     --b6-model "$B6_MODEL" \
@@ -366,7 +376,7 @@ for CASE_ROOT in "$RUN_ROOT/sparse_inputs/$SUBJECT"/*; do
     --output "$OUTPUT" \
     --method proposed \
     --subject "$SUBJECT" \
-    --prepared-root "$CASE_ROOT" \
+    --prepared-root "$INPUT_ROOT" \
     --decoder "$DECODER" \
     --b6-model "$B6_MODEL"
 done
