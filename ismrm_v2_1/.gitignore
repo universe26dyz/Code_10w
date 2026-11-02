@@ -6,8 +6,6 @@ subjects/*/roi/
 runs/
 runtime/model_assets/*.pth
 runtime/model_assets/*.pt
-runtime/environment/*_pip_freeze.txt
-runtime/environment/matlab_version.txt
 *.mat
 *.npz
 *.nii
@@ -23,4 +21,3 @@ __pycache__/
 !runtime/source_records/*.json
 !runtime/source_records/*.jsonl
 !runtime/source_records/*.txt
-
