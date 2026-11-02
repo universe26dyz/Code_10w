@@ -130,26 +130,73 @@ bash "$WORK_CODE/paper_experiments/joint_vs_2dfit/phase2_clean/server_commands/r
   "$FIT_RUN" "$RUN_ROOT/preprocessed" "$SUBJECT" "$RUN_ROOT/prepared" matlab
 ~~~
 
-检查每个 native-cache manifest 中 source observations、source preprocessed、mapping、native maps 的 SHA256。
+该步骤先用 SCMR-v5 MATLAB matcher 生成 mapping，再生成 native cache，最后生成 L100 和所有稀疏 case 的 2D-fit-first 结果。主要输出为：
+
+~~~text
+$RUN_ROOT/mapping/scmr_v5/$SUBJECT/
+$RUN_ROOT/native_cache/${{SUBJECT}}_scmr_v5/
+$RUN_ROOT/reconstruction/fit_first/$SUBJECT/<CASE>/
+~~~
+
+检查每个 native-cache manifest 中 source observations、source preprocessed、mapping、native maps 的 SHA256；任何 source SHA 不一致都不能继续评估。
 
 ### 5. 服务器：Proposed
 
-Proposed 输入是 sparse observations，不是 fitting map。对每个 case，从同一 case 的 config_resolved.yaml、experiment_manifest.json、run_provenance.json 读取 decoder、B6、protocol、sparse manifest 和全部 expected SHA256，并显式传给 phase2_clean.proposed --execute。不得使用历史默认 protocol。
+Proposed 输入是 sparse observations，不是 fitting map。它可以在 fit-first 之后运行，但不读取 fit-first mapping。下面的命令对 `$RUN_ROOT/sparse_inputs/$SUBJECT/` 下的每个 case 执行 Proposed，并为每个 case 写入 provenance：
+
+~~~bash
+DECODER="$ARCHIVE/01_execution_code/01_model_assets/approved_decoder.pth"
+B6_MODEL="$ARCHIVE/01_execution_code/01_model_assets/b6_model.pt"
+mkdir -p "$RUN_ROOT/reconstruction/proposed/$SUBJECT"
+
+for CASE_ROOT in "$RUN_ROOT/sparse_inputs/$SUBJECT"/*; do
+  [ -d "$CASE_ROOT" ] || continue
+  CASE=$(basename "$CASE_ROOT")
+  SPARSE_MANIFEST="$CASE_ROOT/sparse_manifest.json"
+  OUTPUT="$RUN_ROOT/reconstruction/proposed/$SUBJECT/$CASE"
+  test -f "$SPARSE_MANIFEST"
+  test ! -e "$OUTPUT"
+
+  "$PY" -m paper_experiments.joint_vs_2dfit.phase2_clean.proposed \
+    --prepared-root "$CASE_ROOT" \
+    --subject-id "$SUBJECT" \
+    --decoder "$DECODER" \
+    --b6-model "$B6_MODEL" \
+    --output "$OUTPUT" \
+    --execute
+
+  "$PY" -m paper_experiments.joint_vs_2dfit.phase2_clean.run_provenance \
+    --output "$OUTPUT" \
+    --method proposed \
+    --subject "$SUBJECT" \
+    --prepared-root "$CASE_ROOT" \
+    --decoder "$DECODER" \
+    --b6-model "$B6_MODEL"
+done
+~~~
+
+每个 case 的 `config_resolved.yaml`、`experiment_manifest.json`、`run_provenance.json` 和 `sparse_manifest.json` 必须相互对应，并记录 decoder、B6、protocol、sparse selection 和全部 expected SHA256。不得使用历史默认 protocol，也不得把另一个 case 的 manifest 或 decoder 混入当前 case。
 
 ### 6. 服务器：final pose 与评估
 
 ~~~
 ROI_BUNDLE="$RUN_ROOT/roi_manual"
+CASES=(L100_fold0 L25_fold0 L50_fold0 \
+  SAX100_2CH0_4CH0 SAX100_2CH0_4CH100 SAX100_2CH100_4CH0 \
+  S2CH100_4CH50_fold0 S2CH50_4CH100_fold0)
+
 bash "$WORK_CODE/paper_experiments/joint_vs_2dfit/phase2_clean/server_commands/paired_final_pose.sh" \
-  "$PROPOSED_RUN" "$FIT_RUN" "$ROI_BUNDLE" "$SUBJECT" "$CASE"
+  "$RUN_ROOT" "$RUN_ROOT" "$ROI_BUNDLE" "$SUBJECT" "${{CASES[@]}}"
+
 bash "$WORK_CODE/paper_experiments/joint_vs_2dfit/phase2_clean/server_commands/common_native_metrics_qc.sh" \
-  "$PROPOSED_RUN" "$FIT_RUN" "$ROI_BUNDLE" "$SUBJECT" "$CASE"
+  "$RUN_ROOT" "$RUN_ROOT" "$ROI_BUNDLE" "$SUBJECT" "${{CASES[@]}}"
+
 OUTPUT_NAME="all_stack_roi_metrics_v2_blood_pool_zero_audit" \
 bash "$WORK_CODE/paper_experiments/joint_vs_2dfit/phase2_clean/server_commands/common_native_all_stack_roi_metrics.sh" \
-  "$PROPOSED_RUN" "$FIT_RUN" "$ROI_BUNDLE" "$SUBJECT" "$CASE"
+  "$RUN_ROOT" "$RUN_ROOT" "$ROI_BUNDLE" "$SUBJECT" "${{CASES[@]}}"
 ~~~
 
-心肌保留 myocardium_core_legacy 与 myocardium_core_1px；血池为 inner_filled AND outer_filled；LV 为 outer_filled。评估必须使用 final pose，保留 all-slice、held-out、stack 分层、ROI 像素数和 zero audit。
+这些命令只做 final-pose bundle、AHA、LV/心肌/血池指标和 QC，不重新训练或重建。心肌保留 `myocardium_core_legacy` 与 `myocardium_core_1px`；血池为 `inner_filled AND outer_filled`；LV 为 `outer_filled`。评估必须使用 final pose，保留 all-slice、held-out、stack 分层、ROI 像素数和 zero audit。
 
 ## {subject} 已归档实例
 
@@ -280,31 +327,73 @@ bash "$WORK_CODE/paper_experiments/joint_vs_2dfit/phase2_clean/server_commands/r
   "$FIT_RUN" "$RUN_ROOT/preprocessed" "$SUBJECT" "$RUN_ROOT/prepared" matlab
 ~~~
 
+This first runs the SCMR-v5 MATLAB matcher, then creates the native cache and finally produces L100 and all sparse-case 2D-fit-first outputs. Main outputs are:
+
+~~~text
+$RUN_ROOT/mapping/scmr_v5/$SUBJECT/
+$RUN_ROOT/native_cache/${{SUBJECT}}_scmr_v5/
+$RUN_ROOT/reconstruction/fit_first/$SUBJECT/<CASE>/
+~~~
+
 For every native-cache manifest, verify the SHA256 bindings for source observations, source preprocessed MAT, SCMR-v5 mapping, and native maps before accepting a reconstruction.
 
 ### 5. Server: Proposed reconstruction
 
-The Proposed method consumes sparse original observations, not a fitting map. For each case, use only the same case's `config_resolved.yaml`, `experiment_manifest.json`, `run_provenance.json`, and `sparse_manifest.json` to obtain the decoder, B6, protocol, sparse selection, and expected SHA256 values. Invoke `phase2_clean.proposed --execute` with those explicit values. Do not substitute the historical/default protocol or another case's decoder.
+The Proposed method consumes sparse original observations, not a fitting map. The following command runs Proposed for every sparse case and records provenance:
+
+~~~bash
+DECODER="$ARCHIVE/01_execution_code/01_model_assets/approved_decoder.pth"
+B6_MODEL="$ARCHIVE/01_execution_code/01_model_assets/b6_model.pt"
+mkdir -p "$RUN_ROOT/reconstruction/proposed/$SUBJECT"
+
+for CASE_ROOT in "$RUN_ROOT/sparse_inputs/$SUBJECT"/*; do
+  [ -d "$CASE_ROOT" ] || continue
+  CASE=$(basename "$CASE_ROOT")
+  SPARSE_MANIFEST="$CASE_ROOT/sparse_manifest.json"
+  OUTPUT="$RUN_ROOT/reconstruction/proposed/$SUBJECT/$CASE"
+  test -f "$SPARSE_MANIFEST"
+  test ! -e "$OUTPUT"
+
+  "$PY" -m paper_experiments.joint_vs_2dfit.phase2_clean.proposed \
+    --prepared-root "$CASE_ROOT" \
+    --subject-id "$SUBJECT" \
+    --decoder "$DECODER" \
+    --b6-model "$B6_MODEL" \
+    --output "$OUTPUT" \
+    --execute
+
+  "$PY" -m paper_experiments.joint_vs_2dfit.phase2_clean.run_provenance \
+    --output "$OUTPUT" \
+    --method proposed \
+    --subject "$SUBJECT" \
+    --prepared-root "$CASE_ROOT" \
+    --decoder "$DECODER" \
+    --b6-model "$B6_MODEL"
+done
+~~~
+
+For each case, use only that case's `config_resolved.yaml`, `experiment_manifest.json`, `run_provenance.json`, and `sparse_manifest.json` to obtain the decoder, B6, protocol, sparse selection, and expected SHA256 values. Do not substitute the historical/default protocol or another case's decoder.
 
 ### 6. Server: final pose, metrics, and visual QC
 
 Input: completed Proposed and fit-first outputs plus the manual ROI bundle. Output: final-pose bundles, AHA results, LV/myocardium/blood-pool metrics, mask overlays, slice-pair QC, and all-stack statistics.
 
 ~~~bash
-PROPOSED_RUN="/path/to/proposed_run"
-ROI_BUNDLE="/path/to/manual_roi_bundle"
-CASE="L100_fold0"
+ROI_BUNDLE="$RUN_ROOT/roi_manual"
+CASES=(L100_fold0 L25_fold0 L50_fold0 \
+  SAX100_2CH0_4CH0 SAX100_2CH0_4CH100 SAX100_2CH100_4CH0 \
+  S2CH100_4CH50_fold0 S2CH50_4CH100_fold0)
 
 bash "$WORK_CODE/paper_experiments/joint_vs_2dfit/phase2_clean/server_commands/paired_final_pose.sh" \
-  "$PROPOSED_RUN" "$FIT_RUN" "$ROI_BUNDLE" "$SUBJECT" "$CASE"
+  "$RUN_ROOT" "$RUN_ROOT" "$ROI_BUNDLE" "$SUBJECT" "${{CASES[@]}}"
 bash "$WORK_CODE/paper_experiments/joint_vs_2dfit/phase2_clean/server_commands/common_native_metrics_qc.sh" \
-  "$PROPOSED_RUN" "$FIT_RUN" "$ROI_BUNDLE" "$SUBJECT" "$CASE"
+  "$RUN_ROOT" "$RUN_ROOT" "$ROI_BUNDLE" "$SUBJECT" "${{CASES[@]}}"
 OUTPUT_NAME="all_stack_roi_metrics_v2_blood_pool_zero_audit" \
 bash "$WORK_CODE/paper_experiments/joint_vs_2dfit/phase2_clean/server_commands/common_native_all_stack_roi_metrics.sh" \
-  "$PROPOSED_RUN" "$FIT_RUN" "$ROI_BUNDLE" "$SUBJECT" "$CASE"
+  "$RUN_ROOT" "$RUN_ROOT" "$ROI_BUNDLE" "$SUBJECT" "${{CASES[@]}}"
 ~~~
 
-Keep `myocardium_core_legacy` and `myocardium_core_1px`; blood pool is `inner_filled AND outer_filled`, and LV is `outer_filled`. All quantitative metrics must use final pose and retain all-slice, held-out, stack strata, ROI voxel counts, mean/SD, full metrics, and zero-value audit.
+These commands only create final-pose bundles, AHA, LV/myocardium/blood-pool metrics, and QC; they do not retrain or reconstruct. Keep `myocardium_core_legacy` and `myocardium_core_1px`; blood pool is `inner_filled AND outer_filled`, and LV is `outer_filled`. All quantitative metrics must use final pose and retain all-slice, held-out, stack strata, ROI voxel counts, mean/SD, full metrics, and zero-value audit.
 
 ## Archived {subject} example
 
