@@ -69,18 +69,24 @@ def _write_code_map(root: Path) -> None:
             "- `code/trad/scripts/validate_transferred_preprocessed.py`", "- `code/trad/scripts/prepare_all_observations.py`",
             "- `code/trad/modules/module_02_data_bridge/`",
         ],
-        "03_scmr_mapping_and_fit_first.md": [
-            "# 03 SCMR-v5 mapping and 2D-fit-first", "",
+        "03_server_sparse_profiles.md": [
+            "# 03 Server sparse-profile construction", "",
+            "- `code/paper_experiments/joint_vs_2dfit/phase2_clean/server_commands/build_sparse_profiles.sh`",
+            "- `code/paper_experiments/joint_vs_2dfit/phase2_clean/sparse.py`",
+            "- `code/paper_experiments/joint_vs_2dfit/configs/sparse_profiles/`",
+        ],
+        "04_scmr_mapping_and_fit_first.md": [
+            "# 04 SCMR-v5 mapping and 2D-fit-first", "",
             "- `code/trad/evaluation/scmr/matlab/`", "- `code/paper_experiments/joint_vs_2dfit/phase2_clean/scmr_v5_native_cache.py`",
             "- `code/paper_experiments/joint_vs_2dfit/phase2_clean/server_commands/run_scmr_v5_fit_first.sh`",
         ],
-        "04_proposed_reconstruction.md": [
-            "# 04 Proposed reconstruction", "",
+        "05_proposed_reconstruction.md": [
+            "# 05 Proposed reconstruction", "",
             "- `code/paper_experiments/joint_vs_2dfit/phase2_clean/proposed.py`", "- `code/quality_experiments/Q002_B6_roi_same_anchor_mse/`",
             "- `code/mlp/`, `code/reconstruction_core/`, and `code/trad/modules/`",
         ],
-        "05_final_pose_metrics_visualization.md": [
-            "# 05 Final pose, metrics, and visualization", "",
+        "06_final_pose_metrics_visualization.md": [
+            "# 06 Final pose, metrics, and visualization", "",
             "- `code/paper_experiments/joint_vs_2dfit/aha/`", "- `code/paper_experiments/joint_vs_2dfit/phase2_clean/server_commands/paired_final_pose.sh`",
             "- `code/paper_experiments/joint_vs_2dfit/phase2_clean/server_commands/common_native_metrics_qc.sh`",
             "- `code/paper_experiments/joint_vs_2dfit/phase2_clean/server_commands/common_native_all_stack_roi_metrics.sh`",

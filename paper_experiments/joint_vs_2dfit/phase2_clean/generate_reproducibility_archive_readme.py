@@ -112,7 +112,16 @@ bash "$WORK_CODE/paper_experiments/joint_vs_2dfit/phase2_clean/server_commands/s
 
 通过条件：三个 stack 均有 `preprocessed.mat`、`preprocess_qc.json`、`observations.npz`、`manifest.json`；MAT 的 `Mag_crop` 第三维为 10，QC 为 MP-PCA enabled、`center_data=true`。MAT 保留真实 acquisition/preprocessing metadata 的 `TI=[50,150]`；SCMR-v5 matching/observation timing 通过 `$PROTOCOL` 使用 `TI=[10,100]`，TR/VPS 仍来自 DICOM/MAT。
 
-### 3. 服务器：SCMR-v5 fitting 与 2D-fit-first
+### 3. 服务器：生成稀疏 case 输入
+
+该 Python 步骤从服务器的完整 `observations.npz` 派生所有标准 case，并记录每个 retained/held-out group 与 SHA。它不更改 full observations。输出写入 `$RUN_ROOT/sparse_inputs/$SUBJECT/`，供 Proposed 与 2D-fit-first 共同使用。
+
+~~~bash
+bash "$WORK_CODE/paper_experiments/joint_vs_2dfit/phase2_clean/server_commands/build_sparse_profiles.sh" \
+  "$RUN_ROOT/prepared" "$SUBJECT" "$RUN_ROOT/sparse_inputs" "$PY"
+~~~
+
+### 4. 服务器：SCMR-v5 fitting 与 2D-fit-first
 
 ~~~
 FIT_RUN="$RUN_ROOT"
@@ -123,11 +132,11 @@ bash "$WORK_CODE/paper_experiments/joint_vs_2dfit/phase2_clean/server_commands/r
 
 检查每个 native-cache manifest 中 source observations、source preprocessed、mapping、native maps 的 SHA256。
 
-### 4. 服务器：Proposed
+### 5. 服务器：Proposed
 
 Proposed 输入是 sparse observations，不是 fitting map。对每个 case，从同一 case 的 config_resolved.yaml、experiment_manifest.json、run_provenance.json 读取 decoder、B6、protocol、sparse manifest 和全部 expected SHA256，并显式传给 phase2_clean.proposed --execute。不得使用历史默认 protocol。
 
-### 5. 服务器：final pose 与评估
+### 6. 服务器：final pose 与评估
 
 ~~~
 ROI_BUNDLE="$RUN_ROOT/roi_manual"
@@ -247,7 +256,16 @@ bash "$WORK_CODE/paper_experiments/joint_vs_2dfit/phase2_clean/server_commands/s
 
 Confirm all three stacks have `preprocessed.mat`, `preprocess_qc.json`, `observations.npz`, and `manifest.json`; `Mag_crop` must have ten weights, with MP-PCA enabled and `center_data=true`. The MAT retains truthful historical acquisition/preprocessing metadata `TI=[50,150]`; matching and observation timing deliberately use `TI=[10,100]` through `$PROTOCOL`, while TR/VPS remain sourced from DICOM/MAT.
 
-### 3. Server: corrected SCMR-v5 mapping and 2D-fit-first
+### 3. Server-only: build sparse case inputs
+
+This Python step derives all standard cases from the server-resident full `observations.npz` and records retained/held-out groups and SHA bindings. It never changes the full observations. Outputs go to `$RUN_ROOT/sparse_inputs/$SUBJECT/` and are shared by Proposed and 2D-fit-first.
+
+~~~bash
+bash "$WORK_CODE/paper_experiments/joint_vs_2dfit/phase2_clean/server_commands/build_sparse_profiles.sh" \
+  "$RUN_ROOT/prepared" "$SUBJECT" "$RUN_ROOT/sparse_inputs" "$PY"
+~~~
+
+### 4. Server: corrected SCMR-v5 mapping and 2D-fit-first
 
 Inputs: three `preprocessed.mat` files, prepared observations, and copied sparse inputs. Outputs: mapping MAT files, native-cache manifests, and `T1_3D.nii.gz`/`T2_3D.nii.gz` for every case.
 
@@ -264,11 +282,11 @@ bash "$WORK_CODE/paper_experiments/joint_vs_2dfit/phase2_clean/server_commands/r
 
 For every native-cache manifest, verify the SHA256 bindings for source observations, source preprocessed MAT, SCMR-v5 mapping, and native maps before accepting a reconstruction.
 
-### 4. Server: Proposed reconstruction
+### 5. Server: Proposed reconstruction
 
 The Proposed method consumes sparse original observations, not a fitting map. For each case, use only the same case's `config_resolved.yaml`, `experiment_manifest.json`, `run_provenance.json`, and `sparse_manifest.json` to obtain the decoder, B6, protocol, sparse selection, and expected SHA256 values. Invoke `phase2_clean.proposed --execute` with those explicit values. Do not substitute the historical/default protocol or another case's decoder.
 
-### 5. Server: final pose, metrics, and visual QC
+### 6. Server: final pose, metrics, and visual QC
 
 Input: completed Proposed and fit-first outputs plus the manual ROI bundle. Output: final-pose bundles, AHA results, LV/myocardium/blood-pool metrics, mask overlays, slice-pair QC, and all-stack statistics.
 

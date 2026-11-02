@@ -31,3 +31,15 @@ def test_server_only_preprocessing_launcher_uses_one_server_dicom_manifest() -> 
     assert "prepare_all_observations.py" in text
     assert "local_dicom_dir and server_dicom_dir" in text
     assert "HHZ" not in text
+
+
+def test_server_sparse_profile_launcher_builds_all_standard_cases_without_subject_names() -> None:
+    text = (COMMANDS / "build_sparse_profiles.sh").read_text(encoding="utf-8")
+
+    assert "PREPARED_ROOT SUBJECT OUTPUT_ROOT" in text
+    assert "for CONDITION in L100 L25 L50" in text
+    assert '--condition "$CONDITION" --phase 0' in text
+    assert "SAX100_2CH0_4CH0 SAX100_2CH0_4CH100 SAX100_2CH100_4CH0 S2CH100_4CH50 S2CH50_4CH100" in text
+    assert '"$PROFILE_ROOT/$PROFILE.json"' in text
+    assert "CYJ_" not in text
+    assert "HHZ" not in text

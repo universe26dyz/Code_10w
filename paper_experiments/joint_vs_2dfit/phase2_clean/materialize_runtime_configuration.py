@@ -22,8 +22,16 @@ COMMON_FILES = (
     Path("mlp/configs/recon_server_train_scmr_v5_generic.yaml"),
     Path("configs/subject_stack_manifest.example.json"),
 )
+GENERIC_SPARSE_PROFILES = (
+    Path("paper_experiments/joint_vs_2dfit/configs/sparse_profiles/SAX100_2CH0_4CH0.json"),
+    Path("paper_experiments/joint_vs_2dfit/configs/sparse_profiles/SAX100_2CH0_4CH100.json"),
+    Path("paper_experiments/joint_vs_2dfit/configs/sparse_profiles/SAX100_2CH100_4CH0.json"),
+    Path("paper_experiments/joint_vs_2dfit/configs/sparse_profiles/S2CH100_4CH50.json"),
+    Path("paper_experiments/joint_vs_2dfit/configs/sparse_profiles/S2CH50_4CH100.json"),
+)
 LAUNCHERS = (
     Path("paper_experiments/joint_vs_2dfit/phase2_clean/server_commands/server_preprocess_and_prepare.sh"),
+    Path("paper_experiments/joint_vs_2dfit/phase2_clean/server_commands/build_sparse_profiles.sh"),
     Path("paper_experiments/joint_vs_2dfit/phase2_clean/server_commands/run_scmr_v5_fit_first.sh"),
     Path("paper_experiments/joint_vs_2dfit/phase2_clean/server_commands/paired_final_pose.sh"),
     Path("paper_experiments/joint_vs_2dfit/phase2_clean/server_commands/common_native_metrics_qc.sh"),
@@ -78,6 +86,8 @@ def materialize_runtime_configuration(archive_root: str | Path, code_root: str |
         records: list[dict[str, str]] = []
         for relative in COMMON_FILES:
             _copy(code / relative, partial / "00_common" / relative.name, partial, "common", records)
+        for relative in GENERIC_SPARSE_PROFILES:
+            _copy(code / relative, partial / "00_common" / "sparse_profiles" / relative.name, partial, "common", records)
         for relative in LAUNCHERS:
             _copy(code / relative, partial / "01_launchers" / relative.name, partial, "launcher", records)
 
