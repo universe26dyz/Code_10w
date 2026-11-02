@@ -23,6 +23,7 @@ COMMON_FILES = (
     Path("configs/subject_stack_manifest.example.json"),
 )
 LAUNCHERS = (
+    Path("paper_experiments/joint_vs_2dfit/phase2_clean/server_commands/server_preprocess_and_prepare.sh"),
     Path("paper_experiments/joint_vs_2dfit/phase2_clean/server_commands/run_scmr_v5_fit_first.sh"),
     Path("paper_experiments/joint_vs_2dfit/phase2_clean/server_commands/paired_final_pose.sh"),
     Path("paper_experiments/joint_vs_2dfit/phase2_clean/server_commands/common_native_metrics_qc.sh"),

@@ -57,9 +57,11 @@ def _copy_tracked_code(code: Path, destination: Path, root: Path, records: list[
 
 def _write_code_map(root: Path) -> None:
     guides = {
-        "01_local_dicom_preprocessing.md": [
-            "# 01 Local DICOM preprocessing", "",
-            "- `code/trad/scripts/local_preprocess_all.m`", "- `code/trad/scripts/local_preprocess_one.m`",
+        "01_server_dicom_preprocessing.md": [
+            "# 01 Server DICOM preprocessing", "",
+            "- `code/paper_experiments/joint_vs_2dfit/phase2_clean/server_commands/server_preprocess_and_prepare.sh`",
+            "- `code/trad/scripts/local_preprocess_all.m` (historical name; executed on the server by the launcher)",
+            "- `code/trad/scripts/local_preprocess_one.m`",
             "- `code/trad/modules/module_01_preprocess_matlab/preprocessing_v1/`",
         ],
         "02_server_observation_bridge.md": [

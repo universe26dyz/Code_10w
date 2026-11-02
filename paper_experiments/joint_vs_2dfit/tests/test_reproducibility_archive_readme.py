@@ -23,7 +23,9 @@ def test_writes_bilingual_archive_readmes_after_materialization(tmp_path) -> Non
     assert "03_subject_examples/SUBJECT_X/01_inputs/prepared" in zh.read_text(encoding="utf-8")
     assert "generic" in en.read_text(encoding="utf-8")
     assert "01_code_snapshot/source.tar" in en.read_text(encoding="utf-8")
-    assert "SERVER_DEPLOYMENT_MANIFEST" in en.read_text(encoding="utf-8")
+    assert "server_preprocess_and_prepare.sh" in en.read_text(encoding="utf-8")
+    assert "server-only" in en.read_text(encoding="utf-8")
+    assert "人工勾画 ROI" in zh.read_text(encoding="utf-8")
 
 
 def test_replace_only_overwrites_existing_readmes(tmp_path) -> None:

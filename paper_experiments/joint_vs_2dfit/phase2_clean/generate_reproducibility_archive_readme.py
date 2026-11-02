@@ -51,62 +51,92 @@ PROTOCOL="$WORK_CODE/mlp/configs/protocol_scmr_v5_10_100.yaml"
 sha256sum "$PROTOCOL"
 ~~~
 
-### 1. 本地原始 DICOM
+### 运行根目录结构（服务器）
 
-每个 subject 需要 sax、2ch、4ch 三个 DICOM 目录；每个 slice/group 必须有十个 weight。不要以 NIfTI 代替 DICOM，因为后续步骤需要 SOP UID、采集时间和 DICOM 空间几何。将 configs/subject_stack_manifest.example.json 复制到代码外，填写本地 local_dicom_dir 与服务器中相同 DICOM 的 server_dicom_dir；每次只包含一个 subject。
+每个新 subject 使用一个新的、空的 `$RUN_ROOT`；所有自动生成文件均在其中。目录名与现有 generic launcher 完全兼容：
 
-### 2. 本地 MATLAB：DICOM → preprocessed.mat
-
+~~~text
+$RUN_ROOT/
+  config/                 单 subject deployment manifest
+  preprocessed/<SUBJECT>/ 服务器 MATLAB 预处理 MAT 与 QC
+  prepared/<SUBJECT>/     observations.npz、timing、bridge manifest/QC
+  sparse_inputs/<SUBJECT>/稀疏采样 profile（Proposed 与 fit-first 共用）
+  mapping/scmr_v5/        MATLAB fitting map
+  native_cache/           SHA 绑定的 native T1/T2/B1 cache
+  reconstruction/
+    fit_first/<SUBJECT>/  2D-fit-first 输出
+    proposed/<SUBJECT>/   Proposed 输出
+  roi_manual/             本地人工勾画后上传的 ROI bundle
+  evaluation/final_pose/  final pose、AHA、指标与 QC 图
+  01_server_preprocess.log
+  02_preprocessed_validation.log
+  03_prepare_observations.log
+  server_matlab_version.txt
 ~~~
-matlab -batch "addpath('$CODE/trad/scripts'); local_preprocess_all('$MANIFEST','$LOCAL_PREPROCESSED_ROOT');"
-~~~
 
-输出为每个 stack 的 preprocessed.mat、preprocess_qc.json。检查 Mag_crop 的第三维为 10，且 QC 为 MP-PCA enabled、center_data=true。源 MAT 的历史 TI=[50,150] 不修改；SCMR-v5 timing/matching 使用 TI=[10,100]。
+### 1. 服务器：原始 DICOM 与单 subject manifest
 
-### 3. 服务器：MAT + DICOM → observations.npz
+新 subject 的正式计算全部在服务器完成。服务器必须保存 sax、2ch、4ch 三个原始 DICOM 目录；每个 slice/group 恰有十个 weight。NIfTI 不能替代 DICOM，因为后续需要 SOP UID、采集时间和 DICOM 空间几何。若 DICOM 当前仅在本地，本地只做一次原始数据上传；之后不再在本地运行 MATLAB 或 Python。
 
-复制 MAT 和单 subject manifest 到服务器，并保留同一批服务器 DICOM。先运行 validate_transferred_preprocessed.py，再运行 prepare_all_observations.py，显式传入上一步建立的 `$PROTOCOL`。observations.npz 是本步骤从 MAT 像素、DICOM UID/几何和正确 protocol 生成的桥接产物，不是原始输入；其 TR/VPS 必须与 MAT 一致。
+将 `configs/subject_stack_manifest.example.json` 复制到代码目录外。它仍保留历史字段名 `local_dicom_dir`，但 server-only 运行时，`local_dicom_dir` 与 `server_dicom_dir` 必须都填写为**同一服务器 DICOM 路径**；每次 manifest 只含一个 subject。
 
 ~~~bash
+SUBJECT="NEW_SUBJECT"
 PY="/path/to/server/python"
-SERVER_DEPLOYMENT_MANIFEST="/path/to/server/$SUBJECT-deployment.json"
-SERVER_PREPROCESSED_ROOT="/path/to/server_preprocessed"
-SERVER_PREPARED_ROOT="/path/to/server_prepared"
+RUN_ROOT="/path/to/new_server_run/$SUBJECT"
+MANIFEST="$RUN_ROOT/config/$SUBJECT-deployment.json"
+SERVER_DICOM_ROOT="/path/to/server_dicom"
+mkdir -p "$RUN_ROOT/config"
+cp "$WORK_CODE/configs/subject_stack_manifest.example.json" "$MANIFEST"
 
-"$PY" "$WORK_CODE/trad/scripts/validate_transferred_preprocessed.py" \
-  --manifest "$SERVER_DEPLOYMENT_MANIFEST" \
-  --preprocessed-root "$SERVER_PREPROCESSED_ROOT" \
-  --output "$SERVER_PREPROCESSED_ROOT/$SUBJECT/transfer_qc.json"
-"$PY" "$WORK_CODE/trad/scripts/prepare_all_observations.py" \
-  --manifest "$SERVER_DEPLOYMENT_MANIFEST" \
-  --preprocessed-root "$SERVER_PREPROCESSED_ROOT" \
-  --prepared-root "$SERVER_PREPARED_ROOT" \
-  --protocol "$PROTOCOL"
+for STACK in sax 2ch 4ch; do
+  N=$(find "$SERVER_DICOM_ROOT/$SUBJECT/$STACK" -maxdepth 1 -name '*.dcm' | wc -l)
+  echo "$STACK: $N DICOM files"
+  test "$N" -gt 0 && test $((N % 10)) -eq 0
+done
 ~~~
 
-### 4. 服务器：SCMR-v5 fitting 与 2D-fit-first
+编辑 `$MANIFEST`：三个 stack 的两个 DICOM 字段均填为 `$SERVER_DICOM_ROOT/$SUBJECT/<stack>`。人工勾画 ROI 是唯一保留在本地的工作：它在重建完成后生成 ROI bundle（至少包含 `sax_myocardium_masks.npz` 和 `roi_derivation_manifest.json`），然后只上传该 bundle 到 `$RUN_ROOT/roi_manual/`，供评估使用。
+
+### 2. 服务器：DICOM → `preprocessed.mat` → `observations.npz`
+
+先记录服务器 MATLAB 环境；随后 launcher 在服务器上执行 MATLAB 的 crop、MIND、MP-PCA，并执行 Python bridge。`local_preprocess_all.m` 是历史函数名，但由该 launcher 在服务器运行；不再传输 MAT。输出为 `$RUN_ROOT/preprocessed/`、`$RUN_ROOT/prepared/` 和三个日志文件。
+
+~~~bash
+SERVER_MATLAB_REPORT="$RUN_ROOT/server_matlab_version.txt"
+matlab -batch "disp(version); ver" > "$SERVER_MATLAB_REPORT" 2>&1
+
+bash "$WORK_CODE/paper_experiments/joint_vs_2dfit/phase2_clean/server_commands/server_preprocess_and_prepare.sh" \
+  "$RUN_ROOT" "$SUBJECT" "$MANIFEST" "$PROTOCOL" matlab "$PY"
+~~~
+
+通过条件：三个 stack 均有 `preprocessed.mat`、`preprocess_qc.json`、`observations.npz`、`manifest.json`；MAT 的 `Mag_crop` 第三维为 10，QC 为 MP-PCA enabled、`center_data=true`。MAT 保留真实 acquisition/preprocessing metadata 的 `TI=[50,150]`；SCMR-v5 matching/observation timing 通过 `$PROTOCOL` 使用 `TI=[10,100]`，TR/VPS 仍来自 DICOM/MAT。
+
+### 3. 服务器：SCMR-v5 fitting 与 2D-fit-first
 
 ~~~
+FIT_RUN="$RUN_ROOT"
 PY="$PY" NESVOR="/path/to/nesvor/bin/nesvor" REPO="$WORK_CODE" \
 bash "$WORK_CODE/paper_experiments/joint_vs_2dfit/phase2_clean/server_commands/run_scmr_v5_fit_first.sh" \
-  "$FIT_RUN" "$SERVER_PREPROCESSED_ROOT" "$SUBJECT" "$SERVER_PREPARED_ROOT" matlab
+  "$FIT_RUN" "$RUN_ROOT/preprocessed" "$SUBJECT" "$RUN_ROOT/prepared" matlab
 ~~~
 
 检查每个 native-cache manifest 中 source observations、source preprocessed、mapping、native maps 的 SHA256。
 
-### 5. 服务器：Proposed
+### 4. 服务器：Proposed
 
 Proposed 输入是 sparse observations，不是 fitting map。对每个 case，从同一 case 的 config_resolved.yaml、experiment_manifest.json、run_provenance.json 读取 decoder、B6、protocol、sparse manifest 和全部 expected SHA256，并显式传给 phase2_clean.proposed --execute。不得使用历史默认 protocol。
 
-### 6. 服务器：final pose 与评估
+### 5. 服务器：final pose 与评估
 
 ~~~
-bash "$CODE/paper_experiments/joint_vs_2dfit/phase2_clean/server_commands/paired_final_pose.sh" \
+ROI_BUNDLE="$RUN_ROOT/roi_manual"
+bash "$WORK_CODE/paper_experiments/joint_vs_2dfit/phase2_clean/server_commands/paired_final_pose.sh" \
   "$PROPOSED_RUN" "$FIT_RUN" "$ROI_BUNDLE" "$SUBJECT" "$CASE"
-bash "$CODE/paper_experiments/joint_vs_2dfit/phase2_clean/server_commands/common_native_metrics_qc.sh" \
+bash "$WORK_CODE/paper_experiments/joint_vs_2dfit/phase2_clean/server_commands/common_native_metrics_qc.sh" \
   "$PROPOSED_RUN" "$FIT_RUN" "$ROI_BUNDLE" "$SUBJECT" "$CASE"
 OUTPUT_NAME="all_stack_roi_metrics_v2_blood_pool_zero_audit" \
-bash "$CODE/paper_experiments/joint_vs_2dfit/phase2_clean/server_commands/common_native_all_stack_roi_metrics.sh" \
+bash "$WORK_CODE/paper_experiments/joint_vs_2dfit/phase2_clean/server_commands/common_native_all_stack_roi_metrics.sh" \
   "$PROPOSED_RUN" "$FIT_RUN" "$ROI_BUNDLE" "$SUBJECT" "$CASE"
 ~~~
 
@@ -162,58 +192,74 @@ PROTOCOL="$WORK_CODE/mlp/configs/protocol_scmr_v5_10_100.yaml"
 sha256sum "$PROTOCOL"
 ~~~
 
-### 1. Local machine: raw DICOM to `preprocessed.mat`
+### Server run-root layout
 
-Input is the original DICOM for `sax`, `2ch`, and `4ch`, with ten weights per slice/group. NIfTI cannot replace DICOM because UID, acquisition timing, and DICOM geometry are required. Copy `configs/subject_stack_manifest.example.json` outside the repository and fill in `local_dicom_dir` and the matching server `server_dicom_dir` for one subject.
+Each new subject uses one new, empty `$RUN_ROOT`; every generated file stays there. These names are directly compatible with the generic launchers:
+
+~~~text
+$RUN_ROOT/
+  config/                 single-subject deployment manifest
+  preprocessed/<SUBJECT>/ server MATLAB MAT and QC
+  prepared/<SUBJECT>/     observations.npz, timing, bridge manifest/QC
+  sparse_inputs/<SUBJECT>/sparse profiles shared by Proposed and fit-first
+  mapping/scmr_v5/        MATLAB fitting maps
+  native_cache/           SHA-bound native T1/T2/B1 cache
+  reconstruction/
+    fit_first/<SUBJECT>/  2D-fit-first outputs
+    proposed/<SUBJECT>/   Proposed outputs
+  roi_manual/             manual ROI bundle uploaded from the local workstation
+  evaluation/final_pose/  final pose, AHA, metrics, and QC images
+  01_server_preprocess.log
+  02_preprocessed_validation.log
+  03_prepare_observations.log
+  server_matlab_version.txt
+~~~
+
+### 1. Server-only: raw DICOM and a single-subject manifest
+
+All computation for a new subject runs on the server. The server must retain the original `sax`, `2ch`, and `4ch` DICOM directories, with exactly ten weights per slice/group. NIfTI cannot replace DICOM because UID, acquisition timing, and DICOM geometry are required. If DICOM initially exists only on a local workstation, the only local data operation is a one-time upload of the raw DICOM; do not run MATLAB or Python locally afterward.
+
+Copy `configs/subject_stack_manifest.example.json` outside the repository. Its historical `local_dicom_dir` field remains, but in server-only operation both `local_dicom_dir` and `server_dicom_dir` must point to the same server-resident DICOM directory. The manifest contains exactly one subject.
 
 ~~~bash
 SUBJECT="NEW_SUBJECT"
-LOCAL_DICOM_ROOT="/path/to/local_dicom"
-DEPLOYMENT_MANIFEST="/path/outside_code/$SUBJECT-deployment.json"
-LOCAL_PREPROCESSED_ROOT="/path/to/local_preprocessed"
-
-cp "$WORK_CODE/configs/subject_stack_manifest.example.json" "$DEPLOYMENT_MANIFEST"
-matlab -batch "addpath('$WORK_CODE/trad/scripts'); local_preprocess_all('$DEPLOYMENT_MANIFEST','$LOCAL_PREPROCESSED_ROOT');"
+PY="/path/to/server/python"
+RUN_ROOT="/path/to/new_server_run/$SUBJECT"
+MANIFEST="$RUN_ROOT/config/$SUBJECT-deployment.json"
+SERVER_DICOM_ROOT="/path/to/server_dicom"
+mkdir -p "$RUN_ROOT/config"
+cp "$WORK_CODE/configs/subject_stack_manifest.example.json" "$MANIFEST"
 ~~~
 
-Output is `<LOCAL_PREPROCESSED_ROOT>/<SUBJECT>/<stack>/preprocessed.mat` plus `preprocess_qc.json`. Confirm all three stacks exist, `Mag_crop` has 10 weights, MP-PCA is enabled, and `center_data=true`. The source MAT retains historical acquisition metadata `TI=[50,150]`; do not modify it. Matching and observation timing deliberately use `TI=[10,100]` through `$PROTOCOL`.
+The only local human task is manual ROI drawing. After drawing, upload the resulting bundle to `$RUN_ROOT/roi_manual/`; it must at least contain `sax_myocardium_masks.npz` and `roi_derivation_manifest.json`. It is consumed only by final-pose evaluation, not by either reconstruction.
 
-### 2. Server: validate transfer and make `observations.npz`
+### 2. Server-only: DICOM → `preprocessed.mat` → `observations.npz`
 
-Copy the MATLAB outputs and the single-subject deployment manifest to the server. The server must retain the same raw DICOM specified by `server_dicom_dir`. `observations.npz` is generated here from MAT pixels, DICOM UID/geometry, and the explicit protocol; it is not a raw input.
+Record the server MATLAB environment, then use the launcher below. It runs crop, MIND, and MP-PCA through MATLAB, followed by the Python bridge. `local_preprocess_all.m` is a historical function name; the launcher executes it on the server. No MAT transfer occurs. Outputs are `$RUN_ROOT/preprocessed/`, `$RUN_ROOT/prepared/`, and three run logs.
 
 ~~~bash
-PY="/path/to/server/python"
-SERVER_DEPLOYMENT_MANIFEST="/path/to/server/$SUBJECT-deployment.json"
-SERVER_PREPROCESSED_ROOT="/path/to/server_preprocessed"
-SERVER_PREPARED_ROOT="/path/to/server_prepared"
+SERVER_MATLAB_REPORT="$RUN_ROOT/server_matlab_version.txt"
+matlab -batch "disp(version); ver" > "$SERVER_MATLAB_REPORT" 2>&1
 
-"$PY" "$WORK_CODE/trad/scripts/validate_transferred_preprocessed.py" \
-  --manifest "$SERVER_DEPLOYMENT_MANIFEST" \
-  --preprocessed-root "$SERVER_PREPROCESSED_ROOT" \
-  --output "$SERVER_PREPROCESSED_ROOT/$SUBJECT/transfer_qc.json"
-"$PY" "$WORK_CODE/trad/scripts/prepare_all_observations.py" \
-  --manifest "$SERVER_DEPLOYMENT_MANIFEST" \
-  --preprocessed-root "$SERVER_PREPROCESSED_ROOT" \
-  --prepared-root "$SERVER_PREPARED_ROOT" \
-  --protocol "$PROTOCOL"
+bash "$WORK_CODE/paper_experiments/joint_vs_2dfit/phase2_clean/server_commands/server_preprocess_and_prepare.sh" \
+  "$RUN_ROOT" "$SUBJECT" "$MANIFEST" "$PROTOCOL" matlab "$PY"
 ~~~
 
-Check `PREPARED_BATCH_QC.json`, the three stack `observations.npz` files, and every prepared manifest. TR/VPS must agree with the MAT/DICOM data; the protocol must state TI 10/100, TR 2.61 ms, VPS 87, normalized absolute 10D inner-product matching, and no interpolation/refinement.
+Confirm all three stacks have `preprocessed.mat`, `preprocess_qc.json`, `observations.npz`, and `manifest.json`; `Mag_crop` must have ten weights, with MP-PCA enabled and `center_data=true`. The MAT retains truthful historical acquisition/preprocessing metadata `TI=[50,150]`; matching and observation timing deliberately use `TI=[10,100]` through `$PROTOCOL`, while TR/VPS remain sourced from DICOM/MAT.
 
 ### 3. Server: corrected SCMR-v5 mapping and 2D-fit-first
 
 Inputs: three `preprocessed.mat` files, prepared observations, and copied sparse inputs. Outputs: mapping MAT files, native-cache manifests, and `T1_3D.nii.gz`/`T2_3D.nii.gz` for every case.
 
 ~~~bash
-FIT_RUN="/path/to/new_fit_run"
+FIT_RUN="$RUN_ROOT"
 SPARSE_SOURCE="/path/to/proposed_or_sparse_input_run"
 mkdir -p "$FIT_RUN"
 cp -a "$SPARSE_SOURCE/sparse_inputs" "$FIT_RUN/"
 
 PY="$PY" NESVOR="/path/to/nesvor/bin/nesvor" REPO="$WORK_CODE" \
 bash "$WORK_CODE/paper_experiments/joint_vs_2dfit/phase2_clean/server_commands/run_scmr_v5_fit_first.sh" \
-  "$FIT_RUN" "$SERVER_PREPROCESSED_ROOT" "$SUBJECT" "$SERVER_PREPARED_ROOT" matlab
+  "$FIT_RUN" "$RUN_ROOT/preprocessed" "$SUBJECT" "$RUN_ROOT/prepared" matlab
 ~~~
 
 For every native-cache manifest, verify the SHA256 bindings for source observations, source preprocessed MAT, SCMR-v5 mapping, and native maps before accepting a reconstruction.

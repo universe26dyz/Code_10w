@@ -20,3 +20,14 @@ def test_generic_evaluation_launchers_do_not_delegate_to_hhz_scripts() -> None:
         text = (COMMANDS / name).read_text(encoding="utf-8")
         assert "hhz_" not in text
         assert "SUBJECT=${SUBJECT:-HHZ}" not in text
+
+
+def test_server_only_preprocessing_launcher_uses_one_server_dicom_manifest() -> None:
+    text = (COMMANDS / "server_preprocess_and_prepare.sh").read_text(encoding="utf-8")
+
+    assert "RUN_ROOT SUBJECT DEPLOYMENT_MANIFEST PROTOCOL" in text
+    assert "local_preprocess_all" in text
+    assert "validate_transferred_preprocessed.py" in text
+    assert "prepare_all_observations.py" in text
+    assert "local_dicom_dir and server_dicom_dir" in text
+    assert "HHZ" not in text

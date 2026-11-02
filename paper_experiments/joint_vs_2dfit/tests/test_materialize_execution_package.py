@@ -48,5 +48,5 @@ def test_materializes_visible_code_models_runtime_and_pipeline_map(tmp_path: Pat
     assert (result / "code" / "trad" / "scripts" / "local_preprocess_all.m").is_file()
     assert (result / "01_model_assets" / "approved_decoder.pth").is_file()
     assert (result / "02_external_runtime" / "nesvor_package" / "__init__.py").is_file()
-    assert (result / "00_pipeline_code_map" / "01_local_dicom_preprocessing.md").is_file()
+    assert (result / "00_pipeline_code_map" / "01_server_dicom_preprocessing.md").is_file()
     assert "sha256" in (result / "99_integrity" / "execution_manifest.jsonl").read_text(encoding="utf-8")

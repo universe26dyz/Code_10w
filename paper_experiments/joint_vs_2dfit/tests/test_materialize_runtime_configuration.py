@@ -35,6 +35,7 @@ def test_materializes_generic_and_subject_specific_runtime_configuration(tmp_pat
         "mlp/configs/protocol_scmr_v5_10_100.yaml",
         "mlp/configs/recon_server_train_scmr_v5_generic.yaml",
         "configs/subject_stack_manifest.example.json",
+        "paper_experiments/joint_vs_2dfit/phase2_clean/server_commands/server_preprocess_and_prepare.sh",
         "paper_experiments/joint_vs_2dfit/phase2_clean/server_commands/run_scmr_v5_fit_first.sh",
         "paper_experiments/joint_vs_2dfit/phase2_clean/server_commands/paired_final_pose.sh",
         "paper_experiments/joint_vs_2dfit/phase2_clean/server_commands/common_native_metrics_qc.sh",
@@ -47,6 +48,7 @@ def test_materializes_generic_and_subject_specific_runtime_configuration(tmp_pat
 
     assert target == archive / "02_runtime_configuration"
     assert (target / "00_common" / "protocol_scmr_v5_10_100.yaml").is_file()
+    assert (target / "01_launchers" / "server_preprocess_and_prepare.sh").is_file()
     assert (target / "01_launchers" / "run_scmr_v5_fit_first.sh").is_file()
     assert (target / "02_subject_examples" / subject / "proposed" / "L100" / "run_provenance.json").is_file()
     records = (target / "runtime_configuration_manifest.jsonl").read_text(encoding="utf-8")
@@ -67,6 +69,7 @@ def test_refuses_runtime_configuration_without_required_proposed_provenance(tmp_
         "mlp/configs/protocol_scmr_v5_10_100.yaml",
         "mlp/configs/recon_server_train_scmr_v5_generic.yaml",
         "configs/subject_stack_manifest.example.json",
+        "paper_experiments/joint_vs_2dfit/phase2_clean/server_commands/server_preprocess_and_prepare.sh",
         "paper_experiments/joint_vs_2dfit/phase2_clean/server_commands/run_scmr_v5_fit_first.sh",
         "paper_experiments/joint_vs_2dfit/phase2_clean/server_commands/paired_final_pose.sh",
         "paper_experiments/joint_vs_2dfit/phase2_clean/server_commands/common_native_metrics_qc.sh",
