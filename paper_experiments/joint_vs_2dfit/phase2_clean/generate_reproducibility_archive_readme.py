@@ -11,7 +11,7 @@ def _load(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def _zh(subject: str, manifest: dict[str, Any]) -> str:
+def _zh(subject: str, manifest: dict[str, Any], execution_commit: str) -> str:
     return f"""# SCMR-v5 MultiMap 可复现实验归档（中文）
 
 本目录是已经完成物理复制与 SHA256 登记的可复现实验归档。它保存一个实际 subject 示例（{subject}），但软件入口均使用显式 SUBJECT 参数，适用于其他 subject。归档本身是只读证据；所有重新运行都必须写到新的工作目录，绝不能把新结果写回这里。
@@ -32,7 +32,7 @@ def _zh(subject: str, manifest: dict[str, Any]) -> str:
 99_integrity/                         archive_manifest 与逐文件 SHA256
 ~~~
 
-本归档的代码 commit 为 {manifest["code_snapshot"]["commit"]}，共登记 {manifest["file_count"]} 个复制文件。
+冻结证据代码 commit 为 {manifest["code_snapshot"]["commit"]}；实际运行的可见代码树 commit 为 {execution_commit}。共登记 {manifest["file_count"]} 个复制文件。
 
 ## 从原始 DICOM 开始：通用运行顺序
 
@@ -161,7 +161,7 @@ prepared 输入位于 03_subject_examples/{subject}/01_inputs/prepared；ROI 位
 """
 
 
-def _en(subject: str, manifest: dict[str, Any]) -> str:
+def _en(subject: str, manifest: dict[str, Any], execution_commit: str) -> str:
     return f"""# SCMR-v5 MultiMap Reproducibility Archive (English)
 
 This is a physically copied, SHA256-recorded reproducibility archive. It contains {subject} as an example subject, while executable entry points take an explicit SUBJECT argument and are generic. Treat the archive as read-only evidence: every rerun must write to a new work root, never back into this directory.
@@ -182,7 +182,7 @@ This is a physically copied, SHA256-recorded reproducibility archive. It contain
 99_integrity/                         archive manifest and per-file SHA256
 ~~~
 
-The archived code commit is {manifest["code_snapshot"]["commit"]}; {manifest["file_count"]} copied files are recorded.
+The frozen-evidence code commit is {manifest["code_snapshot"]["commit"]}; the visible executable code-tree commit is {execution_commit}. {manifest["file_count"]} copied files are recorded.
 
 ## Generic operation, from raw DICOM
 
@@ -329,11 +329,17 @@ def build_archive_readmes(archive_root: str | Path, *, replace_existing: bool = 
     for required in ("00_live_route_freeze", "01_code_snapshot", "01_execution_code", "02_runtime_configuration", "03_subject_examples", "99_integrity"):
         if not (archive / required).is_dir():
             raise FileNotFoundError(f"archive layout is incomplete: {required}")
+    execution_metadata = archive / "01_execution_code" / "99_integrity" / "execution_metadata.json"
+    execution_commit = "not-recorded"
+    if execution_metadata.is_file():
+        value = _load(execution_metadata).get("code_commit")
+        if isinstance(value, str) and value:
+            execution_commit = value
     zh, en = archive / "README_zh-CN.md", archive / "README_en.md"
     if (zh.exists() or en.exists()) and not replace_existing:
         raise FileExistsError("refusing to overwrite existing archive README")
-    zh.write_text(_zh(subjects[0], manifest), encoding="utf-8")
-    en.write_text(_en(subjects[0], manifest), encoding="utf-8")
+    zh.write_text(_zh(subjects[0], manifest, execution_commit), encoding="utf-8")
+    en.write_text(_en(subjects[0], manifest, execution_commit), encoding="utf-8")
     return zh, en
 
 

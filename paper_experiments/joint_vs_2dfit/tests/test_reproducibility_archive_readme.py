@@ -16,6 +16,9 @@ def test_writes_bilingual_archive_readmes_after_materialization(tmp_path) -> Non
         "code_snapshot": {"commit": "a" * 40},
         "file_count": 12,
     }), encoding="utf-8")
+    execution_integrity = archive / "01_execution_code" / "99_integrity"
+    execution_integrity.mkdir()
+    (execution_integrity / "execution_metadata.json").write_text(json.dumps({"code_commit": "b" * 40}), encoding="utf-8")
 
     zh, en = build_archive_readmes(archive)
 
@@ -26,6 +29,7 @@ def test_writes_bilingual_archive_readmes_after_materialization(tmp_path) -> Non
     assert "server_preprocess_and_prepare.sh" in en.read_text(encoding="utf-8")
     assert "server-only" in en.read_text(encoding="utf-8")
     assert "人工勾画 ROI" in zh.read_text(encoding="utf-8")
+    assert "b" * 40 in zh.read_text(encoding="utf-8")
 
 
 def test_replace_only_overwrites_existing_readmes(tmp_path) -> None:
